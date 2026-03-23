@@ -44,9 +44,39 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - State transitions correct: both paths publish notifications, idempotent on replay, guarded against illegal transitions
 - Failure semantics working: persisted expenses are not lost if workflow start fails; truthful error responses
 
+## Phase 4 Work (2026-03-23)
+
+### Delivered
+
+**Phase 4 Notification Subscriber Implementation**
+- Implemented `POST /notifications` endpoint with `[Topic(CloudExpenseDapr.Components.PubSub, CloudExpenseDapr.Topics.ExpenseNotifications)]` attribute
+- Manual deserialization via `ReadFromJsonAsync` for explicit error handling and control
+- Structured logging: each received `NotificationRequest` produces an `Information`-level log containing `EventType`, `ExpenseId`, `CorrelationId`, `Recipient`, `Subject`
+- Validation: `IsValidNotification` check ensures all 7 required fields are present and valid
+- Graceful malformed payload handling: `Warning` log + HTTP 200 with `{ "status": "ignored" }` response (no subscription poison)
+- Updated root `GET /` endpoint descriptor from `"phase-1"` to `"phase-4"`
+- Health endpoint preserved: `GET /healthz` continues to return `{ "status": "ok" }`
+
+### Validation Passed
+
+- All 9 exit criteria verified by Karen with fresh evidence
+- Auto-approve path ($50): logs `EventType=ExpenseApproved` with full tracing
+- Manual-review path ($150): logs `EventType=ManualReviewRequested` with full tracing
+- Build: `dotnet build CloudExpenseLite.slnx` — 0 warnings, 0 errors
+- Tests: `dotnet test CloudExpenseLite.slnx` — all pass
+- Malformed payloads handled gracefully with Warning logs
+- CorrelationId preserved through pub/sub hop
+
+### Key Design Notes
+
+- Manual deserialization is intentional: ASP.NET parameter binding would surface malformed payloads as 400 errors, poisoning the Dapr subscription redelivery semantics. Manual deserialization gives explicit control to return HTTP 200 (success acknowledgment) while logging the issue.
+- HTTP 200 on malformed payloads balances visibility (Warning-level log for operators) with pub/sub health (no redelivery noise).
+- Structured logging with template parameters (`{EventType}`, `{ExpenseId}`, etc.) ensures traceability is observable in demo output.
+- No output bindings (SMTP, Twilio) in Phase 4 — deferred to Phase 7 polish items.
+
 ### Next Phase
 
-Phase 4+ work deferred: notification-svc subscription logic, multi-tier approval, audit logging.
+Phase 4+ work deferred: output bindings, notification persistence, retry/dead-letter, multi-tier approval, audit logging.
 
 ## Learnings
 
@@ -56,3 +86,4 @@ Phase 4+ work deferred: notification-svc subscription logic, multi-tier approval
 - Phase 3 stayed reviewer-explainable by treating the persisted `ExpenseRecord` as the workflow source of truth: approval and reimbursement activities only mutate `Status`/`LastUpdatedAtUtc`, while workflow status responses read input/output/custom status back out of Dapr metadata.
 - `POST /expenses` should invoke the workflow engine with the persisted record projected back to `ExpenseSubmission`, not the raw inbound body, so generated `ExpenseId`/`CorrelationId` values stay aligned with the workflow instance id and downstream activities.
 - Async workflow progress must not break replay semantics on the write API: duplicate-submission matching should compare immutable submission fields only, not workflow-mutated fields like `Status`.
+- Phase 4 notification delivery stays demo-trustworthy when the subscriber reads `NotificationRequest` explicitly, logs the business fields (`ExpenseId`, `CorrelationId`, `EventType`, `Recipient`, `Subject`), and still returns HTTP 200 on malformed payloads so a bad message does not poison the pub/sub story.

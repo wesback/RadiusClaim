@@ -83,3 +83,27 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - All prior objections resolved: (1) record-first ordering eliminates phantom index entries, (2) strong-consistency re-read on ambiguous saves prevents hidden state, (3) truthful failure disclosure includes the persisted record and fetch location.
 - Fresh evidence passed: `dotnet build ./CloudExpenseLite.slnx --nologo` succeeds; re-review confirms all prior objections fully resolved.
 - **Phase 2 APPROVED 2026-03-23T14:59:08Z.** Team can proceed with confidence into the next phase.
+
+### 2026-03-23: Phase 3 validation gate passed
+
+- All 11 exit criteria verified with fresh evidence during Phase 3.
+- Auto-approve path < $100.00 progresses correctly through Submitted → Approved → Reimbursed.
+- Manual review path >= $100.00 correctly progresses through Submitted → ManualReviewRequested.
+- Both paths publish `NotificationRequest` to `expense-notifications` topic as expected.
+- Workflow instance IDs, state transitions, and idempotent replay semantics all correct.
+- **Phase 3 APPROVED 2026-03-23T17:50:00Z.**
+
+### 2026-03-23: Phase 4 validation gate passed
+
+- All 9 exit criteria verified with fresh evidence during Phase 4 subscriber implementation.
+- Build passes: `dotnet build CloudExpenseLite.slnx` — 0 warnings, 0 errors.
+- Tests pass: `dotnet test CloudExpenseLite.slnx` — all pass.
+- `POST /notifications` endpoint accepts CloudEvents-wrapped `NotificationRequest`.
+- `GET /dapr/subscribe` returns the `expense-notifications` subscription correctly.
+- Auto-approve path ($50 expense): logs `EventType=ExpenseApproved` with correct `ExpenseId`, `CorrelationId`, `Recipient`, `Subject`.
+- Manual-review path ($150 expense): logs `EventType=ManualReviewRequested` with correct `ExpenseId`, `CorrelationId`, `Recipient`, `Subject`.
+- Malformed/null payloads return Warning log + HTTP 200 (no poison).
+- Phase descriptor correctly reports `"phase-4"`.
+- Health endpoint returns `{ "status": "ok" }`.
+- No changes to `CloudExpense.Contracts` or `workflow-engine`.
+- **Phase 4 APPROVED 2026-03-23T16:52:00Z.** Subscriber is demo-trustworthy with observable happy and failure paths. Traceability survives the pub/sub hop end-to-end.

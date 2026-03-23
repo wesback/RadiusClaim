@@ -187,3 +187,31 @@ Phase 3 proves Dapr Workflows orchestrate the expense approval flow with four bu
 - ✅ No contract changes from Phase 2
 
 **Status: Phase 3 APPROVED** — 2026-03-23. All 11 criteria verified. Demo-ready.
+
+### 2026-03-23: Phase 4 Scope — Notification Service Subscription
+**By:** Daisy (Lead)
+**What:** Implement notification-svc as a single Dapr topic subscriber at `POST /notifications`, using `[Topic(CloudExpenseDapr.Components.PubSub, CloudExpenseDapr.Topics.ExpenseNotifications)]` with explicit `NotificationRequest` deserialization and structured logging (ExpenseId, CorrelationId, EventType, Recipient, Subject).
+**Why:** Phase 4 completes the pub/sub story end-to-end, proving that workflow-published notifications are consumed by an independently running service. Graceful malformed payload handling (Warning log + HTTP 200) keeps the subscription healthy while maintaining visibility. No output bindings (SMTP/Twilio), persistence, or retry logic — demo story is "notification arrived and was logged."
+**Deferred:** Output bindings, notification persistence, retry/dead-letter, additional HTTP endpoints, EventType filtering.
+
+### 2026-03-23: Phase 4 Exit Criteria
+**By:** Daisy (Lead)
+**Status:** All 9 criteria passed and approved by Karen
+1. ✅ Build passes: `dotnet build CloudExpenseLite.slnx` — 0 warnings, 0 errors
+2. ✅ `POST /notifications` exists, accepts CloudEvents-wrapped `NotificationRequest`
+3. ✅ `GET /dapr/subscribe` returns the `expense-notifications` subscription
+4. ✅ Auto-approve path logs `EventType=ExpenseApproved` with correct tracing
+5. ✅ Manual-review path logs `EventType=ManualReviewRequested` with correct tracing
+6. ✅ Malformed/null payload → Warning log + HTTP 200 (no poison)
+7. ✅ `GET /` reports `phase-4`
+8. ✅ `GET /healthz` returns `{ "status": "ok" }`
+9. ✅ No changes to `CloudExpense.Contracts` or `workflow-engine` from Phase 3
+
+### 2026-03-23: Phase 4 Implementation — Notification Subscriber
+**By:** Billy (Backend Dev)
+**What:** Implemented `POST /notifications` with `[Topic]` attribute, manual deserialization via `ReadFromJsonAsync`, structured logging (EventType, ExpenseId, CorrelationId, Recipient, Subject), validation check for null/blank fields, and graceful handling returning HTTP 200 with `{ "status": "ignored" }` for malformed payloads.
+**Why:** Manual deserialization gives explicit control to avoid ASP.NET parameter binding poisoning the subscription. HTTP 200 on malformed prevents redelivery noise while Warning-level logging gives operators visibility. Structured logging with template parameters ensures traceability survives the pub/sub hop.
+**Artifact:** `src/notification-svc/Program.cs`
+**Status:** ✅ APPROVED by Karen — build and tests verified; all 9 exit criteria pass.
+
+**Status: Phase 4 APPROVED** — 2026-03-23T16:52:00Z. Subscriber implementation verified end-to-end. Demo-ready.

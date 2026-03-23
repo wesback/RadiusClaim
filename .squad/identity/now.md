@@ -1,40 +1,56 @@
 ---
-updated_at: 2026-03-23T17:50:00Z
-focus_area: Phase 3 approved and complete; demo-ready with four Dapr building blocks
+updated_at: 2026-03-23T16:52:00Z
+focus_area: Phase 4 approved and complete; pub/sub consumer end-to-end proven
 active_issues: []
-phase: 3-approved
+phase: 4-approved
 ---
 
 # What We're Focused On
 
-**Phase 3 APPROVED as of 2026-03-23T17:50:00Z.**
+**Phase 4 APPROVED as of 2026-03-23T16:52:00Z.**
 
-Phase 3 implementation and validation complete. The CloudExpense Lite sample now proves Dapr Workflows orchestrate the expense approval flow with four building blocks: **State, Workflows, Pub/Sub, Service Invocation.**
+Phase 4 implementation and validation complete. The notification-svc is now a fully functional Dapr topic subscriber, proving that workflow-published `NotificationRequest` messages are delivered end-to-end to an independently running consumer service.
 
-## Phase 3 Completion Summary
+## Phase 4 Completion Summary
 
-**Billy's Delivery:** `ExpenseApprovalWorkflow` with three activities (Approve, Reimburse, Notify). Two workflow-engine endpoints (`POST /workflows/start` returns 202, `GET /workflows/{instanceId}` returns status). Expense-api fire-and-forget invocation after record persistence. All 11 exit criteria passed.
+**Daisy's Design:** Single programmatic subscription on `POST /notifications` with `[Topic]` attribute, manual deserialization for explicit error control, structured logging with ExpenseId and CorrelationId, graceful malformed payload handling, phase descriptor update.
 
-**Graham's Delivery:** `infra/dapr/local/pubsub.yaml` for local Redis pub/sub, scoped to workflow-engine and notification-svc.
+**Billy's Delivery:** Implementation complete. `POST /notifications` subscribes to `expense-notifications` topic. Structured logging outputs EventType, ExpenseId, CorrelationId, Recipient, Subject. Malformed payloads logged as Warning with HTTP 200 (no poison). Phase descriptor updated to `"phase-4"`. Build: 0 warnings, 0 errors. Tests: all pass.
 
-**Karen's Validation:** All exit criteria verified with fresh evidence. Auto-approve path (< $100) produces Submitted → Approved → Reimbursed. Manual review path (>= $100) produces Submitted → ManualReviewRequested. Both paths publish notifications. Threshold behavior confirmed. Workflow identity and state transitions guarded and idempotent.
+**Karen's Validation:** All 9 exit criteria verified with fresh evidence. Consumer-side proof exists — messages visibly received and logged. Happy path (< $100) produces `ExpenseApproved`. Manual-review path (>= $100) produces `ManualReviewRequested`. Traceability survives pub/sub hop. Service advertises correct phase. No contract or platform changes needed.
 
 ## Demo Capability
 
-A presenter can now:
-1. Submit a $50 expense → watch it auto-approve and reimburse
-2. Submit a $150 expense → watch it flag for manual review
-3. Query the workflow status at any point
-4. See notification events published to pub/sub
+A presenter can now run the full expense journey with observable notification delivery:
+1. Submit a $50 expense → auto-approve and reimburse → **notification-svc logs `ExpenseApproved`**
+2. Submit a $150 expense → hold for manual review → **notification-svc logs `ManualReviewRequested`**
+3. Query workflow status at any point
+4. See both notification events published and consumed end-to-end
+
+## Five Dapr Building Blocks Proven
+
+1. ✅ **State** — Expense records persisted with optimistic concurrency on shared index
+2. ✅ **Workflows** — Approval orchestration with branching and activity composition
+3. ✅ **Pub/Sub** — Notification events published by workflow, consumed by subscriber
+4. ✅ **Service Invocation** — expense-api → workflow-engine fire-and-forget
+5. ✅ **Remaining:** Secrets (Phase 5+ for Azure integration)
 
 ## Next Phase
 
-Phase 4+ work deferred:
-- Notification-svc subscription logic (Phase 4)
-- Multi-tier approval (Phase 4+)
-- Audit logging (out of scope exclusion)
-- External event wait for manual review (out of scope exclusion)
+**Phase 5: Local Validation** — Radius app model validation locally before Azure push.
+- Depends on: Phase 4 (app code complete)
+- Blocked until: Local `rad run` or equivalent validation passes
+- Work: Graham validates Radius topology with integrated app services
+
+**Phase 6: Azure Provisioning** — Deploy to Azure Container Apps with Azure-backed Dapr components (Redis, Service Bus).
+- Depends on: Phase 5 (local validation)
+- Work: Graham provisions Azure resources and verifies deployed services
+
+**Phase 7: Docs & Integration Testing** — Final documentation, demo scripts, and integration test suite.
+- Depends on: Phase 4+ (app code) AND Phase 6+ (platform integration)
+- Blocked until: Both app and platform tracks merge
+- Work: Eddie leads docs; team contributes integration tests
 
 **Who's next:**
-- **Eddie** (Docs/Story): Phase 7 work on docs and integration testing
-- **Team:** Plan Phase 4+ if needed for demos or production readiness
+- **Graham** (Platform Dev): Phase 5 local Radius validation
+- **Team:** Phase 5+ planning and execution

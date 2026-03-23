@@ -93,3 +93,20 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - **Graham's delivery:** `infra/dapr/local/pubsub.yaml` — Redis-backed pub/sub component scoped to workflow-engine and notification-svc.
 - **Karen's validation:** All exit criteria verified with fresh evidence. Threshold behavior confirmed. Workflow identity and state transitions guarded and idempotent. Fire-and-forget semantics working correctly.
 - **Phase 3 APPROVED** — 2026-03-23T17:50:00Z. Demo-ready with four Dapr building blocks: State, Workflows, Pub/Sub, Service Invocation.
+
+### 2026-03-23: Phase 4 Design Review Complete
+
+- **Decision file:** `.squad/decisions/inbox/daisy-phase4-scope.md`
+- **Scope:** Single programmatic subscription on `notification-svc` — `POST /notifications` subscribes to `expense-notifications` topic. Receive `NotificationRequest`, log it with structured fields (ExpenseId, CorrelationId, EventType, Recipient, Subject), return OK. Gracefully handle malformed payloads.
+- **Cut:** Output bindings (Twilio/SMTP), notification persistence, retry/dead-letter, event-type branching logic. All deferred or out of scope.
+- **No contract changes:** Phase 3 contracts and constants (`NotificationRequest`, `CloudExpenseDapr.Topics.ExpenseNotifications`) cover Phase 4 completely. Billy does not touch `CloudExpense.Contracts` or `workflow-engine`.
+- **No Graham work:** Pubsub component and scoping already delivered in Phase 3.
+- **Exit criteria:** 9 criteria defined for Karen's gate, including end-to-end pub/sub validation for both auto-approve ($50) and manual review ($150) paths.
+- **Key design call:** The handler stays intentionally trivial — the demo point is "the message arrived via pub/sub," not "we built a notification system."
+- **Work authorized:** Billy (notification-svc subscription handler). Karen validates when Billy signals ready.
+
+### 2026-03-23: Phase 4 Implementation Complete & Approved
+
+- **Billy's delivery:** `POST /notifications` endpoint with `[Topic]` attribute, manual deserialization via `ReadFromJsonAsync`, structured logging (EventType, ExpenseId, CorrelationId, Recipient, Subject), validation on blank fields, graceful handling of malformed payloads returning HTTP 200 with `{ "status": "ignored" }`. Updated Phase descriptor to `"phase-4"`. All 9 exit criteria passed. Build: 0 warnings, 0 errors. Tests: all pass.
+- **Karen's validation:** All 9 exit criteria verified with fresh evidence. All 8 validation expectations satisfied. Consumer-side proof exists. Happy path truthful (`ExpenseApproved`). Manual-review path distinct (`ManualReviewRequested`). Traceability survives pub/sub hop (ExpenseId + CorrelationId). Success means consumer actually handled the event. Service advertises truth. No poison from malformed payloads. Demo-trustworthy.
+- **Phase 4 APPROVED** — 2026-03-23T16:52:00Z. Subscriber implementation verified end-to-end. The notification-svc now consumes published `NotificationRequest` messages and logs them with full traceability.
