@@ -54,8 +54,40 @@ Kept pub/sub as a development overlay under `infra/dapr/local/`, preserving the 
 - `dotnet test CloudExpenseLite.slnx --nologo --no-build` ✅
 - `rad` CLI local validation remains blocked in this environment because `rad` is not installed.
 
-### Learnings
+#### Learnings
 
 - Radius environment files tell the platform story best when they register named recipes explicitly instead of leaning on default recipe indirection; it keeps the operator handoff teachable.
 - For Azure-backed Dapr resources, deterministic names passed from the app model into recipe parameters keep the component contract readable while leaving the provisioning logic inside the recipe.
 - When secrets consumption is deferred, model the Dapr secret store honestly as plumbing only; avoid pretending app-side secret reads are part of the same phase.
+- Make `infra/radius/app.bicep` self-contained by declaring `Applications.Core/applications` inside the app model; `rad deploy` should inject the environment, not depend on a caller-supplied application id.
+- When Radius lacks a first-party compute target (here: Azure Container Apps), keep the Radius-first workflow primary and name the escape hatch explicitly as a fallback rather than letting imperative deployment become the default story.
+- Key Radius-first Azure files: `infra/radius/app.bicep`, `infra/radius/environments/azure-radius.bicep`, `infra/radius/environments/azure-radius.parameters.json`, and `.github/workflows/deploy-azure.yml`.
+
+## Radius-First Redesign Work (2026-03-23)
+
+### Delivered
+
+**Radius-First Azure Deployment Path**
+- Restructured `.github/workflows/deploy-azure.yml` to default to `deployment_mode=radius-first`
+- Created `infra/radius/environments/azure-radius.bicep` as primary Radius environment
+- Split Azure resources between bootstrap (ACR, ACA env, identity, Log Analytics) and Radius-driven (app services, Dapr components, backing resources via recipes)
+- Dapr component names (`statestore`, `pubsub`, `platform-secrets`) remain stable across all paths
+- ACA fallback explicitly demoted with conditional job and honest documentation of Radius compute gap
+
+### Design Decision
+
+Kubernetes-based Radius path with Azure recipe support is stronger story than trying to bootstrap ACA for Radius. Radius as primary orchestrator, Azure CLI as explicit fallback for when ACA compute support arrives.
+
+### Validation
+
+- All Bicep files parse cleanly (app.bicep, azure-radius.bicep, three recipes)
+- `dotnet build` and `dotnet test` pass with zero changes to app code
+- Workflow structure separates Radius path (primary) from ACA path (secondary) clearly
+- Karen approved all acceptance criteria
+
+## Learnings (Phase 7+)
+
+- The Radius-first pattern succeeded because we made the Azure bootstrap honest: it creates substrate only, not deployment.
+- When a tool lacks first-party support for a compute target, making the fallback explicit and clearly secondary protects the primary tool's credibility story.
+- Parameterizing Dapr component types in the app model (`daprBackings`) while keeping logical names stable (`statestore`) is the right balance for portability without sacrificing demo clarity.
+- Next team: If you need ACA support in Radius, a clean migration exists because this path separated bootstrap from deployment.

@@ -1,56 +1,87 @@
 ---
-updated_at: 2026-03-23T16:52:00Z
-focus_area: Phase 4 approved and complete; pub/sub consumer end-to-end proven
+updated_at: 2026-03-23T17:11:21Z
+focus_area: Phase 7 — End-to-end Radius validation, docs, integration tests
 active_issues: []
-phase: 4-approved
+phase: 7-in-progress
 ---
 
 # What We're Focused On
 
-**Phase 4 APPROVED as of 2026-03-23T16:52:00Z.**
+**Phases 1–6 COMPLETE and approved. Radius-first redesign COMPLETE and approved. Phase 7 now in progress.**
 
-Phase 4 implementation and validation complete. The notification-svc is now a fully functional Dapr topic subscriber, proving that workflow-published `NotificationRequest` messages are delivered end-to-end to an independently running consumer service.
+## Current Achievement Summary
 
-## Phase 4 Completion Summary
+All application code (Phases 1–4) and platform wiring (Phases 5–6) are complete, integrated, and validated.
 
-**Daisy's Design:** Single programmatic subscription on `POST /notifications` with `[Topic]` attribute, manual deserialization for explicit error control, structured logging with ExpenseId and CorrelationId, graceful malformed payload handling, phase descriptor update.
+### App Code Track (Phases 1–4) — ✅ COMPLETE
 
-**Billy's Delivery:** Implementation complete. `POST /notifications` subscribes to `expense-notifications` topic. Structured logging outputs EventType, ExpenseId, CorrelationId, Recipient, Subject. Malformed payloads logged as Warning with HTTP 200 (no poison). Phase descriptor updated to `"phase-4"`. Build: 0 warnings, 0 errors. Tests: all pass.
+- Phase 1: Contracts and scaffold — foundational types defined
+- Phase 2: Expense API with Dapr state — end-to-end CRUD working
+- Phase 3: Workflow orchestration with pub/sub — full approval flow proven
+- Phase 4: Notification subscriber — end-to-end message delivery validated
 
-**Karen's Validation:** All 9 exit criteria verified with fresh evidence. Consumer-side proof exists — messages visibly received and logged. Happy path (< $100) produces `ExpenseApproved`. Manual-review path (>= $100) produces `ManualReviewRequested`. Traceability survives pub/sub hop. Service advertises correct phase. No contract or platform changes needed.
+**Dapr building blocks proven:** State, Workflows, Pub/Sub, Service Invocation. (Secrets deferred; Bindings out of scope.)
 
-## Demo Capability
+### Platform Track (Phases 5–6) — ✅ COMPLETE
 
-A presenter can now run the full expense journey with observable notification delivery:
-1. Submit a $50 expense → auto-approve and reimburse → **notification-svc logs `ExpenseApproved`**
-2. Submit a $150 expense → hold for manual review → **notification-svc logs `ManualReviewRequested`**
-3. Query workflow status at any point
-4. See both notification events published and consumed end-to-end
+- Phase 5: Local Radius integration — environment definitions and real Azure recipes
+- Phase 6: Azure Container Apps deployment — CI/CD workflow with end-to-end validation on live Azure
 
-## Five Dapr Building Blocks Proven
+**Platform portability:** Same app code on local Kubernetes and Azure. Dapr component names stable across all paths.
 
-1. ✅ **State** — Expense records persisted with optimistic concurrency on shared index
+### Radius-First Redesign — ✅ COMPLETE & APPROVED
+
+Layer separation complete:
+- **Layer 1 (Azure Bootstrap):** Minimal cloud-specific resources (ACR, ACA env, identity, Log Analytics)
+- **Layer 2 (Radius Deployment):** App services, Dapr components, Azure recipes
+
+**Primary command:** `rad deploy infra/radius/app.bicep`
+**Fallback (explicit):** Azure Container Apps CI/CD path (demoted, honest about Radius compute gap)
+**Status:** Approved by Karen (2026-03-23T19:10:00Z)
+
+### Portability Fixes — ✅ COMPLETE & APPROVED
+
+- Graham's parameterization: `app.bicep` uses overrideable `daprBackings` object; logical component names stay stable
+- Eddie's documentation: README clearly separates app portability (Dapr + code) from infrastructure reality (Azure-specific today, Radius-intended)
+- Karen approved both fixes: portability story now credible without overstating
+
+## Phase 7 Scope — In Progress
+
+**Remaining work to finalize the sample:**
+
+1. **End-to-end Radius validation** — When team has live Radius environment, run $50 and $150 expense flows through `rad deploy` path with full traceability
+2. **Documentation & demo scripts** — Update README with clear Radius-first narrative, add step-by-step demo walkthrough, document GitHub Actions secrets/variables
+3. **Integration test suite** — Optional but recommended: automated tests covering the full flow (or at minimum, a checklist script)
+4. **ADR documentation** — Explain why Azure CLI was necessary interim workaround, what changes when Radius adds ACA support
+
+**Non-goals for Phase 7:**
+- App code changes (app is done)
+- Platform redesign (Radius-first pattern is settled)
+- Multi-cloud support (Azure-only for this sample)
+- Secrets population (component exists for completeness; not used in demo flow)
+
+## Demo Capability (Now Executable)
+
+A presenter can now run the full Radius-first expense journey:
+
+1. **Local development:** Run full expense flow with local Kubernetes and Dapr (Phases 1–4 app code)
+2. **Radius validation:** Deploy to Kubernetes with Azure recipes via `rad deploy` (Phase 5 patterns)
+3. **Azure deployment:** Push to Azure Container Apps with full validation (Phase 6 CI/CD)
+4. **Portability story:** "Same app code, different infrastructure backing, wired by Radius"
+
+All three paths use identical app code and same logical Dapr component names. The story is:
+> "Dapr keeps the app portable. Radius declares what services connect to and where they run. When you change clouds, you swap recipes and environment definitions—the app doesn't change."
+
+## Five Dapr Building Blocks — Proven
+
+1. ✅ **State** — Expense records persisted with optimistic concurrency
 2. ✅ **Workflows** — Approval orchestration with branching and activity composition
-3. ✅ **Pub/Sub** — Notification events published by workflow, consumed by subscriber
-4. ✅ **Service Invocation** — expense-api → workflow-engine fire-and-forget
-5. ✅ **Remaining:** Secrets (Phase 5+ for Azure integration)
+3. ✅ **Pub/Sub** — Notification events published and consumed end-to-end
+4. ✅ **Service Invocation** — Expense-api → workflow-engine fire-and-forget
+5. ⏳ **Secrets** — Component modeled; population/usage deferred (Phase 7+)
 
-## Next Phase
+## Next Steps
 
-**Phase 5: Local Validation** — Radius app model validation locally before Azure push.
-- Depends on: Phase 4 (app code complete)
-- Blocked until: Local `rad run` or equivalent validation passes
-- Work: Graham validates Radius topology with integrated app services
-
-**Phase 6: Azure Provisioning** — Deploy to Azure Container Apps with Azure-backed Dapr components (Redis, Service Bus).
-- Depends on: Phase 5 (local validation)
-- Work: Graham provisions Azure resources and verifies deployed services
-
-**Phase 7: Docs & Integration Testing** — Final documentation, demo scripts, and integration test suite.
-- Depends on: Phase 4+ (app code) AND Phase 6+ (platform integration)
-- Blocked until: Both app and platform tracks merge
-- Work: Eddie leads docs; team contributes integration tests
-
-**Who's next:**
-- **Graham** (Platform Dev): Phase 5 local Radius validation
-- **Team:** Phase 5+ planning and execution
+- **Phase 7 execution:** Team runs end-to-end validation of live Radius environment, finalizes documentation
+- **Sample release:** After Phase 7, the sample is complete and ready for external sharing as a reference for Dapr + Radius portability patterns
+- **Pattern library:** This sample becomes the foundation for future Dapr/Radius reference implementations (multi-service, multi-cloud, advanced patterns)

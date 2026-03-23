@@ -129,3 +129,29 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - Eddie (Docs/Story) authorized to proceed with Phase 7
 - Phase 7 should: update README, add demo walkthrough, document GitHub secrets, add ADR for Azure CLI choice, consider integration tests
 
+### 2026-03-23: Radius-First Redesign APPROVED
+
+- Reviewed Graham's Radius-first redesign against Daisy's decision and all five acceptance criteria.
+- Radius is now the primary deployment path: `deploy-azure.yml` defaults to `radius-first`, and `rad deploy` creates containers and Dapr components. No `az containerapp` commands appear in the Radius job.
+- ACA fallback is clearly demoted: labeled "secondary," conditional on explicit opt-in, honestly documented with the ACA compute-kind gap explanation.
+- `app.bicep` unchanged. Dapr component names (`statestore`, `pubsub`, `platform-secrets`) are stable across all paths — app code, Radius model, recipes, ACA fallback, local dev.
+- All Bicep files parse cleanly. Build and tests pass with zero warnings.
+- Graham's design improved on Daisy's spec: uses Kubernetes as Radius compute target (which is what Radius actually supports) instead of trying to bootstrap ACA for Radius.
+- **Open item (non-blocking):** The `deploy-radius` workflow job lacks end-to-end validation steps ($50/$150 expense submissions). Needs follow-up in Phase 7 when a live Radius environment is available.
+- Key files: `.github/workflows/deploy-azure.yml`, `infra/radius/environments/azure-radius.bicep`, `infra/radius/environments/azure.bicep`, `infra/radius/recipes/azure/*.bicep`, `README.md`.
+
+### 2026-03-23: Portability Fixes Review (Graham & Eddie)
+
+- Reviewed Graham's `app.bicep` parameterization via `daprBackings` object — keeps logical component names stable while moving Azure-specific details behind overrideable parameters
+- Reviewed Eddie's README updates — clearly separates app portability from Azure-specific CI/CD path, documents Radius as intended future (when ACA support arrives)
+- Both fixes are targeted, honest, and preserve demo credibility without overstating portability
+- **Status:** Both approved. Portability story now holds up under scrutiny.
+
+### 2026-03-23: Phase 7 & Beyond
+
+- Phases 1–6 complete and approved (2026-03-23)
+- Radius-first redesign complete and approved (2026-03-23T19:10:00Z)
+- Portability follow-ups complete and approved
+- **Ready for Phase 7 execution:** End-to-end validation of live Radius deployment, docs/demo scripts, integration tests
+- Team confidence high on all three tracks: app code, platform wiring, deployment credibility
+

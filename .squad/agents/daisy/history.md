@@ -140,12 +140,30 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - Eddie (Docs/Story) authorized to proceed
 - Phase 7 focus: README, demo walkthrough, GitHub secrets/variables, ADR for Azure CLI, integration tests (optional)
 
-### 2026-03-23: Phase 6 Design Review Complete
+### 2026-03-23: Radius-First Deployment Redesign Decision
 
-- **Decision file:** `.squad/decisions/inbox/daisy-phase6-scope.md`
-- **Scope:** Azure deployment on ACA with Azure-backed Dapr components. Three deliverables: Azure environment Bicep (`infra/radius/environments/azure.bicep`), GitHub Actions CI/CD workflow (`.github/workflows/deploy-azure.yml`), end-to-end validation on ACA.
-- **Key architectural calls:** (1) Managed identity for Dapr→Azure auth instead of Key Vault secrets — simpler, avoids circular dependency. (2) Only expense-api gets external ingress. (3) Single resource group for all Azure resources. (4) Manual dispatch CI/CD first.
-- **Deferred:** Secrets/Key Vault recipe, multi-environment promotion, Azure Monitor, VNet, scaling rules. None of these are needed for the platform portability story.
-- **Preconditions:** Phase 5 must pass Karen's gate first. Graham must deliver real Azure recipes, Dockerfiles, and local Radius validation before Phase 6 work begins.
-- **Exit criteria:** 12 criteria defined for Karen's gate, including end-to-end expense flow on Azure (both auto-approve and manual-review paths), state on Azure Blob Storage, pub/sub on Azure Service Bus, zero app code changes, and a successful GitHub Actions run.
-- **Status:** Design approved. Blocked on Phase 5 gate.
+- **Decision file:** `.squad/decisions/inbox/daisy-radius-first-redesign.md`
+- **Problem:** The Azure deployment path (`deploy-azure.yml` + `azure.bicep`) bypasses Radius entirely — uses raw ARM Bicep and `az containerapp create` instead of `rad deploy`. The Radius app model is unused in the only working cloud path.
+- **Redesign:** Two-layer architecture. Layer 1 (Azure bootstrap via ARM): ACR, ACA env, identity, Log Analytics, ACR pull RBAC — cloud-specific substrate only. Layer 2 (Radius-driven via `rad deploy`): all three containers, all three Dapr components, all Azure backing resources via recipes.
+- **Key architectural call:** A residual Azure bootstrap is acceptable because it provisions compute substrate, not application deployment. The dividing line: `rad deploy app.bicep` creates containers and Dapr components, `az deployment group create bootstrap.bicep` creates the substrate they run on.
+- **File impact:** `azure.bicep` splits into `azure-bootstrap.bicep` + recipe implementations. `deploy-azure.yml` restructured around `rad deploy`. `app.bicep` unchanged. App code unchanged.
+- **Acceptance criteria defined** for Graham (7 criteria) and Karen (6 criteria). Non-goals explicitly protect scope: no multi-cloud recipes, no environment promotion, no ACA scaling, no Radius GUI.
+- **Sequencing:** Graham implements → Karen validates → Eddie updates docs → Daisy final review.
+- **Pattern learned:** When a reference sample claims a tool "owns" a concern but the deployment path bypasses that tool, the claim is empty. The deployment path must exercise the tool or the claim must be withdrawn.
+
+### 2026-03-23: Radius-First Redesign APPROVED & DELIVERED
+
+- **Status:** Complete and approved by Karen (Tester) — 2026-03-23T19:10:00Z
+- **Graham's delivery:** Split Azure bootstrap from Radius app deployment. Created Azure recipes for Blob Storage, Service Bus, Key Vault. Created `azure-radius.bicep` Radius environment. Restructured CI/CD to bootstrap → build/push → Radius env setup → `rad deploy` → validate.
+- **Karen's approval:** All acceptance criteria met. Radius is primary (no `az containerapp create` in `deploy-radius` job). ACA fallback explicitly demoted with honest documentation of compute gap. App portability maintained (no code changes). Dapr names stable. Bicep files parse clean. Build/tests pass.
+- **Graham's design improvement:** Correctly identified Radius targets Kubernetes, not ACA directly. Radius path uses pre-existing Kubernetes cluster (via `RADIUS_KUBECONFIG`) and GHCR. Stronger story than large Azure bootstrap preamble.
+- **Open item (non-blocking):** `deploy-radius` job needs end-to-end validation steps ($50/$150) in Phase 7 when live Radius environment available. Structural proof sufficient for approval.
+- **Key files:** `.github/workflows/deploy-azure.yml` (primary Radius workflow + ACA fallback), `infra/radius/environments/azure-radius.bicep` (Radius environment), `infra/radius/recipes/azure/*.bicep` (real recipes), `README.md` (updated narrative).
+- **Pattern validated:** Radius now exercises the full wiring story. Sample can truthfully claim "Radius owns service and infrastructure wiring."
+
+### 2026-03-23: Phase 7 Next Focus
+
+- **Portability follow-ups completed:** Graham parameterized `app.bicep` component types. Eddie updated README with clear Dapr/Radius division and Azure CLI workaround explanation. Karen approved both.
+- **Current state:** Phases 1–6 complete and approved. Radius-first redesign complete and approved. Portability story honest and credible.
+- **Phase 7 scope:** End-to-end validation of live Radius deployment (when environment available), docs/demo scripts, integration test suite, GitHub secrets/variables documentation.
+- **Leading into Phase 7:** Team should execute Phase 7 tasks to finalize sample. Radius-first deployment path is now the credible story.
