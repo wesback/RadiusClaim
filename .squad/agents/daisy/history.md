@@ -110,3 +110,42 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - **Billy's delivery:** `POST /notifications` endpoint with `[Topic]` attribute, manual deserialization via `ReadFromJsonAsync`, structured logging (EventType, ExpenseId, CorrelationId, Recipient, Subject), validation on blank fields, graceful handling of malformed payloads returning HTTP 200 with `{ "status": "ignored" }`. Updated Phase descriptor to `"phase-4"`. All 9 exit criteria passed. Build: 0 warnings, 0 errors. Tests: all pass.
 - **Karen's validation:** All 9 exit criteria verified with fresh evidence. All 8 validation expectations satisfied. Consumer-side proof exists. Happy path truthful (`ExpenseApproved`). Manual-review path distinct (`ManualReviewRequested`). Traceability survives pub/sub hop (ExpenseId + CorrelationId). Success means consumer actually handled the event. Service advertises truth. No poison from malformed payloads. Demo-trustworthy.
 - **Phase 4 APPROVED** — 2026-03-23T16:52:00Z. Subscriber implementation verified end-to-end. The notification-svc now consumes published `NotificationRequest` messages and logs them with full traceability.
+
+### 2026-03-23: Phase 5 Design & Implementation Complete
+
+- **Phase 5 Scope:** Radius environment definitions wire Dapr components to real Azure-backed recipes. Fix `app.bicep` pubsub naming (`expense-pubsub` → `pubsub`). Local `rad deploy` validates complete component graph.
+- **Key discovery:** Pub/Sub component name mismatch found in `app.bicep` — had to rename to match app code expectations.
+- **Graham's delivery:** Real Azure recipes (Blob Storage, Service Bus, Key Vault), `dev.bicep` environment, fixed naming, no app code changes.
+- **Karen's validation:** All evidence passes (`az bicep build`, `dotnet build`, `dotnet test`). Naming consistency verified. Recipes are real, not placeholders.
+- **Phase 5 APPROVED** — 2026-03-23T16:34:00Z. Platform portability story credible. Radius recipes work; environment definitions complete.
+
+### 2026-03-23: Phase 6 Design & Implementation Complete
+
+- **Phase 6 Scope:** Same app code runs on Azure Container Apps with Azure-backed Dapr components. Three deliverables: Azure environment Bicep, CI/CD workflow, Dockerfiles, end-to-end validation on ACA.
+- **Key architectural calls:** Managed identity for Dapr→Azure auth (simpler than secrets). Only expense-api external ingress. Single resource group. Manual dispatch CI/CD. No custom domain/TLS.
+- **Graham's delivery:** `azure.bicep` environment (ACA, ACR, Storage, Service Bus, Key Vault, Dapr components), `.github/workflows/deploy-azure.yml` with build/push/validate, three Dockerfiles, real end-to-end validation.
+- **Karen's validation:** Real Azure deployment. CI/CD includes actual expense submission, state transition verification, notification-svc log inspection. Both auto-approve ($50) and manual-review ($150) paths validated. Component naming aligned with local slice. No app code changes.
+- **Phase 6 APPROVED** — 2026-03-23T16:45:17Z. Same app code, Azure-backed Dapr components. Validation proves distributed app works on Azure.
+
+### 2026-03-23: Portability Design Constraint Review Complete
+
+- **Constraint:** Azure is example deployment. App portability primary. Use Dapr abstractions, not Azure SDK. Radius owns environment/infrastructure wiring.
+- **Verdict:** MOSTLY ADHERED WITH RISKS. App code exemplary (zero Azure). Dapr components stable. Three localized infrastructure risks: `app.bicep` hardcodes Azure types, `azure.bicep` bypasses recipes, CI/CD uses Azure CLI instead of Radius.
+- **Corrective actions:** Parameterize `app.bicep` types (small), document CI/CD path (small), refactor `azure.bicep` recipes (medium), update README (small). All localized; no app code changes.
+- **Most important:** Document Azure-direct CI/CD nature; ensure Radius-based path before Phase 7 closes.
+
+### 2026-03-23: Phase 7 Authorization
+
+- Both app track (Phases 1–4) and platform track (Phases 5–6) now complete and integrated
+- Eddie (Docs/Story) authorized to proceed
+- Phase 7 focus: README, demo walkthrough, GitHub secrets/variables, ADR for Azure CLI, integration tests (optional)
+
+### 2026-03-23: Phase 6 Design Review Complete
+
+- **Decision file:** `.squad/decisions/inbox/daisy-phase6-scope.md`
+- **Scope:** Azure deployment on ACA with Azure-backed Dapr components. Three deliverables: Azure environment Bicep (`infra/radius/environments/azure.bicep`), GitHub Actions CI/CD workflow (`.github/workflows/deploy-azure.yml`), end-to-end validation on ACA.
+- **Key architectural calls:** (1) Managed identity for Dapr→Azure auth instead of Key Vault secrets — simpler, avoids circular dependency. (2) Only expense-api gets external ingress. (3) Single resource group for all Azure resources. (4) Manual dispatch CI/CD first.
+- **Deferred:** Secrets/Key Vault recipe, multi-environment promotion, Azure Monitor, VNet, scaling rules. None of these are needed for the platform portability story.
+- **Preconditions:** Phase 5 must pass Karen's gate first. Graham must deliver real Azure recipes, Dockerfiles, and local Radius validation before Phase 6 work begins.
+- **Exit criteria:** 12 criteria defined for Karen's gate, including end-to-end expense flow on Azure (both auto-approve and manual-review paths), state on Azure Blob Storage, pub/sub on Azure Service Bus, zero app code changes, and a successful GitHub Actions run.
+- **Status:** Design approved. Blocked on Phase 5 gate.

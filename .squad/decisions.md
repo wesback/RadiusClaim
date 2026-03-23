@@ -215,3 +215,69 @@ Phase 3 proves Dapr Workflows orchestrate the expense approval flow with four bu
 **Status:** ✅ APPROVED by Karen — build and tests verified; all 9 exit criteria pass.
 
 **Status: Phase 4 APPROVED** — 2026-03-23T16:52:00Z. Subscriber implementation verified end-to-end. Demo-ready.
+
+### 2026-03-23: Phase 5 Scope — Radius Integration Slice
+**By:** Daisy (Lead)
+**What:** Radius environment definitions wire Dapr components to real Azure-backed recipes (`infra/radius/environments/dev.bicep`, `infra/radius/recipes/azure/` with Storage, Service Bus, Key Vault recipes). Fix `app.bicep` pubsub naming drift (`expense-pubsub` → `pubsub`). Local `rad deploy` validates complete component graph without touching app code.
+**Why:** Phase 5 proves the platform half: "same app code, different infrastructure backing, wired by Radius." Platform engineers declare recipes once; Radius resolves components against environment at deploy time.
+**Critical:** Pub/Sub component name mismatch discovered: `app.bicep` used `expense-pubsub` but app code expects `pubsub`. Must rename in Radius.
+
+### 2026-03-23: Phase 5 Review — Karen (Tester)
+**Status:** ✅ APPROVED by Karen — 2026-03-23T16:34:00Z
+**Evidence:** `az bicep build` passes on all Radius files. `dotnet build` and `dotnet test` both pass. Naming consistency audit confirms no `expense-pubsub` references. App component constants match Radius resource names (`pubsub`, `statestore`).
+**Trust bar met:** Real Azure recipes (not placeholders), complete environment definitions, zero naming drift, zero app code changes.
+
+**Status: Phase 5 APPROVED** — 2026-03-23T16:34:00Z. Radius integration validated. Platform portability story credible.
+
+### 2026-03-23: Phase 5 Implementation — Graham (Platform Dev)
+**By:** Graham (Platform Dev)
+**Artifact:** `infra/radius/` — app.bicep, dev.bicep environment, three Azure recipes
+**Status:** ✅ APPROVED by Karen — all phase requirements delivered and validated
+**Summary:** Fixed pubsub naming drift. Replaced placeholder recipes with real Azure resources:
+- `state-store.bicep` → Azure Blob Storage account with container
+- `pubsub.bicep` → Azure Service Bus namespace with topic
+- `secrets.bicep` → Azure Key Vault
+Each recipe uses standard Radius contract (targetScope, context params, output values). All compile with `az bicep build`. No app code touched.
+
+### 2026-03-23: Phase 6 Scope — Azure Deployment on ACA
+**By:** Daisy (Lead)
+**What:** Same application code now runs on Azure Container Apps with Azure-backed Dapr components. Three deliverables: Azure environment Bicep (`infra/radius/environments/azure.bicep` targeting ACA), GitHub Actions CI/CD workflow (`.github/workflows/deploy-azure.yml` with build/push/deploy/validate), Dockerfiles for three services, end-to-end validation on live ACA.
+**Why:** The headline is "Radius recipes swapped local Redis for Azure Storage and Azure Service Bus — the app didn't change." Phase 6 proves this with a live demo.
+**Key architecture calls:**
+- Managed identity for Dapr→Azure auth (simpler than Key Vault secrets)
+- Only expense-api gets external ingress; workflow-engine and notification-svc internal-only
+- Single resource group (one `az group delete` tears everything down)
+- Manual dispatch CI/CD first; push trigger optional
+- No custom domain or TLS config (ACA default HTTPS is sufficient)
+
+### 2026-03-23: Phase 6 Validation — Karen (Tester)
+**Status:** ✅ APPROVED by Karen — 2026-03-23T16:45:17Z
+**Evidence:** Real Azure deployment on ACA. CI/CD workflow includes build, test, Docker push, and end-to-end validation. Workflow deploys $50 and $150 expenses, verifies state transitions, checks notification-svc logs for both event types with correct tracing.
+**Trust bar met:** Not "container started successfully" theater. Workflow proves the distributed app works on Azure: expenses persisted on Blob Storage, workflow-driven state transitions, pub/sub delivers to Service Bus subscriber. Zero app code changes.
+**Key acceptance:** Azure CLI YAML deployment acceptable for Phase 6 (Radius lacks first-party ACA support). Bicep provisions ACA environment and Dapr components with names matching local slice. Radius remains authoritative wiring layer; future migration possible if Radius gains ACA support.
+**Deferred to Phase 7:** Secrets usage demonstration, Radius-native ACA deployment, production hardening.
+
+**Status: Phase 6 APPROVED** — 2026-03-23T16:45:17Z. Same app code, Azure-backed Dapr components, real validation. Platform portability story complete.
+
+### 2026-03-23: Phase 7 Authorization
+**By:** Karen (Tester)
+**Decision:** Both app track (Phases 1–4) and platform track (Phases 5–6) are now complete and integrated.
+**Authorization:** Eddie (Docs/Story) can now proceed with Phase 7. Phase 7 should update README with Azure deployment instructions, add demo walkthrough script, document GitHub secrets/variables, add ADR explaining Azure CLI deployment choice, and consider integration test harness.
+
+### 2026-03-23: Portability Design Constraint Review
+**By:** Daisy (Lead)
+**Type:** Architecture review — design constraint verification
+**Constraint:** Azure is the example deployment target. Application portability remains primary. App code should use Dapr abstractions rather than Azure SDK/service-specific code. Radius should remain the place where environment/infrastructure wiring lives.
+**Verdict:** MOSTLY ADHERED WITH RISKS
+**Evidence:**
+- Application code: Clean ✅ — zero Azure NuGet packages, imports, or service URLs. All Dapr via `DaprClient`, `DaprWorkflowClient`, `[Topic]`. Component names centralized in `CloudExpenseDapr.cs`.
+- Dapr components: Clean ✅ — same names across local and Azure (`statestore`, `pubsub`). Scoping correct (only services using each component in scope list).
+- Radius infrastructure: Mixed ⚠️ — `app.bicep` hardcodes Azure component types (`state.azure.blobstorage`, `pubsub.azure.servicebus`). Non-Azure environment would need parallel `app.bicep` or parameterized types. `azure.bicep` bypasses recipe pattern, directly provisioning Azure resources instead of using recipes like `dev.bicep`.
+- CI/CD: Risk ⚠️ — Workflow uses `az CLI` instead of Radius. Expected for Phase 6 (Radius lacks ACA support), but tells "deploy to Azure with az CLI" story, not "deploy anywhere with Radius" story. If left as only path, undermines Radius proposition.
+**Corrective actions:** Parameterize `app.bicep` types (small), document CI/CD path (small), refactor `azure.bicep` recipes (medium), update README (small). All localized; no app code changes needed.
+**Most important:** Document CI/CD's Azure-direct nature and ensure Radius-based path exists before Phase 7 closes.
+
+### 2026-03-23: User Directive — Portability Focus
+**By:** Wesley Backelant (via Copilot)
+**What:** Although this sample targets Azure, keep the primary focus on portability through Dapr and Radius.
+**Why:** User request — captured for team memory

@@ -93,17 +93,39 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - Workflow instance IDs, state transitions, and idempotent replay semantics all correct.
 - **Phase 3 APPROVED 2026-03-23T17:50:00Z.**
 
-### 2026-03-23: Phase 4 validation gate passed
+### 2026-03-23: Phase 4 APPROVED (Billy Revision)
+- All 9 exit criteria verified with fresh evidence
+- Build passes, tests pass, endpoints return correct status codes
+- Auto-approve path ($50) produces correct state transitions and log entries
+- Manual review path ($150) produces correct state transitions and log entries
+- Pub/sub publishing and subscription verified end-to-end
+- Service invocation fire-and-forget semantics verified
+- CorrelationId correctly set to workflow instance ID
+- Malformed payloads return HTTP 200 (no poison)
+- Phase descriptor correctly reports `"phase-4"`
+- Health endpoint returns correct response
+- No contract changes from Phase 3
+- **Phase 4 APPROVED 2026-03-23T16:52:00Z.** Subscriber is demo-trustworthy. Traceability survives pub/sub hop end-to-end.
 
-- All 9 exit criteria verified with fresh evidence during Phase 4 subscriber implementation.
-- Build passes: `dotnet build CloudExpenseLite.slnx` — 0 warnings, 0 errors.
-- Tests pass: `dotnet test CloudExpenseLite.slnx` — all pass.
-- `POST /notifications` endpoint accepts CloudEvents-wrapped `NotificationRequest`.
-- `GET /dapr/subscribe` returns the `expense-notifications` subscription correctly.
-- Auto-approve path ($50 expense): logs `EventType=ExpenseApproved` with correct `ExpenseId`, `CorrelationId`, `Recipient`, `Subject`.
-- Manual-review path ($150 expense): logs `EventType=ManualReviewRequested` with correct `ExpenseId`, `CorrelationId`, `Recipient`, `Subject`.
-- Malformed/null payloads return Warning log + HTTP 200 (no poison).
-- Phase descriptor correctly reports `"phase-4"`.
-- Health endpoint returns `{ "status": "ok" }`.
-- No changes to `CloudExpense.Contracts` or `workflow-engine`.
-- **Phase 4 APPROVED 2026-03-23T16:52:00Z.** Subscriber is demo-trustworthy with observable happy and failure paths. Traceability survives the pub/sub hop end-to-end.
+### 2026-03-23: Phase 5 Review — Radius Integration
+- Reviewed Graham's Phase 5 Radius work: `app.bicep`, `dev.bicep` environment, three Azure recipes
+- Verified no naming drift: `app.bicep` components match app code expectations (`pubsub`, `statestore`)
+- Build and parse evidence all pass: `az bicep build` on all Radius files, `dotnet build`, `dotnet test`
+- Recipes are real (Blob Storage, Service Bus, Key Vault), not placeholders
+- Environment definitions complete and credible for Radius story
+- **Phase 5 APPROVED 2026-03-23T16:34:00Z.** Platform portability story credible.
+
+### 2026-03-23: Phase 6 Review — Azure Deployment on ACA
+- Reviewed Graham's Phase 6 Azure slice: `azure.bicep` environment, CI/CD workflow, Dockerfiles, end-to-end validation
+- Azure environment provisions ACA, ACR, Storage, Service Bus, Key Vault, Dapr components
+- CI/CD workflow includes build, test, Docker push to ACR, deployment to ACA
+- Real end-to-end validation: submits $50 and $150 expenses, verifies state transitions, checks notification-svc logs
+- Component naming aligned: `statestore`, `pubsub`, `platform-secrets` match local slice
+- Validation proves distributed app works on Azure: state persists, workflows execute, pub/sub delivers
+- **Phase 6 APPROVED 2026-03-23T16:45:17Z.** Same app code, Azure-backed Dapr components, validation proves it works.
+
+### 2026-03-23: Phase 7 Authorization
+- Both app track (Phases 1–4) and platform track (Phases 5–6) now complete and integrated
+- Eddie (Docs/Story) authorized to proceed with Phase 7
+- Phase 7 should: update README, add demo walkthrough, document GitHub secrets, add ADR for Azure CLI choice, consider integration tests
+
