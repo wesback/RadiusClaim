@@ -51,3 +51,35 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - README documents exact `$100.00` auto-approval boundary.
 - Billy's solution builds cleanly; Graham's Radius model parses without error.
 - **Phase 2 authorization:** Billy (expense API implementation), Graham (local dev environment), Eddie (README expansion). Karen blocked until Phase 7.
+
+### 2026-03-23: Phase 2 review verdict
+
+- A green build and matching Dapr component names are not enough if the user-facing list endpoint can lose freshly submitted expenses under concurrent requests.
+- For Dapr-backed demo APIs, any shared recent-ID index must be concurrency-safe; otherwise `GET /expenses` stops being evidence of what was actually submitted.
+- When Daisy's design says “submit and retrieve,” treat both the by-id lookup and the list view as part of the trust boundary.
+
+### 2026-03-23: Phase 2 final re-review
+
+- The optimistic-concurrency retry on `expense-index` fixes the original dropped-entry bug, but the failure path is still not trustworthy.
+- `src/expense-api/Program.cs` persists the `ExpenseRecord` before updating the shared index, then returns `503` if indexing still fails; that leaves a saved record behind a reported submission failure.
+- For this demo, a failure response must not create hidden state. Use a transactional write or a compensating delete before Phase 2 can pass.
+
+### 2026-03-23: Phase 2 final gate
+
+- Fresh evidence still matters: `dotnet build ./CloudExpenseLite.slnx --nologo` passed, and `docker compose -f infra/dapr/local/docker-compose.yaml config` validated the local Redis overlay.
+- The latest revision fixed the original lost-update race on `expense-index`, but `src/expense-api/Program.cs` now writes the shared index before the record and still returns `503` if record persistence fails.
+- For submit/list demo flows backed by Dapr state, changing write order is not enough. A reported failure must leave no persistent residue, which means a transaction or explicit compensation.
+
+### 2026-03-23: Phase 2 ultimate gate
+
+- Fresh evidence is still partly green: `dotnet build ./CloudExpenseLite.slnx --nologo` passed again, and `docker compose -f infra/dapr/local/docker-compose.yaml config` still validates the Redis dev overlay.
+- Simone's revision improved the compensation path when the current request inserted `expense-index`, but the recovery check is still skipped when the index was already present before an ambiguous record-write failure.
+- For shared Dapr write paths, "this request did not add the shared index entry" is not enough to skip verification. A concurrent winner can still create observable state, so the API must re-check the record and return a truthful `200`/`409` instead of falling through to `503`.
+- Billy, Rory, and Simone have now all had a turn at the same backend artifact. If this phase stays rejected, further reassignment needs user direction rather than another automatic backend handoff.
+
+### 2026-03-23: Phase 2 APPROVED (Warren Revision)
+
+- Warren resolved the three-part deadlock with a record-first persistence strategy.
+- All prior objections resolved: (1) record-first ordering eliminates phantom index entries, (2) strong-consistency re-read on ambiguous saves prevents hidden state, (3) truthful failure disclosure includes the persisted record and fetch location.
+- Fresh evidence passed: `dotnet build ./CloudExpenseLite.slnx --nologo` succeeds; re-review confirms all prior objections fully resolved.
+- **Phase 2 APPROVED 2026-03-23T14:59:08Z.** Team can proceed with confidence into the next phase.

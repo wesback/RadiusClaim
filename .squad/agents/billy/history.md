@@ -47,3 +47,9 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 ### Next Phase
 
 Phase 2: Implement expense API endpoint (POST /expenses with validation), workflow engine orchestration (Dapr Workflows for approval logic).
+
+## Learnings
+
+- For Dapr state-backed demo APIs, keep the record key (`expense:{id}`) and the list index (`expense-index`) explicit in shared constants so app code and component wiring cannot drift.
+- Phase 2 can stay workflow-free while still preparing the future orchestration path by persisting both `ExpenseId` and `CorrelationId` in the stored `ExpenseRecord`.
+- Lightweight smoke coverage is still possible without a Dapr sidecar by exercising health and validation-first routes; invalid requests should fail before any state call is attempted.

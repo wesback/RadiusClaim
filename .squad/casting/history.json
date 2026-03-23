@@ -6,6 +6,27 @@
       "selected_at": "2026-03-23T12:49:29.197Z",
       "repository": "sovereignapp",
       "notes": "Selected to match the user preference for 60s-70s blues and rock influenced squad names."
+    },
+    {
+      "assignment_id": "cloudexpense-lite-20260323-rory",
+      "universe": "Daisy Jones & The Six",
+      "selected_at": "2026-03-23T13:19:30.803Z",
+      "repository": "sovereignapp",
+      "notes": "Added Rory as a backend consistency specialist after a reviewer escalation in Phase 2."
+    },
+    {
+      "assignment_id": "cloudexpense-lite-20260323-simone",
+      "universe": "Daisy Jones & The Six",
+      "selected_at": "2026-03-23T13:19:30.803Z",
+      "repository": "sovereignapp",
+      "notes": "Added Simone as a backend transaction specialist after repeated reviewer rejection in Phase 2."
+    },
+    {
+      "assignment_id": "cloudexpense-lite-20260323-warren",
+      "universe": "Daisy Jones & The Six",
+      "selected_at": "2026-03-23T14:47:13.578Z",
+      "repository": "sovereignapp",
+      "notes": "Added Warren as a backend write-path specialist after user-approved escalation for the Phase 2 deadlock."
     }
   ],
   "assignment_cast_snapshots": {
@@ -32,6 +53,18 @@
         {
           "name": "Eddie",
           "role": "Docs/Story"
+        },
+        {
+          "name": "Rory",
+          "role": "Backend Consistency Specialist"
+        },
+        {
+          "name": "Simone",
+          "role": "Backend Transaction Specialist"
+        },
+        {
+          "name": "Warren",
+          "role": "Backend Write-Path Specialist"
         }
       ]
     }

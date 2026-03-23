@@ -115,6 +115,22 @@ The following are **out of scope** for CloudExpense Lite:
 
 If any of these surface as "nice to have," the answer is no — they muddy the ten-minute demo.
 
+### 2026-03-23: Phase 2 shared index must use optimistic concurrency
+**By:** Daisy (Lead)
+**What:** Revised `src/expense-api/Program.cs` so `expense-index` is no longer updated with a plain read/modify/write cycle. The recent-expense index now uses Dapr state entry ETags with `FirstWrite` concurrency, strong reads, and bounded retries. Query endpoints now read the record and index paths with strong consistency.
+**Why:** Karen correctly found that concurrent submissions could drop IDs from `expense-index`, which made `GET /expenses` untrustworthy. The smallest fix is to harden the shared index key in app code without adding new infrastructure, new endpoints, or Phase 3 workflow behavior.
+
+### 2026-03-23: Phase 2 expense write ordering (Warren — APPROVED)
+**By:** Warren
+**Artifact:** `src/expense-api/Program.cs`
+**Decision:** Persist the expense record before updating the shared recent-expense index. If the index update fails after retries, return a failure response that explicitly says the record was persisted, includes the full record, and provides the fetch location. This is the smallest reviewer-explainable way to avoid phantom index state while keeping the public response truthful about what actually persisted.
+**Outcome:** Warren's revision resolves all prior objections. Record-first ordering ensures no phantom entries; strong-consistency re-read on ambiguous saves prevents hidden state; truthful failure disclosure keeps the demo trustworthy. **Phase 2 APPROVED**.
+
+### 2026-03-23: Phase 2 state config — Radius + local Dapr overlay
+**By:** Graham (Platform Dev)
+**Decision:** Keep Radius authoritative for service topology in `infra/radius/`, and place local-only Dapr component overlays under `infra/dapr/local/`. Billy and local runs use component name `statestore` pointing to `infra/dapr/local/` as the resources path while Redis runs from the colocated compose file.
+**Why:** Phase 2 needs a usable Redis-backed `statestore` for local Dapr sidecars, but that should remain a development overlay rather than replacing the Radius-first deployment model.
+
 ## Governance
 
 - Keep the sample intentionally small and reference-quality.
@@ -122,3 +138,15 @@ If any of these surface as "nice to have," the answer is no — they muddy the t
 - Preserve the separation of concerns: Dapr for app patterns, Radius for platform wiring.
 - Use evidence-based validation (fresh builds, fresh parses) before approving phase gates.
 - Enforce contract semantics before implementation, not after.
+
+## Phase 2 Exit Criteria (Approved)
+
+Phase 2 write-path deadlock is resolved. The team can proceed to remaining Phase 2 parallel work and Phase 3 planning:
+- ✅ Record-first persistence with truthful failure disclosure
+- ✅ Optimistic concurrency on shared recent-expense index
+- ✅ Strong-consistency verification on ambiguous saves
+- ✅ Idempotent replay semantics (matching persisted record → `200 OK`)
+- ✅ Demo-trustworthy submit/retrieve story across `POST /expenses`, `GET /expenses/{id}`, `GET /expenses`
+- ✅ Local Dapr statestore (Redis) configured under `infra/dapr/local/`
+
+**Status: Phase 2 APPROVED** — Warren's implementation is production-ready for the demo scope.

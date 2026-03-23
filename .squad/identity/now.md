@@ -1,18 +1,25 @@
 ---
-updated_at: 2026-03-23T14:17:00Z
-focus_area: Phase 2 implementation readiness — Billy app code, Graham local dev
+updated_at: 2026-03-23T14:59:08Z
+focus_area: Phase 2 approved; next phase planning — Billy parallelization, Graham local dev, Eddie docs
 active_issues: []
-phase: 2
+phase: 2-approved
 ---
 
 # What We're Focused On
 
-Phase 1 (scaffold + contracts) is complete and passed Karen's validation gate. The squad is now moving into Phase 2 parallel work:
+**Phase 2 is now APPROVED as of 2026-03-23T14:59:08Z.**
 
-- **Billy** (Backend Dev): Implement expense API endpoint (POST /expenses), expense submission flow with validation
-- **Graham** (Platform Dev): Local development environment (docker-compose, Dapr sidecar configs for state, pub/sub, secrets)
-- **Eddie** (Docs/Story): Extend README with "Local Development" section and quick-start commands
-- **Karen** (Tester): Blocked until Phase 7 (integration tests begin)
-- **Daisy** (Lead): Phase 2 design review incoming; validate parallel work does not diverge from Phase 1 contracts
+Warren resolved the write-path deadlock with a record-first persistence strategy. Karen's final review confirmed all three prior objections are now resolved:
+1. Record-first ordering eliminates phantom index entries
+2. Strong-consistency re-read on ambiguous saves prevents hidden state  
+3. Truthful failure disclosure includes the persisted record and fetch location
 
-The team is ready to implement.
+The squad is ready to move into:
+
+- **Billy** (Backend Dev): Continue Phase 2 parallel work or begin Phase 3 planning (approval workflow)
+- **Graham** (Platform Dev): Complete local Dapr sidecar configuration with Redis statestore
+- **Eddie** (Docs/Story): Expand README with "Local Development" section and Phase 2 endpoints
+- **Karen** (Tester): Unblocked; Phase 3 integration tests begin when workflow engine work starts
+- **Daisy** (Lead): Phase 3 design review; next gate covers workflow orchestration and notification service
+
+The team can proceed with confidence. No hidden state, no phantom entries, and no surprise failures in the demo story.

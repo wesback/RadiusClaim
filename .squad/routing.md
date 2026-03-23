@@ -8,6 +8,9 @@ How to decide who handles what.
 |-----------|----------|----------|
 | Architecture, scope, reviewer gates | Daisy | Service boundaries, trade-offs, design review, sequencing |
 | Dapr application code | Billy | Minimal APIs, workflows, service invocation, state, pub/sub |
+| Backend consistency and API reliability | Rory | Concurrency fixes, state consistency, failure-path cleanup |
+| Backend transactions and compensation | Simone | Failure-path compensation, atomicity fixes, truthful write semantics |
+| Backend write-path truthfulness | Warren | Submission semantics, persistence ordering, truthful failure responses |
 | Radius and platform wiring | Graham | Radius app/env model, ACA configuration, Dapr components, secrets wiring |
 | Testing and quality gates | Karen | Scenario tests, threshold rules, regression checks, review verdicts |
 | Docs and demo story | Eddie | README, quickstart, demo walkthrough, architectural narrative |
@@ -24,6 +27,9 @@ How to decide who handles what.
 | `squad` | Triage the issue, evaluate @copilot fit, assign `squad:{member}` label | Daisy |
 | `squad:daisy` | Own architecture, sequencing, or review-heavy issue work | Daisy |
 | `squad:billy` | Implement service logic and Dapr-facing application code | Billy |
+| `squad:rory` | Handle backend reliability fixes, consistency bugs, and safe API revisions | Rory |
+| `squad:simone` | Handle transaction, compensation, and truthful failure-path revisions | Simone |
+| `squad:warren` | Handle write-path ordering, response truthfulness, and submission-path revisions | Warren |
 | `squad:graham` | Handle Radius, ACA, secrets, and deployment wiring | Graham |
 | `squad:karen` | Own test-focused issues or reviewer follow-up | Karen |
 | `squad:eddie` | Own docs, demos, and narrative improvements | Eddie |

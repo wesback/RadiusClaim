@@ -58,3 +58,20 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - Contracts now preserve stable tracing (ExpenseId + CorrelationId), explicit UTC timestamps, and clear rejection-vs-hold distinction.
 - README documents exact `$100.00` auto-approval boundary.
 - **Next phase:** Phase 2 parallel work authorized for Billy (expense API implementation), Graham (local dev environment), Eddie (README expansion).
+
+### 2026-03-23: Phase 2 Design Review Complete
+
+- **Decision file:** `.squad/decisions/inbox/daisy-phase2-design.md`
+- **Scope:** Three endpoints (`POST /expenses`, `GET /expenses/{id}`, `GET /expenses`) plus local Redis state store — no workflow invocation yet.
+- **New contracts needed:** `ExpenseRecord` (stored shape with status) and `ExpenseStatus` enum — Billy adds these to `CloudExpense.Contracts`.
+- **State key pattern:** `expense:{expenseId}` for records, `expense-index` for recent ID list.
+- **Local dev:** Graham provides `infra/dapr/local/statestore.yaml` (Redis-backed component named `statestore`).
+- **Parallel work authorized:** Billy (endpoint implementation), Graham (Dapr component config). Karen and Eddie wait for Phase 7.
+- **Key alignment constraint:** Component name `statestore` and state key prefix `expense:` must match between Billy's code and Graham's YAML.
+- **Phase 2 proves:** Dapr state works locally before Phase 3 adds workflow complexity.
+
+### 2026-03-23: Phase 2 revision fixed shared-index concurrency
+
+- Karen's rejection was correct: a shared `expense-index` key cannot use plain read/modify/write once concurrent submissions exist.
+- The smallest safe revision is optimistic concurrency on the index key with bounded retries and strong reads; that keeps Phase 2 focused on state, not on new infrastructure or workflow logic.
+- For demo trust, a failed index write must surface as an API failure instead of silently returning success with an incomplete `GET /expenses` view.

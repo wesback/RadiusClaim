@@ -17,6 +17,9 @@
 | Graham | Platform Dev | `.squad/agents/graham/charter.md` | ✅ Active |
 | Karen | Tester | `.squad/agents/karen/charter.md` | ✅ Active |
 | Eddie | Docs/Story | `.squad/agents/eddie/charter.md` | ✅ Active |
+| Rory | Backend Consistency Specialist | `.squad/agents/rory/charter.md` | ✅ Active |
+| Simone | Backend Transaction Specialist | `.squad/agents/simone/charter.md` | ✅ Active |
+| Warren | Backend Write-Path Specialist | `.squad/agents/warren/charter.md` | ✅ Active |
 | Scribe | Session Logger | `.squad/agents/scribe/charter.md` | 📋 Silent |
 | Ralph | Work Monitor | — | 🔄 Monitor |
 
