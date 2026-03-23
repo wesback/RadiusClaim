@@ -75,3 +75,21 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - Karen's rejection was correct: a shared `expense-index` key cannot use plain read/modify/write once concurrent submissions exist.
 - The smallest safe revision is optimistic concurrency on the index key with bounded retries and strong reads; that keeps Phase 2 focused on state, not on new infrastructure or workflow logic.
 - For demo trust, a failed index write must surface as an API failure instead of silently returning success with an incomplete `GET /expenses` view.
+
+### 2026-03-23: Phase 3 Design Review Complete
+
+- **Decision file:** `.squad/decisions/inbox/daisy-phase3-scope.md`
+- **Scope:** `ExpenseApprovalWorkflow` with three activities (Approve, Reimburse, Notify). Two workflow-engine endpoints (`POST /workflows/start`, `GET /workflows/{instanceId}`). Expense-api fire-and-forget invocation via Dapr service invocation.
+- **Cut:** `ValidateExpenseActivity` — redundant with expense-api validation, adds a no-op that muddies the demo.
+- **Deferred:** External event wait for manual review; notification-svc subscription (Phase 4); retry/compensation patterns (out of scope).
+- **No contract changes:** Existing `CloudExpense.Contracts` types fully cover Phase 3 needs. Activity I/O types are internal to workflow-engine.
+- **Graham parallel work:** Provide `infra/dapr/local/pubsub.yaml` (Redis-backed, scoped to workflow-engine and notification-svc).
+- **Key design calls:** CorrelationId = workflow instance ID. Workflow failure doesn't block the API response. Activities update ExpenseRecord via plain SaveStateAsync (no ETag needed — single writer after creation).
+- **Parallel work authorized:** Billy (workflow + endpoints + API wiring), Graham (pubsub.yaml). Karen validates when Billy signals ready.
+
+### 2026-03-23: Phase 3 Implementation Complete & Approved
+
+- **Billy's delivery:** `ExpenseApprovalWorkflow` with three activities, two endpoints, expense-api fire-and-forget wiring. All 11 exit criteria passed. Auto-approve path (< $100) progresses Submitted → Approved → Reimbursed. Manual review path (>= $100) progresses Submitted → ManualReviewRequested. Both paths publish `NotificationRequest` to expense-notifications topic.
+- **Graham's delivery:** `infra/dapr/local/pubsub.yaml` — Redis-backed pub/sub component scoped to workflow-engine and notification-svc.
+- **Karen's validation:** All exit criteria verified with fresh evidence. Threshold behavior confirmed. Workflow identity and state transitions guarded and idempotent. Fire-and-forget semantics working correctly.
+- **Phase 3 APPROVED** — 2026-03-23T17:50:00Z. Demo-ready with four Dapr building blocks: State, Workflows, Pub/Sub, Service Invocation.

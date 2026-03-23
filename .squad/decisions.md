@@ -149,4 +149,41 @@ Phase 2 write-path deadlock is resolved. The team can proceed to remaining Phase
 - ✅ Demo-trustworthy submit/retrieve story across `POST /expenses`, `GET /expenses/{id}`, `GET /expenses`
 - ✅ Local Dapr statestore (Redis) configured under `infra/dapr/local/`
 
-**Status: Phase 2 APPROVED** — Warren's implementation is production-ready for the demo scope.
+### 2026-03-23: Phase 3 Scope — Dapr Workflows
+**By:** Daisy (Lead)
+**What:** Implement `ExpenseApprovalWorkflow` with three activities (Approve, Reimburse, Notify), two workflow-engine endpoints, and expense-api fire-and-forget invocation. Cut `ValidateExpenseActivity` (redundant); defer external event wait and notification-svc subscription.
+**Why:** Workflows are the one new building block Phase 3 proves. No-op activities confuse the demo without teaching. Fire-and-forget keeps the API contract clean (expense accepted, workflow is async background).
+
+### 2026-03-23: Phase 3 Expense Record as Canonical Source
+**By:** Billy (Backend Dev)
+**What:** Use the persisted `ExpenseRecord` as the canonical source when `expense-api` invokes `workflow-engine`. Project the stored record back into `ExpenseSubmission` before calling `POST workflow-engine/workflows/start`.
+**Why:** If `POST /expenses` generated an `ExpenseId` or `CorrelationId`, forwarding the raw inbound request would break traceability and could start a workflow with ids that don't match persisted state. Using the persisted record keeps `ExpenseId`, `CorrelationId`, workflow instance id, and state transitions aligned.
+
+### 2026-03-23: Phase 3 Pub/Sub as Local Overlay
+**By:** Graham (Platform Dev)
+**What:** Implement the Phase 3 local Dapr `pubsub` component as a Redis-backed overlay in `infra/dapr/local/pubsub.yaml`, reusing the existing local Redis container on `localhost:6379` and scoping access to `workflow-engine` and `notification-svc` only.
+**Why:** Daisy's Phase 3 scope calls for a small, local-only pub/sub slice. Reusing the Phase 2 Redis runtime keeps the change minimal, avoids duplicate emulator infrastructure, and preserves the existing pattern where Radius owns service topology while `infra/dapr/local/` provides development overlays.
+
+### 2026-03-23: Phase 3 Exit Criteria Complete & Approved
+**By:** Karen (Tester)
+**Status:** APPROVED — 2026-03-23T17:50:00Z
+**What:** All 11 exit criteria verified with fresh evidence. Build passes. Workflow and activities registered. Endpoints return correct status codes. Auto-approve path (< $100) produces Submitted → Approved → Reimbursed. Manual review path (>= $100) produces Submitted → ManualReviewRequested. Pub/sub publishes on both paths. Service invocation is fire-and-forget. CorrelationId is the workflow instance ID. pubsub.yaml is correct. No contract changes.
+**Why:** Evidence-based validation ensures the implementation matches Daisy's approved scope exactly. State transitions are guarded and idempotent. Failure semantics are truthful. The demo is trustworthy.
+
+## Phase 3 Exit Criteria (Approved)
+
+Phase 3 proves Dapr Workflows orchestrate the expense approval flow with four building blocks: State, Workflows, Pub/Sub, Service Invocation. All 11 exit criteria passed:
+
+- ✅ Build passes: `dotnet build CloudExpenseLite.slnx`
+- ✅ Workflow + 3 activities registered in `Program.cs`
+- ✅ `POST /workflows/start` returns 202 Accepted
+- ✅ `GET /workflows/{instanceId}` returns workflow status or 404
+- ✅ Auto-approve path (< $100): Submitted → Approved → Reimbursed
+- ✅ Manual review path (>= $100): Submitted → ManualReviewRequested
+- ✅ Both paths publish `NotificationRequest` to expense-notifications topic
+- ✅ Fire-and-forget service invocation: workflow failure does not block API response
+- ✅ `CorrelationId` is the Dapr workflow instance ID
+- ✅ `infra/dapr/local/pubsub.yaml` exists, Redis-backed, scoped correctly
+- ✅ No contract changes from Phase 2
+
+**Status: Phase 3 APPROVED** — 2026-03-23. All 11 criteria verified. Demo-ready.
