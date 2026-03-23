@@ -1,0 +1,44 @@
+{
+  "agents": {
+    "daisy": {
+      "persistent_name": "Daisy",
+      "universe": "Daisy Jones & The Six",
+      "created_at": "2026-03-23T12:49:29.197Z",
+      "legacy_named": false,
+      "status": "active",
+      "role": "Lead"
+    },
+    "billy": {
+      "persistent_name": "Billy",
+      "universe": "Daisy Jones & The Six",
+      "created_at": "2026-03-23T12:49:29.197Z",
+      "legacy_named": false,
+      "status": "active",
+      "role": "Backend Dev"
+    },
+    "graham": {
+      "persistent_name": "Graham",
+      "universe": "Daisy Jones & The Six",
+      "created_at": "2026-03-23T12:49:29.197Z",
+      "legacy_named": false,
+      "status": "active",
+      "role": "Platform Dev"
+    },
+    "karen": {
+      "persistent_name": "Karen",
+      "universe": "Daisy Jones & The Six",
+      "created_at": "2026-03-23T12:49:29.197Z",
+      "legacy_named": false,
+      "status": "active",
+      "role": "Tester"
+    },
+    "eddie": {
+      "persistent_name": "Eddie",
+      "universe": "Daisy Jones & The Six",
+      "created_at": "2026-03-23T12:49:29.197Z",
+      "legacy_named": false,
+      "status": "active",
+      "role": "Docs/Story"
+    }
+  }
+}

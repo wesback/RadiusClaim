@@ -1,0 +1,39 @@
+{
+  "universe_usage_history": [
+    {
+      "assignment_id": "cloudexpense-lite-20260323",
+      "universe": "Daisy Jones & The Six",
+      "selected_at": "2026-03-23T12:49:29.197Z",
+      "repository": "sovereignapp",
+      "notes": "Selected to match the user preference for 60s-70s blues and rock influenced squad names."
+    }
+  ],
+  "assignment_cast_snapshots": {
+    "cloudexpense-lite-20260323": {
+      "selected_at": "2026-03-23T12:49:29.197Z",
+      "universe": "Daisy Jones & The Six",
+      "members": [
+        {
+          "name": "Daisy",
+          "role": "Lead"
+        },
+        {
+          "name": "Billy",
+          "role": "Backend Dev"
+        },
+        {
+          "name": "Graham",
+          "role": "Platform Dev"
+        },
+        {
+          "name": "Karen",
+          "role": "Tester"
+        },
+        {
+          "name": "Eddie",
+          "role": "Docs/Story"
+        }
+      ]
+    }
+  }
+}
