@@ -14,3 +14,7 @@
 - Chose a hosted frontend inside `src/expense-api/wwwroot/app/` so the sample gains a polished UI without introducing a separate Node toolchain, CORS setup, or an extra deployment surface.
 - Added a workflow-telemetry proxy at `GET /expenses/{id}/workflow` in `src/expense-api/Program.cs`; it derives the workflow instance from `ExpenseRecord.CorrelationId` and keeps the browser on the same origin.
 - Key UI entry points now live at `src/expense-api/wwwroot/app/index.html`, `src/expense-api/wwwroot/app/styles.css`, and `src/expense-api/wwwroot/app/app.js`.
+- Conducted framework landscape research (March 2026) evaluating React + Vite + TypeScript, Next.js, Vue, SvelteKit, and Blazor (WASM/Server) against RadiusClaim's constraints: same-origin hosting, Kubernetes-first portability, demo clarity, and long-term maintainability.
+- **Decision**: Recommend React + Vite + TypeScript as primary choice, Vue + Vite as runner-up. Vanilla approach was the right demo-first decision but reaches its limits at scale (no type safety, monolithic state, no component reusability).
+- Rationale for React: industry-standard job market (70%+ market share), mature ecosystem, excellent TypeScript support, Vite's fast HMR, ability to keep the app in `wwwroot/` without separate Node deployment, and component-based architecture makes the UI teachable.
+- Migration path is non-breaking: create `src/expense-api/client/` as separate Vite project, build to `wwwroot/app/dist/`, no API changes, no deployment changes — still one .NET binary.
