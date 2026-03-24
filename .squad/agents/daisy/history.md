@@ -596,3 +596,14 @@ Coordinated final decision documentation for Dapr namespace research and migrati
 - Authored `.squad/orchestration-log/2026-03-24T14:46:49Z-daisy.md` summarizing independent review verdict
 - Merged decision from `.squad/decisions/inbox/daisy-dapr-migration-verdict.md` into `.squad/decisions.md`
 - Deduplicating and consolidating Dapr namespace decision: Graham's research findings + Daisy's approval verdict → unified `.squad/decisions.md` entry documenting mixed-namespace interim state as team consensus
+
+## 2026-03-24T15:49:35Z — Portability Documentation Completion (Eddie)
+
+**Status Update from Eddie (Docs/Story):**
+- **Completed:** Shift portability documentation to emphasize Azure Local / Arc-enabled Kubernetes instead of AWS/GCP examples
+- **Why This Matters:** Documentation now centers on supported, concrete targets (Azure Local, Arc-enabled, self-managed K8s) instead of speculative multi-cloud
+- **Narrative Established:** "App code is Dapr-portable. Deployment model is Kubernetes-portable via Radius. Azure backing services are current; Azure Local, Arc-enabled, and self-managed clusters are supported deployment targets."
+- **Files Updated:** README.md, docs/ADR-0001, docs/end-to-end-setup-walkthrough.md
+- **Decision Record:** `eddie-portability-docs-2026-03-24`
+
+**Your Lead Input:** Your earlier decision to reframe from ACA-primary to Kubernetes-first (prioritizing portability) is now reflected in all user-facing documentation.

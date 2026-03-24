@@ -521,3 +521,12 @@ Coordinated decision documentation for Dapr namespace research:
 - `rad workspace show -o json` is the fastest way to rule out the "wrong active environment" theory: if the workspace already points at `/.../environments/azure`, the failure is in the `azure` environment state itself, not in Radius still targeting `bootstrap-fix`.
 - `rad env show azure -o json` should expose both `properties.providers.azure.scope` and real recipe `location` values; if the provider block is missing and recipe parameters still show placeholders such as `<your-azure-region>`, the environment was deployed with incomplete inputs and should be repaired by redeploying `infra/radius/environments/azure-radius.bicep`, not by editing `app.bicep`.
 - In this repo's current live state, the workspace already targets `azure`, while `azure` is missing the Azure provider and still carries placeholder recipe locations. The shortest safe repair is to switch back to `bootstrap-fix`, redeploy the Azure environment with the real subscription/resource-group scope and location, then switch to `azure` and rerun the app deploy.
+
+## 2026-03-24T15:49:35Z — Team Update: Portability Documentation Completion
+
+**Status from Eddie (Docs/Story):**
+- **Completed:** Documentation shift to Azure Local / Arc-enabled Kubernetes / on-premises portability
+- **Portability Message:** App code is Dapr-portable, deployment model is Kubernetes-portable via Radius, Azure backing services are current
+- **Files Updated:** README, ADR-0001, end-to-end walkthrough
+- **Related to Your Work:** Aligns with your Kubernetes-first workflow and namespace migration decisions
+- **Decision Record:** `eddie-portability-docs-2026-03-24`

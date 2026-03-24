@@ -1064,3 +1064,77 @@ If the team wants to revisit this later, require all three before approving:
 - `docs/radius-validation-checklist.md` (mixed-namespace explanation)
 - `.squad/skills/radius-namespace-migration/SKILL.md`
 - `infra/radius/app.bicep` (unchanged Applications.Dapr resources)
+
+### 2026-03-24: Daisy & Graham — Idempotency Fix Approval
+**By:** Daisy (Lead), Graham (Platform Dev)
+**Status:** APPROVED
+**What:** Graham's fix preserves legacy app/environment identity for existing Dapr resources (`statestore`, `pubsub`, `platform-secrets`), keeping ownership on `Applications.Core/applications@2023-10-01-preview` and `Applications.Core/environments@2023-10-01-preview` while leaving Dapr components on their existing namespace.
+**Why:** Existing Dapr resources are keyed to their owning application/environment resource IDs. Reusing the same logical names under `Radius.Core/*` does not count as the same owner, so redeploys stop being idempotent.
+**What's Preserved:**
+- Key Vault recipe remediation (enablePurgeProtection fix)
+- OCI-backed recipe publishing
+- `Radius.Compute/containers` and `Radius.Compute/routes` migrations
+- Stable ownership for `statestore`, `pubsub`, `platform-secrets`
+**Validation:** `az bicep build` succeeds with expected non-blocking `BCP081` warnings; generated JSON artifacts match current Bicep sources.
+**Operator Guidance:** If a team wants to move application/environment ownership to `Radius.Core/*`, treat it as an explicit migration that recreates or remaps Dapr-owned resources. Do not present it as a transparent rename.
+**Repo touchpoints:**
+- `infra/radius/app.bicep`
+- `infra/radius/modules/container-service.bicep`
+- `infra/radius/environments/dev.bicep`
+- `infra/radius/environments/azure-radius.bicep`
+- `infra/radius/recipes/azure/secrets.bicep`
+- `README.md`
+- `docs/radius-validation-checklist.md`
+
+### 2026-03-24: Eddie — End-to-End Setup Walkthrough Structure
+**By:** Eddie (Docs/Story)
+**Status:** IMPLEMENTED
+**What:** Created `docs/end-to-end-setup-walkthrough.md` (674 lines) — a comprehensive step-by-step operator guide covering RadiusClaim deployment from scratch to web UI validation.
+**Why:** Previous documentation had separate pieces (prerequisites, demo, CI/CD, architecture) but no single document answered: "What do I do first, and in what order?"
+**Key Design:**
+- Steps 1–5: Azure foundation (login, resource group, AKS, Dapr, Radius)
+- Steps 6–9: Deployment (recipe publishing, workspace init, environment, app)
+- Steps 10–12: Validation (status, browser, tests)
+- Honesty about automation vs. manual work; realistic ~30–45 minute setup time
+- Dual-path support: GitHub Actions (recommended) + local `rad` CLI (advanced)
+- 12 troubleshooting scenarios keyed by symptom with diagnosis + solutions
+**Impact:**
+- Single source of truth for "how to deploy this sample"
+- Clear recovery paths for common failures
+- README now references walkthrough as entry point
+- Reduces support questions on where to start
+**Validation:** Cross-links to demo, validation checklist, and architecture docs all valid.
+
+### 2026-03-24: Graham — Bad Azure Environment State Repair (Environment Drift)
+**By:** Graham (Platform Dev)
+**Status:** DECIDED
+**What:** Treat `InvalidDeployment` failures after environment switch as live environment drift, not app-model failures. Safe repair path: redeploy the environment Bicep from bootstrap with real provider scope + location values, then switch back.
+**Context:** `rad deploy` failed after switching from `bootstrap-fix` to `azure`; inspection showed `azure` environment lacked `properties.providers.azure.scope` and still had recipe `location` placeholders.
+**Why:** The repo's Azure environment model (`infra/radius/environments/azure-radius.bicep`) already declares the Azure provider. If the live environment lacks that property, the deployment inputs never landed in Radius state.
+**Safe Repair:**
+```bash
+rad env switch bootstrap-fix
+rad deploy infra/radius/environments/azure-radius.bicep \
+  --parameters @infra/radius/environments/azure-radius.parameters.json \
+  --parameters azureProviderScope="/subscriptions/5b6c36e5-b279-4005-8bf1-c73b1c2b71c2/resourceGroups/radiusclaim-rg" \
+  --parameters location="belgiumcentral"
+rad env switch azure
+rad deploy infra/radius/app.bicep ...
+```
+**Why Not One-Off `rad env update`:** Would patch missing provider but leave recipe placeholders untouched. Full environment redeploy repairs both pieces in one deliberate step.
+**Operator Guidance:** Use existing bootstrap environment for the repair; redeploying environment model is authoritative over single-property patches.
+
+### 2026-03-24: Eddie — Shift Portability Documentation to Azure Local / Arc-Enabled Kubernetes
+**By:** Eddie (Docs/Story)
+**Status:** COMPLETED
+**What:** Updated RadiusClaim documentation to center portability story on **concrete, supported targets** (Azure Local, Arc-enabled Kubernetes, self-managed Kubernetes) instead of speculative AWS/GCP examples.
+**Why:** AWS/GCP recipes don't exist yet; Azure Local and Arc-enabled Kubernetes are supported today. Showing portability proof on real targets is more credible.
+**Files Updated:**
+1. **README.md** — Removed explicit AWS/GCP naming, kept language generic ("other clouds")
+2. **docs/ADR-0001-kubernetes-first-deployment.md** — Reframed "Roadmap: Enabling Other Clouds" to "Portability in Practice: Azure Local and Arc-Enabled Kubernetes" with concrete examples and deployment targets diagram
+3. **docs/end-to-end-setup-walkthrough.md** — Updated cluster Option B to reference Arc-enabled + self-managed, removed AWS/GCP as example targets
+4. **scripts/README.md** — No changes needed
+**Narrative:**
+> "App code is Dapr-portable. Deployment model is Kubernetes-portable via Radius. Azure backing services are current; Azure Local, Arc-enabled, and self-managed clusters are supported deployment targets. Future Radius recipes for other clouds would follow the same environment-swapping pattern."
+**Message to Team:** Portability story is now honest, concrete, and ready to demo.
+**Impact:** Improves discoverability of Arc-enabled and self-managed Kubernetes options; aligns with current product capabilities; maintains honest scope boundaries.
