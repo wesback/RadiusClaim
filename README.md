@@ -131,7 +131,7 @@ graph LR
 ```
 sovereignapp/
 ├── src/
-│   ├── CloudExpense.Contracts/           # Shared DTOs and events
+│   ├── RadiusClaim.Contracts/           # Shared DTOs and events
 │   ├── expense-api/                      # Minimal API for submission
 │   ├── workflow-engine/                  # Dapr Workflow orchestrator
 │   └── notification-svc/                 # Pub/Sub subscriber
@@ -152,7 +152,7 @@ sovereignapp/
 
 ## Shared Contracts
 
-All services use these types from `CloudExpense.Contracts`. No Dapr dependencies in contracts — pure data shapes.
+All services use these types from `RadiusClaim.Contracts`. No Dapr dependencies in contracts — pure data shapes.
 
 ### Demo flow contract rules
 

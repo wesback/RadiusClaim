@@ -179,6 +179,20 @@ Kept the Radius-first story intact while making validation requirements explicit
 - Closing the Radius CI gap worked best by reusing the shared flow-validation script and collecting runtime-specific evidence separately: `kubectl port-forward`/`kubectl logs` for Radius, runtime-native commands for other targets.
 - When a validation script also emits a small machine-readable artifact (expense IDs, correlation IDs, summary counts), CI can prove downstream pub/sub evidence without duplicating the flow logic.
 
+## .gitignore Housekeeping (2026-03-24)
+
+**Updated `.gitignore`**
+- Preserved all existing `.squad/` ignore rules (orchestration-log, log, decisions/inbox, sessions, .squad-workstream)
+- Added .NET conventional ignores: `bin/`, `obj/`, `*.exe`, `*.dll`, `*.pdb`
+- Added IDE ignores: `.vs/`, `.vscode/`, `*.user`, `*.suo`, `*.sln.iml`, `.idea/`
+- Added NuGet ignores: `*.nupkg`, `*.snupkg`, `.nuget/`
+- Added test/coverage ignores: `TestResults/`, `coverage/`, `*.trx`
+- Added OS ignores: `.DS_Store`, `Thumbs.db`
+
+**Rationale:** .NET projects accumulate build debris (bin, obj) that had been going into the index. A conventional .gitignore keeps `git status` clean and prevents accidental commits of development-environment-specific files (IDE configs, nuget caches, test results). Pattern order: Squad state → .NET build → IDE → NuGet → test/coverage → Rider → OS.
+
+**Validation:** .gitignore active; git now cleaning up previously-tracked build artifacts (bin/, obj/ deletions detected in status).
+
 ## Phase 7 Completion (2026-03-24)
 
 ### Orchestration Log Published

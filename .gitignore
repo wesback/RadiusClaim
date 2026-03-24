@@ -5,3 +5,35 @@
 .squad/sessions/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
+
+# .NET build outputs
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+
+# IDE and editor files
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.iml
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+
+# Local testing and coverage
+TestResults/
+coverage/
+*.trx
+
+# Rider
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -30,7 +30,7 @@ kubectl config current-context
 # Expected: Your target Kubernetes cluster
 
 # Verify namespace exists (or will be created)
-kubectl get namespace cloudexpense-lite-azure || echo "Will be created during deployment"
+kubectl get namespace radiusclaim-azure || echo "Will be created during deployment"
 
 # Verify cluster connectivity
 kubectl cluster-info
@@ -65,14 +65,14 @@ For CI/CD deployment, verify these are configured:
 **Required Variables:**
 ```bash
 # AZURE_LOCATION (e.g., eastus, westus2)
-# AZURE_RESOURCE_GROUP (e.g., cloudexpense-lite-rg)
+# AZURE_RESOURCE_GROUP (e.g., radiusclaim-rg)
 # AZURE_DEPLOYMENT_MODE (default: radius-first)
 ```
 
 **Optional Variables:**
 ```bash
 # RADIUS_KUBERNETES_CONTEXT (kubectl context name, optional)
-# RADIUS_KUBERNETES_NAMESPACE (default: cloudexpense-lite-azure)
+# RADIUS_KUBERNETES_NAMESPACE (default: radiusclaim-azure)
 ```
 
 To verify in GitHub:
@@ -117,23 +117,23 @@ If deploying manually (not via CI/CD), verify images are available:
 
 ```bash
 # Check GHCR images exist (for CI/CD built images)
-docker pull ghcr.io/<your-org>/cloudexpense-lite/expense-api:<tag>
-docker pull ghcr.io/<your-org>/cloudexpense-lite/workflow-engine:<tag>
-docker pull ghcr.io/<your-org>/cloudexpense-lite/notification-svc:<tag>
+docker pull ghcr.io/<your-org>/radiusclaim/expense-api:<tag>
+docker pull ghcr.io/<your-org>/radiusclaim/workflow-engine:<tag>
+docker pull ghcr.io/<your-org>/radiusclaim/notification-svc:<tag>
 ```
 
 For local testing, you can build and push images manually:
 
 ```bash
 # From repository root
-docker build -f src/expense-api/Dockerfile -t ghcr.io/<your-org>/cloudexpense-lite/expense-api:local .
-docker build -f src/workflow-engine/Dockerfile -t ghcr.io/<your-org>/cloudexpense-lite/workflow-engine:local .
-docker build -f src/notification-svc/Dockerfile -t ghcr.io/<your-org>/cloudexpense-lite/notification-svc:local .
+docker build -f src/expense-api/Dockerfile -t ghcr.io/<your-org>/radiusclaim/expense-api:local .
+docker build -f src/workflow-engine/Dockerfile -t ghcr.io/<your-org>/radiusclaim/workflow-engine:local .
+docker build -f src/notification-svc/Dockerfile -t ghcr.io/<your-org>/radiusclaim/notification-svc:local .
 
 # Push to registry
-docker push ghcr.io/<your-org>/cloudexpense-lite/expense-api:local
-docker push ghcr.io/<your-org>/cloudexpense-lite/workflow-engine:local
-docker push ghcr.io/<your-org>/cloudexpense-lite/notification-svc:local
+docker push ghcr.io/<your-org>/radiusclaim/expense-api:local
+docker push ghcr.io/<your-org>/radiusclaim/workflow-engine:local
+docker push ghcr.io/<your-org>/radiusclaim/notification-svc:local
 ```
 
 ### ✅ Radius Workspace and Group
@@ -173,7 +173,7 @@ rad env switch bootstrap-test
 rad deploy infra/radius/environments/azure-radius.bicep \
   --parameters @infra/radius/environments/azure-radius.parameters.json \
   --parameters environmentName=azure \
-  --parameters kubernetesNamespace=cloudexpense-lite-azure \
+  --parameters kubernetesNamespace=radiusclaim-azure \
   --parameters azureProviderScope="/subscriptions/<subscription-id>/resourceGroups/<resource-group>" \
   --parameters location=<azure-location>
 ```
@@ -202,7 +202,7 @@ rad env show azure
 
 ```bash
 rad deploy infra/radius/app.bicep \
-  --parameters containerRegistry='ghcr.io/<your-org>/cloudexpense-lite' \
+  --parameters containerRegistry='ghcr.io/<your-org>/radiusclaim' \
   --parameters imageTag='<your-tag>' \
   --parameters deploymentTarget='radius'
 ```
@@ -210,7 +210,7 @@ rad deploy infra/radius/app.bicep \
 **Expected output:**
 ```
 Building infra/radius/app.bicep...
-Deploying template 'infra/radius/app.bicep' for application 'cloudexpense-lite'...
+Deploying template 'infra/radius/app.bicep' for application 'radiusclaim'...
 Deployment Complete
 
 Resources:
@@ -226,11 +226,11 @@ Resources:
 **Validation:**
 ```bash
 # Check Kubernetes resources were created
-kubectl get pods -n cloudexpense-lite-azure
+kubectl get pods -n radiusclaim-azure
 # Expected: expense-api, workflow-engine, notification-svc pods in Running state
 
 # Check Dapr components exist
-kubectl get components -n cloudexpense-lite-azure
+kubectl get components -n radiusclaim-azure
 # Expected: statestore, pubsub, platform-secrets components
 ```
 
@@ -242,13 +242,13 @@ kubectl get components -n cloudexpense-lite-azure
 
 ```bash
 # Check all pods are Running
-kubectl get pods -n cloudexpense-lite-azure
+kubectl get pods -n radiusclaim-azure
 # Expected: 3 pods with STATUS = Running
 
 # Check pod logs for startup errors
-kubectl logs -n cloudexpense-lite-azure -l app=expense-api --tail=50
-kubectl logs -n cloudexpense-lite-azure -l app=workflow-engine --tail=50
-kubectl logs -n cloudexpense-lite-azure -l app=notification-svc --tail=50
+kubectl logs -n radiusclaim-azure -l app=expense-api --tail=50
+kubectl logs -n radiusclaim-azure -l app=workflow-engine --tail=50
+kubectl logs -n radiusclaim-azure -l app=notification-svc --tail=50
 # Expected: No error messages, Dapr sidecar initialized
 ```
 
@@ -256,13 +256,13 @@ kubectl logs -n cloudexpense-lite-azure -l app=notification-svc --tail=50
 
 ```bash
 # Verify Dapr components are registered
-kubectl get components -n cloudexpense-lite-azure
+kubectl get components -n radiusclaim-azure
 # Expected: statestore, pubsub, platform-secrets
 
 # Check component configuration
-kubectl describe component statestore -n cloudexpense-lite-azure
-kubectl describe component pubsub -n cloudexpense-lite-azure
-kubectl describe component platform-secrets -n cloudexpense-lite-azure
+kubectl describe component statestore -n radiusclaim-azure
+kubectl describe component pubsub -n radiusclaim-azure
+kubectl describe component platform-secrets -n radiusclaim-azure
 # Expected: Correct component type and metadata
 ```
 
@@ -286,7 +286,7 @@ az keyvault list --resource-group <your-resource-group> --query "[].{name:name,l
 
 ```bash
 # Port-forward to expense-api
-kubectl port-forward -n cloudexpense-lite-azure svc/expense-api 8080:8080 &
+kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
 FORWARD_PID=$!
 
 # Test health endpoint
@@ -306,12 +306,12 @@ kill $FORWARD_PID
 If a live environment is available, run the shared validation script against a port-forwarded `expense-api` service:
 
 ```bash
-kubectl port-forward -n cloudexpense-lite-azure svc/expense-api 8080:8080 &
+kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
 FORWARD_PID=$!
 
 ./scripts/validate-deployment.sh http://127.0.0.1:8080
 
-kubectl logs -n cloudexpense-lite-azure deployment/notification-svc -c notification-svc --tail=200
+kubectl logs -n radiusclaim-azure deployment/notification-svc -c notification-svc --tail=200
 kill $FORWARD_PID
 ```
 
@@ -358,11 +358,11 @@ rad env switch bootstrap-temp
 **Solution:**
 ```bash
 # Check pod events
-kubectl describe pod <pod-name> -n cloudexpense-lite-azure
+kubectl describe pod <pod-name> -n radiusclaim-azure
 # Look for ImagePullBackOff, resource limits, or scheduling failures
 
 # Verify images are accessible
-kubectl run test-pull --image=ghcr.io/<your-org>/cloudexpense-lite/expense-api:<tag> --command -- sleep 3600
+kubectl run test-pull --image=ghcr.io/<your-org>/radiusclaim/expense-api:<tag> --command -- sleep 3600
 kubectl delete pod test-pull
 ```
 
@@ -388,10 +388,10 @@ rad env show azure --query 'properties.providers.azure.scope'
 **Solution:**
 ```bash
 # Check Dapr sidecar logs
-kubectl logs -n cloudexpense-lite-azure <pod-name> -c daprd
+kubectl logs -n radiusclaim-azure <pod-name> -c daprd
 
 # Verify Dapr is enabled
-kubectl get pod <pod-name> -n cloudexpense-lite-azure -o jsonpath='{.spec.containers[*].name}'
+kubectl get pod <pod-name> -n radiusclaim-azure -o jsonpath='{.spec.containers[*].name}'
 # Expected: Container name includes "daprd"
 ```
 

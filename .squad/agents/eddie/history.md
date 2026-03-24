@@ -159,3 +159,70 @@ Phase 2: Extend README with "Local Development" section (setup commands, local e
 
 **Status:** APPROVED
 
+## 2026-03-24: App Rename — CloudExpense Lite → RadiusClaim
+
+### Delivered
+
+**Complete user-facing rename sweep across all documentation and scripts:**
+
+1. **README.md** (6 updates)
+   - Title: `# CloudExpense Lite` → `# RadiusClaim`
+   - Introductory narrative: "CloudExpense Lite shows the answer" → "RadiusClaim shows the answer"
+   - Project layout: `CloudExpenseLite.slnx` → `RadiusClaim.slnx`
+   - Namespace reference: `CloudExpense.Contracts` → `RadiusClaim.Contracts` (matches actual source code)
+   - Deployment variables table: Updated example resource group from `cloudexpense-lite-rg` to `radiusclaim-rg` and namespace from `cloudexpense-lite-azure` to `radiusclaim-azure`
+
+2. **docs/phase-7-demo-walkthrough.md** (1 update)
+   - Prerequisites section: "CloudExpense Lite is deployed" → "RadiusClaim is deployed"
+
+3. **docs/ADR-0001-azure-cli-fallback.md** (3 updates)
+   - Summary section: "CloudExpense Lite aims to demonstrate" → "RadiusClaim aims to demonstrate"
+   - Maintenance obligations: "CloudExpense Lite contract shapes" → "RadiusClaim contract shapes"
+   - References section: "CloudExpense Lite Repo" → "RadiusClaim Repo"
+
+4. **docs/phase-1-validation.md** (2 updates)
+   - Title: `# CloudExpense Lite — Phase 1 Validation Gate` → `# RadiusClaim — Phase 1 Validation Gate`
+   - Build command reference: `CloudExpenseLite.slnx` → `RadiusClaim.slnx`
+
+5. **docs/phase-7-validation-checklist.md** (2 updates)
+   - Purpose section: "CloudExpense Lite sample is production-ready" → "RadiusClaim sample is production-ready"
+   - Release checkpoint: "CloudExpense Lite is demo-ready" → "RadiusClaim is demo-ready"
+
+6. **docs/radius-validation-checklist.md** (37 updates across multiple categories)
+   - All namespace references: `cloudexpense-lite-azure` → `radiusclaim-azure`
+   - All container registry paths: `ghcr.io/<your-org>/cloudexpense-lite` → `ghcr.io/<your-org>/radiusclaim`
+   - All resource group examples: `cloudexpense-lite-rg` → `radiusclaim-rg`
+   - All deployment output messages: Application name updated in example outputs
+   - Total: 37 sed operations across namespace, container registry, and resource group references
+
+7. **scripts/README.md** (3 updates)
+   - Title: `# CloudExpense Lite - Scripts` → `# RadiusClaim - Scripts`
+   - Purpose sections: All three script descriptions updated from CloudExpense Lite to RadiusClaim
+
+8. **scripts/validate-deployment.sh** (2 updates)
+   - Script header comment: `# CloudExpense Lite - Deployment Validation Script` → `# RadiusClaim - Deployment Validation Script`
+   - Description comment: "deployed CloudExpense Lite instance" → "deployed RadiusClaim instance"
+   - Success message: "CloudExpense Lite deployment is HEALTHY" → "RadiusClaim deployment is HEALTHY"
+
+### Pattern: Technical Naming vs. User-Facing
+
+**Kept intentionally:**
+- Internal C# namespace references in infra/radius/app.json (used by Bicep parameter defaults; these don't affect user-facing demo)
+- Resource naming function prefix in pubsub recipe: `cloudexpense-{0}` is a technical prefix for auto-generated Azure resource names, not user-visible
+
+**Renamed consistently:**
+- All documentation titles, headings, and explanatory text
+- All example configuration values and defaults
+- All example command outputs and resource names
+- All script messages and user-facing strings
+
+### Evidence
+
+- `grep -r "CloudExpense\|cloudexpense-lite" /Users/wesleyb/git/RadiusClaim/README.md /Users/wesleyb/git/RadiusClaim/docs/*.md /Users/wesleyb/git/RadiusClaim/scripts/*.sh /Users/wesleyb/git/RadiusClaim/infra/radius/*.json` returns 0 results
+- All demo walkthroughs, validation checklists, and operational scripts now reference RadiusClaim consistently
+- Source code (C# namespaces) already uses RadiusClaim, now aligned with documentation
+
+### Next Steps
+
+Team communication moving forward should reference the sample as "RadiusClaim" in all public-facing materials (demos, talks, blogs, external sharing).
+

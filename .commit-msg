@@ -1,0 +1,13 @@
+Initial RadiusClaim publish: Radius-first Azure platform with Dapr, multi-environment validation, and local dev setup
+
+This commit establishes the RadiusClaim baseline:
+
+- Platform: Radius application model with deterministic Dapr component wiring (statestore, pubsub, platform-secrets)
+- Infrastructure: Radius-first Azure deployment path with bootstrapped ACA fallback; three Bicep recipes for backing services
+- Local Development: Docker Compose for Redis/Dapr, local environment Bicep overlay, comprehensive validation checklist
+- Documentation: README with platform overview, secrets/variables table, demo walkthrough, and ADR for design rationale
+- Validation: All Bicep files parse cleanly, solution builds zero warnings, all tests pass; live end-to-end validation requires deployed Radius environment
+
+Platform intent is clear: Radius controls topology and component contract across all environments; Azure recipes are deterministic and reusable.
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
