@@ -1300,3 +1300,60 @@ export GITHUB_USERNAME="your-github-username"
 **Rationale:** The `--wait` flag is no longer supported in current versions of the Radius CLI. Existing walkthrough comment "This may take a few minutes" (line 212) already conveys async behavior, so users understand to wait for completion without explicit flag support.
 **Scope:** Single-line change in walkthrough documentation; no other modifications made to preserve existing cleanup and modern parameters. Command now aligns with current Radius CLI supported parameters.
 **Impact:** Improves user experience and prevents command failures when following the walkthrough with current Radius CLI version.
+
+### 2026-03-24: Docker Build Guidance — Architecture Awareness for Mac ARM
+**By:** Eddie (Docs/Story)
+**Status:** COMPLETE
+**What:** Updated `docs/end-to-end-setup-walkthrough.md` with explicit architecture-aware Docker build guidance for cross-compilation scenarios (e.g., Mac ARM → x86 AKS).
+**Changes:**
+1. Tools section (lines 71–85): Added `docker buildx` as optional tooling
+2. Manual deployment (lines 457–465): Added 3-line comment on native build assumption with reference to multi-platform section
+3. New section "Multi-platform Builds (Mac ARM, Linux x86, Windows)" (lines 293–335): Scenario framing, architecture detection, docker buildx examples for single-platform and multi-platform manifests, warnings about registry requirement
+4. Redeploy section (lines 726–740): Updated to mention native-build assumption with commented buildx alternative
+
+**Why:** Mac ARM developers building for x86 AKS clusters would previously produce ARM-only images, causing silent pod scheduling failures (CrashLoopBackOff with no clear architecture mismatch error). Documentation assumed uniform Docker build behavior without addressing cross-architecture scenarios.
+
+**Rationale:** 
+- RadiusClaim targets Azure/AKS, which commonly runs x86 (amd64) nodes
+- Mac ARM developers (M1/M2/M3) building locally need explicit buildx guidance  
+- Multi-platform manifests are the right pattern for teams with mixed architectures
+- Main deployment flow remains simple; architecture-aware alternatives are optional and linked, not embedded
+
+**Impact:** Platform engineers and operators on Mac ARM can now:
+- Understand why native Docker builds fail in cross-arch scenarios
+- Use `docker buildx --platform linux/amd64` for x86 AKS
+- Build multi-platform manifests for heterogeneous clusters
+
+**Scope:** Not a breaking change. Native Docker users on same-architecture machines (e.g., Linux x86 → AKS x86) see no change. Additions only appear in optional tooling list, inline comments, and a new dedicated section.
+
+**Verification:** No x86-only assumptions remain in the file. Architecture examples verified across all three services (expense-api, workflow-engine, notification-svc).
+
+### 2026-03-24: Fixed GHCR Login Variable Consistency  
+**By:** Eddie (Docs/Story)
+**Status:** COMPLETE
+**What:** Normalized two instances of `docker login ghcr.io` command in `docs/end-to-end-setup-walkthrough.md` to explicitly use `--username "$GITHUB_USERNAME"` argument.
+**Changes:**
+1. Line 436 (Build/Push Images section): `docker login ghcr.io` → `docker login ghcr.io --username "$GITHUB_USERNAME"`
+2. Line 583 (Troubleshooting section): `docker login ghcr.io` → `docker login ghcr.io --username "$GITHUB_USERNAME"`
+
+**Why:** Document already normalizes `GITHUB_USERNAME` as an environment variable in multiple sections. Other docker login commands (lines 256, 275) already use the `--username "$GITHUB_USERNAME"` pattern. Inconsistency created confusion about whether the variable was required or optional.
+
+**Rationale:** 
+- Consistency across all GHCR login examples
+- Makes setup instructions more explicit
+- Maintains variable-driven approach already established in the walkthrough
+- Aligns with principle that users should not copy literal usernames into documentation
+
+**Scope:** Focused change limited to 2 lines in the target file. No unrelated edits.
+
+**Impact:** Users now have consistent guidance on GHCR authentication across all examples.
+
+### 2026-03-24T16:49:37Z: User Directive — Publish Script Stability
+**By:** Wesley Backelant (via Copilot)
+**What:** Leave `scripts/publish-radius-recipes.sh` alone for now. Do not add retry/backoff unless transient GHCR publish failures become a recurring issue.
+**Why:** User request — captured for team memory. Avoid over-engineering transient failure handling without demonstrated need.
+
+### 2026-03-24T16:51:40Z: User Directive — Docker Build Architecture Independence
+**By:** Wesley Backelant (via Copilot)
+**What:** When doing `docker build`, keep architecture independence in mind and account for Mac ARM hosts. Do not assume x86-only builds or guidance.
+**Why:** User request — captured for team memory. RadiusClaim must be buildable and deployable across different architectures without silent failures.

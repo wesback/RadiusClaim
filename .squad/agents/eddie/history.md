@@ -451,3 +451,122 @@ This update finalizes the portability narrative by making it honest and concrete
 ### Status: COMPLETE
 
 ---
+
+## Phase 9 Work — Docker Build Architecture Awareness (2025-01-16)
+
+### Delivered
+
+**Made Docker Build Guidance Architecture-Aware for Mac ARM Users**
+
+**File:** `docs/end-to-end-setup-walkthrough.md`
+
+**Changes:**
+1. **Tools Section (Line 71–85):** Added `docker buildx` to optional tooling for multi-platform builds
+2. **Manual Deployment (Line 457–465):** Added inline note that native builds assume local arch matches cluster, with reference to multi-platform section
+3. **New Multi-platform Builds Section (Line 293–335):** 
+   - Explains Mac ARM → x86 AKS scenario explicitly
+   - Shows `docker info | grep Architecture` to detect local architecture
+   - Provides `docker buildx` examples for single-platform (linux/amd64, linux/arm64)
+   - Shows multi-platform manifest syntax (linux/amd64,linux/arm64)
+   - Warns about registry requirement and --load limitation
+4. **Redeploy Section (Line 726–740):** Updated to note native build assumption with commented example of buildx alternative
+
+**Problem Solved:** The original doc used generic `docker build` commands without explaining that users on Mac ARM building for x86 AKS (or vice versa) would produce unusable images.
+
+**Verification:** 
+- Checked entire file for lingering x86-only assumptions: none found
+- Verified architecture examples (amd64, arm64) appear in context sections
+- All 3 service images (expense-api, workflow-engine, notification-svc) have consistent guidance
+
+**Audience Impact:** Platform engineers and operators on Mac ARM (M1/M2/M3 chips) can now:
+- Understand why native Docker builds fail in cross-arch scenarios
+- Use `docker buildx --platform linux/amd64` for x86 AKS
+- Build multi-platform manifests for heterogeneous clusters
+
+### Status: COMPLETE
+
+## Learnings
+
+**Architecture Decisions:**
+- RadiusClaim targets Azure/AKS, which commonly runs x86 (amd64) nodes
+- Mac ARM developers building locally need explicit buildx guidance
+- Multi-platform manifests are the right pattern for teams with mixed architectures
+
+**Patterns:**
+- Inline comments work well for architecture assumptions (vs. hiding in separate section)
+- Explicit examples (Mac ARM → x86 AKS) help readers recognize their own scenario
+- Reference patterns to detailed sub-sections (Multi-platform Builds) keep main flow uncluttered
+
+**File Paths:**
+- `docs/end-to-end-setup-walkthrough.md` — the main deployment guide
+- Dockerfiles use multi-stage builds; no platform-specific directives needed at the base layer
+
+---
+
+## Phase 9 Completion — Docker Architecture Guidance & GHCR Consistency
+
+**Date:** 2026-03-24  
+**Tasks:** Architecture-aware Docker build guidance, GHCR login consistency
+
+### Part 1: Docker Build Architecture Awareness
+
+**File:** `docs/end-to-end-setup-walkthrough.md` (4 sections)
+
+**Problem:** The original walkthrough used generic `docker build` commands without explaining cross-architecture scenarios. Mac ARM developers building for x86 AKS would produce ARM-only images, causing silent pod scheduling failures.
+
+**Solution:** Added comprehensive architecture-aware guidance:
+1. Tools section: Added `docker buildx` as optional tooling
+2. Manual deployment: Inline note explaining native build assumption, referencing multi-platform section
+3. New "Multi-platform Builds" section: Scenario framing, `docker info | grep Architecture`, single and multi-platform buildx examples
+4. Redeploy section: Updated with native-build assumption note and buildx alternative
+
+**Verification:** Scanned entire file; no x86-only assumptions remain. Architecture examples consistent across all three services.
+
+**Outcome:** Mac ARM developers can now identify their scenario and use `docker buildx --platform linux/amd64` for x86 AKS deployments. Existing x86→x86 workflows are unaffected.
+
+### Part 2: GHCR Login Variable Consistency
+
+**File:** `docs/end-to-end-setup-walkthrough.md` (lines 436, 583)
+
+**Problem:** Two instances of `docker login ghcr.io` lacked the `--username "$GITHUB_USERNAME"` argument, inconsistent with other docker login commands in the file.
+
+**Solution:** Updated both instances to:
+```bash
+docker login ghcr.io --username "$GITHUB_USERNAME"
+```
+
+**Rationale:** Document already normalizes `GITHUB_USERNAME` in multiple sections. Other login commands (lines 256, 275) already follow this pattern. Consistency improves clarity.
+
+**Outcome:** All GHCR authentication examples now follow the same variable-driven pattern.
+
+### Related Decisions
+
+Decision documents created and merged:
+- `eddie-docker-arch-guidance.md`: Full rationale and scope
+- `eddie-fix-ghcr-login-var.md`: Variable consistency approach
+- User directives (2 captured): Publish script stability, Docker architecture independence
+
+**User Directive (2026-03-24T16:51:40Z):** "When doing `docker build`, keep architecture independence in mind and account for Mac ARM hosts; do not assume x86-only builds or guidance."
+
+This work directly implements that directive.
+
+### Learnings
+
+**Architecture Patterns:**
+- RadiusClaim targets Azure/AKS (commonly x86/amd64)
+- Mac ARM developers need explicit buildx guidance  
+- Multi-platform manifests are the right pattern for mixed-architecture teams
+- Inline comments work well for architecture assumptions
+
+**Documentation Principles:**
+- Consistency across examples builds user confidence
+- Architecture scenarios should be named (e.g., "Mac ARM → x86 AKS") so readers recognize themselves
+- Optional advanced patterns should be linked, not embedded in the main flow
+
+**Files:**
+- `docs/end-to-end-setup-walkthrough.md` — main deployment guide (lines 71–85, 293–335, 457–465, 726–740)
+- Dockerfiles use multi-stage builds; no platform-specific directives needed
+
+### Status: COMPLETE
+
+---
