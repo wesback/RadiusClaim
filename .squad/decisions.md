@@ -1263,6 +1263,33 @@ rad deploy infra/radius/environments/<env>.bicep --parameters ...
 - Security guidance placed prominently to prevent accidental token commits
 **Validation:** Changes are additive; no existing walkthrough structure disturbed.
 
+### 2026-03-24: Normalize GHCR Username Variable
+**By:** Eddie (Docs/Story Agent)
+**Status:** COMPLETE
+**Type:** Documentation Enhancement
+**What:** Standardized all GHCR authentication examples in `docs/end-to-end-setup-walkthrough.md` to use a consistent `GITHUB_USERNAME` environment variable approach.
+**Context:** The walkthrough contained GHCR authentication and publishing examples with inconsistent placeholder formats:
+- `<your-github-username>` in docker login commands
+- `<your-org>` in registry paths
+- Repeating placeholders inline without variable assignment
+**Changes Made:** Updated four code blocks to follow this pattern:
+```bash
+export GITHUB_USERNAME="your-github-username"
+# ... then reference as $GITHUB_USERNAME
+```
+**Locations Updated:**
+1. Initial PAT verification (line ~252): Setup section for testing token works
+2. Recipe publishing section (line ~272): GHCR login and recipe publication workflow
+3. Manual rad CLI deployment (line ~430): Container image build and push workflow
+4. Azure deployment environment setup (line ~384): Radius environment variable configuration
+**Benefits:**
+- **Copy-paste friendly:** Users set one variable at the start; examples just use `$GITHUB_USERNAME`
+- **Consistent:** All GHCR examples follow the same pattern
+- **Maintainable:** Easy to update; single variable name throughout
+- **Security-aware:** No accidental commits of usernames in examples (users substitute their own)
+**Scope:** Tightly scoped to GHCR authentication and recipe registry references only. PAT creation guidance and security notes remain unchanged. Preserves all new PAT creation instructions (fine-grained token flow). No changes to other environment setup steps (Azure subscription, etc.).
+**Validation:** Changes are additive to existing PAT guidance; documentation consistency improved across all GHCR examples.
+
 ### 2026-03-24: Radius CLI `--wait` Flag Deprecation
 **By:** Eddie (Docs Agent)
 **Status:** COMPLETE
