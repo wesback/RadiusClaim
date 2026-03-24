@@ -94,9 +94,11 @@ Radius generates the Kubernetes manifests and Dapr component specs — no hand-w
 - Publishes the repo's custom Radius recipes as OCI artifacts before environment deployment, because Radius recipe `templatePath` values must resolve to registry-backed artifacts rather than local file paths
 - Keeps service topology, Dapr component names, and resource wiring in Radius
 - Deploys to a Kubernetes cluster (AKS in the Azure example, or any K8s cluster with Radius control plane)
-- Exposes only `expense-api` publicly through a Radius `Applications.Core/gateways` resource; `workflow-engine` and `notification-svc` stay internal
+- Exposes only `expense-api` publicly through a Radius `Radius.Compute/routes` resource; `workflow-engine` and `notification-svc` stay internal
 - Lets Radius print the public endpoint at deploy time, so humans can open `/app` without falling back to port-forward unless the cluster lacks an external address
 - Azure-specific backing services (Blob Storage, Service Bus, Key Vault) are provisioned by Radius recipes for the Azure environment
+
+**Namespace migration status:** This repo deliberately keeps `Applications.Core/applications@2023-10-01-preview` and `Applications.Core/environments@2023-10-01-preview` as the owning identities for the deployment while the Dapr building blocks remain on [`Applications.Dapr/stateStores@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/statestore), [`Applications.Dapr/pubSubBrokers@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/pubsub/), and [`Applications.Dapr/secretStores@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/secretstore). In practice, existing Dapr resources are keyed to their application/environment IDs, so swapping those owners to `Radius.Core/*` breaks idempotent redeploys for already-provisioned `statestore`, `pubsub`, and `platform-secrets`. The repo still uses `Radius.Compute/containers@2025-08-01-preview` and `Radius.Compute/routes@2025-08-01-preview` for compute and ingress where the current toolchain supports them, keeps recipe artifacts in OCI, and treats the current `BCP081` warnings for `Radius.Compute/*` as non-blocking schema lag rather than deployment failures.
 
 **Supported deployment targets**:
 - **AKS (Azure Kubernetes Service)** — the primary example, with Azure backing services
@@ -298,7 +300,7 @@ The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys to Ku
 1. Navigate to your repository **Settings** → **Secrets and variables** → **Actions**
 2. Add secrets under the **Secrets** tab
 3. Add variables under the **Variables** tab
-4. Refer to [docs/radius-validation-checklist.md](./docs/radius-validation-checklist.md) for detailed validation steps
+4. Start with the [end-to-end setup walkthrough](./docs/end-to-end-setup-walkthrough.md) for the full operator flow, then use the [Kubernetes + Radius validation checklist](./docs/radius-validation-checklist.md) for preflight checks and troubleshooting
 
 ### Deployment Path: Kubernetes + Radius
 
@@ -345,9 +347,10 @@ The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys to Ku
 
 ## Additional Documentation
 
+- **[End-to-End Setup Walkthrough](./docs/end-to-end-setup-walkthrough.md)** — Complete operator guide from Azure login and resource group creation through opening the app in a browser, including setup automation vs. manual steps
 - **[Phase 7 Demo Walkthrough](./docs/phase-7-demo-walkthrough.md)** — Step-by-step guide for running the $50 and $150 expense flows
 - **[Kubernetes + Radius Validation Checklist](./docs/radius-validation-checklist.md)** — Pre-deployment validation and troubleshooting for Kubernetes + Radius deployment
-- **[ADR-0001: Kubernetes-First Deployment Strategy](./docs/ADR-0001-azure-cli-fallback.md)** — Architectural decision record explaining the Kubernetes + Radius primary path and portability scope
+- **[ADR-0001: Kubernetes-First Deployment Strategy](./docs/ADR-0001-kubernetes-first-deployment.md)** — Architectural decision record explaining the Kubernetes + Radius primary path and portability scope
 
 ---
 

@@ -300,3 +300,78 @@ Team communication moving forward should reference the sample as "RadiusClaim" i
 - Dual-path deployment configuration in docs
 - Azure Container Apps as "compute alternative" in this sample
 
+## 2026-03-24: End-to-End Setup Walkthrough
+
+### Delivered
+
+**Complete step-by-step operator guide: `docs/end-to-end-setup-walkthrough.md` (674 lines)**
+
+Covers the entire flow from resource group creation to opening the app in a web browser:
+
+**Steps 1–5: Azure & Kubernetes Foundation**
+1. Azure login and subscription selection
+2. Resource group creation (backing services container)
+3. Kubernetes cluster provisioning (Option A: AKS; Option B: existing cluster)
+4. Dapr control plane installation on cluster
+5. Radius control plane installation on cluster
+
+**Steps 6–9: Deployment Preparation**
+6. Publish Radius recipe artifacts to GHCR (state store, pub/sub, secrets)
+7. Initialize Radius workspace and group (manual deployment only)
+8. Deploy Radius environment (azure-radius.bicep) — links Dapr to Azure backing services
+9. Deploy RadiusClaim application (app.bicep) — three services with injected Dapr sidecars
+
+**Steps 10–12: Validation & Use**
+10. Verify deployment and retrieve public endpoint
+11. Open `/app` in web browser
+12. Run validation script to confirm $50 auto-approve and $150 manual-review flows
+
+**Design Principles:**
+- **Honest about what's automated:** GitHub Actions workflow, Radius deployment, Dapr injection, image builds
+- **Clear about manual steps:** Azure auth, cluster provisioning, kubeconfig setup, namespace management
+- **Realistic timing:** ~30–45 minutes depending on Azure resource creation (noted upfront)
+- **Dual-path support:** GitHub Actions (recommended) and local `rad` CLI (advanced)
+- **Practical troubleshooting:** 12 common issues with solutions (kubeconfig, control plane, recipes, endpoints, validation)
+- **Next steps included:** Demo flow instructions, code exploration pointers, change redeployment patterns
+
+**Readability:**
+- Pre-formatted code blocks with expected outputs
+- Environment variable patterns to avoid copy-paste errors
+- Conditional instructions (GitHub Actions vs. `rad` CLI)
+- Cross-linked to related docs (phase-7-demo, validation-checklist, architecture)
+
+**Updated README.md**
+- Added new walkthrough as first link in "Additional Documentation" section
+- Positioned it before demo walkthrough (setup precedes demo)
+- Includes audience note: "Complete operator guide from Azure login…"
+
+### Key Messaging
+
+> "RadiusClaim deployment spans Azure foundation (resource group, backing services), Kubernetes cluster (compute with Dapr + Radius control planes), Radius environment definition (Dapr component wiring to Azure), and application deployment. This walkthrough shows where the operator's role begins and ends, and which steps are automated by GitHub Actions vs. which require manual steps."
+
+### Patterns Captured
+
+**Setup documentation structure:**
+- Section 0: Overview (what's automated, what's manual)
+- Prerequisites validation (tools, credentials, cluster readiness)
+- Numbered steps with clear boundaries (Azure → K8s → Dapr → Radius → App)
+- Code blocks with expected outputs so operators can verify progress
+- Conditional instruction paths (AKS vs. existing cluster; GitHub Actions vs. rad CLI)
+- Practical troubleshooting keyed to symptom (not to tool)
+- Next steps that extend into demo flows and architecture exploration
+
+**What this enables:**
+- New operators can onboard without asking for custom setup help
+- Demo pilots understand what they're validating
+- Support conversations can reference specific step numbers
+- Discoverability: complete workflow in one document, with linked details for deep dives
+
+### Status: COMPLETE AND VERIFIED
+
+- `docs/end-to-end-setup-walkthrough.md` created (674 lines)
+- `README.md` updated with link
+- Covers all operator steps from Azure login to opening `/app` in browser
+- Includes both GitHub Actions automation and manual `rad` CLI options
+- Realistic timing, honest about prerequisites, practical troubleshooting
+
+

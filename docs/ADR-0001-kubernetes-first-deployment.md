@@ -127,13 +127,13 @@ Deploy the same app to any cloud by choosing the target environment.
 
 ## Maintenance Obligations
 
-While both paths exist, they must satisfy:
+This Kubernetes-first path must continue to satisfy:
 
-1. **Dapr parity:** Both paths must wire the same Dapr components (`statestore`, `pubsub`, `platform-secrets`) with identical names
-2. **Service parity:** Both paths must deploy the same three services (`expense-api`, `workflow-engine`, `notification-svc`) with compatible configurations
-3. **Contract stability:** Both paths must support the same RadiusClaim contract shapes and threshold rules ($100.00 boundary, UTC timestamps, etc.)
-4. **Demo evidence:** Both paths must produce observable, traceable end-to-end flows (as documented in Phase 7 demo walkthrough)
-5. **Documentation:** Both paths must be documented, and the narrative must clearly indicate which is primary and why the fallback exists
+1. **Dapr parity:** The deployment must keep the same Dapr components (`statestore`, `pubsub`, `platform-secrets`) with identical names across environments
+2. **Service parity:** The deployment must keep the same three services (`expense-api`, `workflow-engine`, `notification-svc`) with compatible configurations
+3. **Contract stability:** The deployment must preserve the same RadiusClaim contract shapes and threshold rules ($100.00 boundary, UTC timestamps, etc.)
+4. **Demo evidence:** The deployment must keep producing observable, traceable end-to-end flows (as documented in the Phase 7 demo walkthrough)
+5. **Documentation:** The repo must keep the operator walkthrough, troubleshooting guidance, and portability narrative aligned with the current workflow
 
 ---
 

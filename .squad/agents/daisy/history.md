@@ -585,6 +585,8 @@ Namespace migration complete: migrated five core resource types, regenerated all
 - The `How Resource Types abstract deployed resources` page describes the newer `Radius.*` namespace as a generic resource-type model, but that is not enough to approve a migration of this sample’s Dapr abstractions without a concrete schema/API page for the target type.
 - Smallest honest path for this sample: keep `infra/radius/app.bicep` Dapr resources on `Applications.Dapr/*`, keep the matching recipe-pack keys in `infra/radius/environments/dev.bicep` and `infra/radius/environments/azure-radius.bicep`, and document the mixed state instead of inventing unsupported replacements.
 - User preference reinforced: only approve migrations that are both officially documented and teachable in the ten-minute demo; do not trade clarity for speculative modernization.
+- Safe reruns for already-provisioned Dapr resources depend on preserving the owning application/environment IDs, not just the logical component names. Keeping `Applications.Core/applications` and `Applications.Core/environments` stable while moving compute and ingress to `Radius.Compute/*` is the smallest honest boundary.
+- The Key Vault idempotency fix stays teachable when it only removes the invalid `enablePurgeProtection: false` setting. Adding existing-vault branches or extra migration shims would make the sample harder to explain without improving the platform story.
 
 ---
 

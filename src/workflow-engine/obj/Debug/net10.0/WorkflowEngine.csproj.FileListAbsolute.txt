@@ -90,3 +90,4 @@
 /Users/wesleyb/git/RadiusClaim/src/workflow-engine/obj/Debug/net10.0/Workflow.C47222E9.Up2Date
 /Users/wesleyb/git/RadiusClaim/src/workflow-engine/obj/Debug/net10.0/WorkflowEngine.genruntimeconfig.cache
 /Users/wesleyb/git/RadiusClaim/src/workflow-engine/obj/Debug/net10.0/ref/WorkflowEngine.dll
+/Users/wesleyb/git/RadiusClaim/src/workflow-engine/obj/Debug/net10.0/WorkflowEngine.sourcelink.json

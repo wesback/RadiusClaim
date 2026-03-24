@@ -4,6 +4,8 @@
 > **Duration:** ~10 minutes  
 > **Goal:** Show the auto-approve and manual-review flows end-to-end with observable evidence
 
+> Need the full setup path first? Start with [`docs/end-to-end-setup-walkthrough.md`](./end-to-end-setup-walkthrough.md), then come back here once the app is already deployed.
+
 ---
 
 ## Prerequisites

@@ -82,3 +82,8 @@
 /Users/wesleyb/git/RadiusClaim/src/expense-api/obj/Debug/net10.0/ExpenseApi.pdb
 /Users/wesleyb/git/RadiusClaim/src/expense-api/obj/Debug/net10.0/ExpenseApi.genruntimeconfig.cache
 /Users/wesleyb/git/RadiusClaim/src/expense-api/obj/Debug/net10.0/ref/ExpenseApi.dll
+/Users/wesleyb/git/RadiusClaim/src/expense-api/bin/Debug/net10.0/ExpenseApi.staticwebassets.runtime.json
+/Users/wesleyb/git/RadiusClaim/src/expense-api/obj/Debug/net10.0/ExpenseApi.sourcelink.json
+/Users/wesleyb/git/RadiusClaim/src/expense-api/obj/Debug/net10.0/compressed/vkmc0dgvk5-{0}-rdhliqu28f-rdhliqu28f.gz
+/Users/wesleyb/git/RadiusClaim/src/expense-api/obj/Debug/net10.0/compressed/j6uimha1xo-{0}-dufebhmuna-dufebhmuna.gz
+/Users/wesleyb/git/RadiusClaim/src/expense-api/obj/Debug/net10.0/compressed/xpzbi087gr-{0}-d0rq08lvq7-d0rq08lvq7.gz

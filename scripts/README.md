@@ -160,6 +160,7 @@ Validation scripts support phase gate approvals:
 
 ## References
 
+- End-to-End Setup Walkthrough: [`docs/end-to-end-setup-walkthrough.md`](../docs/end-to-end-setup-walkthrough.md)
 - Phase 7 Validation Checklist: [`docs/phase-7-validation-checklist.md`](../docs/phase-7-validation-checklist.md)
 - Demo Walkthrough: [`docs/phase-7-demo-walkthrough.md`](../docs/phase-7-demo-walkthrough.md)
 - GitHub Actions Workflow: [`.github/workflows/deploy-azure.yml`](../.github/workflows/deploy-azure.yml)

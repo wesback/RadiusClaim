@@ -4,6 +4,8 @@
 > **Audience:** Platform engineers deploying via `rad deploy` to Kubernetes (AKS or any K8s with Dapr and Radius)  
 > **Scope:** Phase 7 validation requirements
 
+> **Start here for the full operator flow:** Use [`docs/end-to-end-setup-walkthrough.md`](./end-to-end-setup-walkthrough.md) if you need the resource-group-to-browser journey. Keep this checklist open as the companion preflight and troubleshooting reference.
+
 ---
 
 ## Prerequisites Validation
@@ -463,4 +465,4 @@ Phase 7 Radius validation is **complete** when:
 - **Radius Recipes:** https://docs.radapp.io/guides/recipes/
 - **Radius Environments:** https://docs.radapp.io/guides/deploy-apps/environments/
 - **Phase 7 Demo Walkthrough:** [docs/phase-7-demo-walkthrough.md](./phase-7-demo-walkthrough.md)
-- **ADR-0001 (Azure CLI Fallback):** [docs/ADR-0001-azure-cli-fallback.md](./ADR-0001-azure-cli-fallback.md)
+- **ADR-0001 (Kubernetes-First Deployment Strategy):** [docs/ADR-0001-kubernetes-first-deployment.md](./ADR-0001-kubernetes-first-deployment.md)

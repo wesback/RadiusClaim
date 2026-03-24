@@ -17,7 +17,6 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   location: location
   properties: {
     enableRbacAuthorization: true
-    enablePurgeProtection: false
     enabledForDeployment: false
     enabledForDiskEncryption: false
     enabledForTemplateDeployment: true

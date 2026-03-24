@@ -82,3 +82,4 @@
 /Users/wesleyb/git/RadiusClaim/src/notification-svc/obj/Debug/net10.0/NotificationSvc.pdb
 /Users/wesleyb/git/RadiusClaim/src/notification-svc/obj/Debug/net10.0/NotificationSvc.genruntimeconfig.cache
 /Users/wesleyb/git/RadiusClaim/src/notification-svc/obj/Debug/net10.0/ref/NotificationSvc.dll
+/Users/wesleyb/git/RadiusClaim/src/notification-svc/obj/Debug/net10.0/NotificationSvc.sourcelink.json

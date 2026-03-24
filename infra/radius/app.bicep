@@ -15,10 +15,10 @@ param imageTag string = 'phase1'
 @description('Deployment target label kept aligned to the active Radius environment.')
 param deploymentTarget string = 'local'
 
-@description('DNS prefix Radius should use when generating the public expense-api gateway hostname.')
+@description('Requested DNS prefix for generated public hostnames. Radius.Compute/routes does not currently support prefix-based hostname selection, so this is retained only as a compatibility hint.')
 param publicGatewayPrefix string = 'expense'
 
-@description('Optional fully qualified hostname for the public expense-api gateway. Leave empty to let Radius generate a hostname.')
+@description('Optional fully qualified hostname for the public expense-api route. Leave empty to let Radius generate a hostname.')
 param publicGatewayHostname string = ''
 
 @description('Logical Dapr recipe selections. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets.')
@@ -44,13 +44,9 @@ var secretVaultName = 'ce-${take(uniqueString(applicationName, environment, 'pla
 var stateStoreBacking = daprBackings.stateStore
 var pubsubBacking = daprBackings.pubsub
 var secretStoreBacking = daprBackings.secretStore
-var publicGatewayHost = empty(publicGatewayHostname)
-  ? {
-      prefix: publicGatewayPrefix
-    }
-  : {
-      fullyQualifiedHostname: publicGatewayHostname
-    }
+var publicRouteHostnames = empty(publicGatewayHostname) ? [] : [
+  publicGatewayHostname
+]
 
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: applicationName
@@ -114,6 +110,7 @@ module expenseApi './modules/container-service.bicep' = {
   name: 'expense-api-service'
   params: {
     application: app.id
+    environment: environment
     name: 'expense-api'
     image: '${containerRegistry}/expense-api:${imageTag}'
     containerPort: servicePort
@@ -143,6 +140,7 @@ module workflowEngine './modules/container-service.bicep' = {
   name: 'workflow-engine-service'
   params: {
     application: app.id
+    environment: environment
     name: 'workflow-engine'
     image: '${containerRegistry}/workflow-engine:${imageTag}'
     containerPort: servicePort
@@ -172,6 +170,7 @@ module notificationService './modules/container-service.bicep' = {
   name: 'notification-service'
   params: {
     application: app.id
+    environment: environment
     name: 'notification-svc'
     image: '${containerRegistry}/notification-svc:${imageTag}'
     containerPort: servicePort
@@ -194,22 +193,29 @@ module notificationService './modules/container-service.bicep' = {
   }
 }
 
-resource expenseApiGateway 'Applications.Core/gateways@2023-10-01-preview' = {
-  name: 'expense-api-gateway'
+resource expenseApiRoute 'Radius.Compute/routes@2025-08-01-preview' = {
+  name: 'expense-api-route'
   location: radiusLocation
   properties: {
     application: app.id
-    hostname: publicGatewayHost
-    routes: [
+    environment: environment
+    kind: 'HTTP'
+    hostnames: publicRouteHostnames
+    rules: [
       {
-        path: '/'
-        destination: 'http://expense-api:${servicePort}'
+        matches: [
+          {
+            httpPath: '/'
+          }
+        ]
+        destinationContainer: {
+          resourceId: expenseApi.outputs.id
+          containerName: 'expense-api'
+          containerPort: servicePort
+        }
       }
     ]
   }
-  dependsOn: [
-    expenseApi
-  ]
 }
 
 output deploymentModel object = {
@@ -245,13 +251,16 @@ output deploymentModel object = {
       'workflow-engine'
       'notification-svc'
     ]
-    gateway: {
-      name: expenseApiGateway.name
-      route: '/'
+    route: {
+      name: expenseApiRoute.name
+      resourceType: 'Radius.Compute/routes'
+      match: '/'
       hostnameMode: empty(publicGatewayHostname) ? 'radius-generated' : 'custom-fqdn'
-      hostnamePrefix: empty(publicGatewayHostname) ? publicGatewayPrefix : null
+      requestedHostnamePrefix: empty(publicGatewayHostname) ? publicGatewayPrefix : null
       configuredHostname: empty(publicGatewayHostname) ? null : publicGatewayHostname
-      note: 'rad deploy prints the resolved public endpoint after deployment.'
+      note: empty(publicGatewayHostname)
+        ? 'rad deploy prints the resolved public endpoint after deployment. Radius.Compute/routes currently leaves generated hostname selection to the active route recipe.'
+        : 'rad deploy prints the resolved public endpoint after deployment.'
     }
   }
   recipeStatus: 'phase5-recipes-wired'
