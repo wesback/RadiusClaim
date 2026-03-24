@@ -1,11 +1,11 @@
-# Project Context
+# Project Context & Leadership Summary
 
 - **Owner:** Wesley Backelant
-- **Project:** CloudExpense Lite — Dapr + Radius reference sample
+- **Project:** RadiusClaim — Dapr + Radius reference sample (formerly CloudExpense Lite)
 - **Stack:** .NET 10 minimal APIs, Dapr .NET SDK, Dapr Workflows, Radius, Azure Container Apps, Azure-backed Dapr components
 - **Created:** 2026-03-23
 
-## Squad Roster (2026-03-23)
+## Squad Roster
 
 | Name | Role |
 |------|------|
@@ -17,13 +17,21 @@
 
 All members drawn from "Daisy Jones & The Six" universe per user naming preference.
 
-## Learnings
+## Leadership Arc (2026-03-23 → 2026-03-24)
 
-- Seeded into the repo for a Dapr + Radius reference sample named `CloudExpense Lite`.
-- The sample must stay intentionally small, demoable in roughly ten minutes, and aimed at enterprise/platform audiences.
-- Azure is the current target, but application code must stay cloud-agnostic through Dapr abstractions.
-- Lead the service boundaries and keep the Dapr-versus-Radius division crisp in every implementation choice.
-- See `.squad/decisions.md` for canonical decision log: CloudExpense Lite architecture, naming conventions, and Azure-first-but-portable strategy.
+Daisy led the sample from design through Phase 7 gates:
+
+- **Phases 1–4:** Designed three-service architecture (expense-api, workflow-engine, notification-svc) with explicit contracts, phase gates, and evidence-based validation. Drove shared-state concurrency fix, pub/sub scope, notification subscriber design.
+- **Phase 5–6:** Coordinated platform integration: approved Radius recipe pattern, set guardrails for deterministic component naming, ensured Radius application model remained primary orchestrator.
+- **Phase 7:** Reviewed and approved two major architectural decisions in Mar-24:
+  1. **Key Vault scope:** Reject force-defaulting purge protection or adding existing-vault branching. Smallest fix is omitting the property.
+  2. **Namespace migration:** Approve mixed `Radius.*` + `Applications.Dapr/*` interim state pending official Dapr types. No compatibility shims, no dual-path logic.
+
+**Governance principle:** Keep the sample intentionally small, reference-quality, and portable. Dapr handles app patterns; Radius handles platform wiring; Azure is the example target, not the only target.
+
+---
+
+## Phase-by-Phase Decisions (2026-03-23)
 
 ### 2026-03-23: Implementation Plan Created
 
