@@ -1243,3 +1243,33 @@ rad deploy infra/radius/environments/<env>.bicep --parameters ...
 **Status:** ACKNOWLEDGED  
 **What:** User directive to ensure documentation and commands use current parameter syntax, not deprecated or outdated flags.
 **Context:** Captured for team memory and driving Eddie's parameter review work.
+
+### 2026-03-24: GitHub PAT Guidance for GHCR Setup
+**By:** Eddie (Docs/Story Agent)
+**Status:** COMPLETE
+**Type:** Documentation Enhancement
+**What:** Added concise, least-privilege guidance for creating a GitHub Personal Access Token (PAT) in `docs/end-to-end-setup-walkthrough.md` where the setup walkthrough requires GHCR authentication.
+**Changes Made:**
+1. New subsection "Create a GitHub Personal Access Token (PAT)" inserted in Step 6 before "If Using GitHub Container Registry (GHCR)"
+2. Fine-grained PAT creation steps with minimal scopes: `write:packages` (push recipes to GHCR), `read:packages` (optional)
+3. Repository-level scoping to only RadiusClaim, following least-privilege principle
+4. Security callouts: never commit tokens to version control, automatic GitHub revocation if exposed, token rotation recommendations (30–90 days), personal tokens per team member
+5. Direct link to GitHub UI: `https://github.com/settings/tokens?type=beta`
+**Design Rationale:**
+- Fine-grained PAT (not classic) aligns with GitHub's current recommendation
+- Direct GitHub UI link for quick access
+- Repository scoping follows principle of least privilege
+- Environment variable pattern (`export GHCR_TOKEN=...`) matches walkthrough's existing approach
+- Security guidance placed prominently to prevent accidental token commits
+**Validation:** Changes are additive; no existing walkthrough structure disturbed.
+
+### 2026-03-24: Radius CLI `--wait` Flag Deprecation
+**By:** Eddie (Docs Agent)
+**Status:** COMPLETE
+**What:** Updated `docs/end-to-end-setup-walkthrough.md` line 211 to remove the outdated `--wait` flag from the `rad install kubernetes` command.
+**Change:**
+- From: `rad install kubernetes --set clusterType=generic --wait`
+- To: `rad install kubernetes --set clusterType=generic`
+**Rationale:** The `--wait` flag is no longer supported in current versions of the Radius CLI. Existing walkthrough comment "This may take a few minutes" (line 212) already conveys async behavior, so users understand to wait for completion without explicit flag support.
+**Scope:** Single-line change in walkthrough documentation; no other modifications made to preserve existing cleanup and modern parameters. Command now aligns with current Radius CLI supported parameters.
+**Impact:** Improves user experience and prevents command failures when following the walkthrough with current Radius CLI version.
