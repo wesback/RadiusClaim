@@ -960,3 +960,23 @@ Move to a framework **if and only if**:
 3. Replace ACA troubleshooting commands with kubectl/Radius guidance in demo walkthrough.
 4. Run one real Radius deployment against reachable cluster for end-to-end proof.
 
+### 2026-03-24: Radius Dapr Component Configuration — Recipe Provisioning Fix (Daisy, Lead)
+**Status:** APPROVED — implementation in progress  
+**What:** Remove `type`, `version`, and `metadata` fields from recipe-provisioned Dapr components in `infra/radius/app.bicep`.  
+**Why:** Radius API contract forbids mixed declarations: when `resourceProvisioning: 'recipe'` is set, the component schema must be derived from the recipe output (`result.values`), not ad-hoc on the resource.  
+**Impact on Portability:** ✅ None — logical component names remain stable; recipes determine type/version (that's the point); service connections unchanged.  
+**Implementer:** Graham (preferred); Billy (fallback).  
+**Verdict:** Approved for immediate execution. Mechanical fix, no architectural impact.
+
+### 2026-03-24: Graham — Radius Dapr Provisioning Platform Rule (Graham, Platform Dev)
+**Status:** IMPLEMENTED  
+**Decision:** For recipe-backed Radius Dapr resources, keep `type`, `version`, and `metadata` in the recipe `result.values` contract, not on the `Applications.Dapr/*` resource in `app.bicep`.  
+**Why:** Local Radius rejects mixed declarations.  
+**Platform Rule:** Recipe `templatePath` values in Radius environments must resolve to OCI artifacts. Local relative Bicep paths are fine for authoring, but the control plane cannot download them during `rad deploy`.  
+**Repo Impact:**  
+- `infra/radius/app.bicep` uses clean recipe-backed Dapr resources  
+- `infra/radius/environments/dev.bicep` and `infra/radius/environments/azure-radius.bicep` accept `recipeRegistry` + `recipeTag`  
+- `scripts/publish-radius-recipes.sh` publishes three custom recipes before environment deployment  
+- `.github/workflows/deploy-azure.yml` publishes recipe artifacts and passes registry/tag into environment deploy  
+**Validation:** `rad deploy infra/radius/app.bicep` no longer fails on Dapr contract violations; `az bicep build`, `bash -n`, `dotnet build`, `dotnet test` all passing.
+

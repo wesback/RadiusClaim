@@ -251,6 +251,39 @@ Conducted comprehensive final review of all Phase 7 deliverables:
 
 **Verdict Delivered:**
 - CI validation gap: CLOSED ✓
+
+## 2026-03-24: Radius Dapr Component Configuration — Recipe Provisioning Fix
+
+**Error Identified:**
+```
+rad deploy infra/radius/app.bicep: Applications.Dapr/{secretStores,stateStores,pubSubBrokers} 
+metadata/type/version cannot be specified when resourceProvisioning is recipe
+```
+
+**Root Cause — API Contract Violation:**
+All three Dapr components in `app.bicep` (lines 69–147):
+- Correctly set `resourceProvisioning: 'recipe'`
+- But **incorrectly also specify** `type`, `version`, and `metadata` fields
+- Radius recipe-provisioned resources derive component type and version **entirely from the recipe invocation**, not ad-hoc
+
+**Design Fix — Minimal & Correct:**
+Remove conflicting fields from all three resources:
+- stateStore: Remove lines 83–84 (type/version), 85–92 (metadata)
+- pubsub: Remove lines 110–111 (type/version), 112–120 (metadata)  
+- platformSecretStore: Remove lines 136–137 (type/version), 138–146 (metadata)
+
+**Impact Assessment:**
+✅ **Portability preserved:** Logical names (statestore, pubsub, platform-secrets) unchanged. daprBackings parameter remains swappable per environment. Service connection references (app.id references) unchanged.
+✅ **Architectural intent maintained:** Recipes now own component type/version exclusively — the design is now honest.
+✅ **Radius path clarity:** This fix proves the Radius path can deploy components correctly via recipe provisioning.
+
+**Verdict:**
+✅ **APPROVED** — Mechanical fix, no architectural regression. Graham should execute (Dapr/Radius owner). If unavailable, Billy can do this (understands resource references from container-service module work).
+
+**Decision written to:** `.squad/decisions/inbox/daisy-radius-dapr-provisioning.md`
+
+**Key Pattern:**
+When a resource provisioning mode is `recipe`, all component type/version details must be derived from recipe outputs, not re-specified at the component level. This keeps the recipe as the single source of truth for component behavior.
 - Live Radius validation: OPEN with documented non-blocking escape hatch ⚠️
 - Phase 7 overall: APPROVED WITH KNOWN OPEN ITEM
 - Release confidence: HIGH (demo-ready, validation machinery in place, story is honest)
@@ -468,3 +501,21 @@ If ingress is needed: place it in `infra/kubernetes/` as an optional overlay, **
 - Public gateway deployed and validated.
 - Kubernetes-first narrative approved.
 - Squad merge, git commit, and push ready to proceed.
+
+## Radius Dapr Provisioning Review (2026-03-24)
+
+### Decision Approved
+
+Reviewed failed `rad deploy` contract (Applications.Dapr components rejecting mixed `resourceProvisioning: 'recipe'` + ad-hoc `type`/`version`/`metadata`).
+
+**Verdict:** Smallest fix is correct. Remove `type`, `version`, and `metadata` from recipe-provisioned Dapr components. Portability unaffected; recipes derive schema.
+
+**Assigned to:** Graham for implementation. Mechanical, no architecture impact.
+
+### Cross-Agent Update from Graham
+
+Graham completed the implementation: fixed `infra/radius/app.bicep`, regenerated synced JSON artifacts, moved environment recipe `templatePath` values to OCI artifacts, added recipe publishing automation to workflow and scripts. Validated with `az bicep build`, `bash -n`, `dotnet build`, `dotnet test`.
+
+**Result:** `rad deploy infra/radius/app.bicep` now passes original Dapr contract rejection.
+
+**Platform Rule Established:** Recipe `templatePath` in Radius environments must resolve to OCI artifacts, not local Bicep paths.

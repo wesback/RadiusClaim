@@ -440,3 +440,43 @@ Radius `Applications.Core/gateways` is the cleanest fit for publishing Kubernete
 - Lead review (Daisy) approved. All platform changes validated.
 - Karen flagged remaining doc/workflow input inconsistencies (blocking for final push, non-platform).
 - Public gateway is deployed and documented. Ready for team merge.
+
+## Radius Dapr Provisioning Fix (2026-03-24)
+
+### Delivered
+
+- Removed manual `type`, `version`, and `metadata` fields from the recipe-backed Dapr resources in `infra/radius/app.bicep`; the app model now only supplies recipe names plus deterministic parameters.
+- Regenerated `infra/radius/app.json` so the compiled contract matches the corrected app model.
+- Switched `infra/radius/environments/dev.bicep` and `infra/radius/environments/azure-radius.bicep` from local relative recipe paths to OCI-backed `templatePath` values parameterized by `recipeRegistry` and `recipeTag`.
+- Added `scripts/publish-radius-recipes.sh` and wired `.github/workflows/deploy-azure.yml` to publish the repo's three custom recipes before environment deployment.
+- Updated `README.md`, `docs/radius-validation-checklist.md`, and `.squad/skills/kubernetes-first-radius-azure/SKILL.md` so the recipe artifact step is explicit instead of tribal knowledge.
+
+### Validation
+
+- ✅ `az bicep build --file infra/radius/app.bicep --outfile infra/radius/app.json`
+- ✅ `az bicep build --file infra/radius/environments/dev.bicep --outfile infra/radius/environments/dev.json`
+- ✅ `az bicep build --file infra/radius/environments/azure-radius.bicep --outfile infra/radius/environments/azure-radius.json`
+- ✅ `az bicep build --file infra/radius/recipes/azure/state-store.bicep`
+- ✅ `az bicep build --file infra/radius/recipes/azure/pubsub.bicep`
+- ✅ `az bicep build --file infra/radius/recipes/azure/secrets.bicep`
+- ✅ `bash -n scripts/publish-radius-recipes.sh`
+- ✅ `dotnet build RadiusClaim.slnx --configuration Release --nologo`
+- ✅ `dotnet test RadiusClaim.slnx --configuration Release --no-build --nologo`
+- ✅ `rad deploy infra/radius/app.bicep ...` no longer fails on Dapr schema validation; it now progresses to recipe download, which confirms the original app-model rejection is fixed
+
+## Learnings
+
+- Radius Dapr resources are either recipe-driven or manual. If `resourceProvisioning` is `recipe`, keep `type`, `version`, and `metadata` in the recipe output contract and do not repeat them on the `Applications.Dapr/*` resource.
+- Recipe authoring files can live in the repo, but Radius environment `templatePath` values must point at OCI artifacts the control plane can pull. Relative Bicep file paths are authoring conveniences, not deployable recipe addresses.
+- A tiny publish script is worth it here: platform engineers and CI both need the same three `rad bicep publish` calls, and hiding them in tribal knowledge would make the Radius story look accidental again.
+
+## Cross-Agent Update (2026-03-24)
+
+**From Daisy (Lead):** Reviewed Dapr provisioning fix and approved. Confirmed smallest solution (remove `type`, `version`, `metadata`) is correct. No portability impact. Ready for merge.
+
+**Impact Summary:**
+- `infra/radius/app.bicep` now recipe-clean (Dapr components omit duplicate schema)
+- `infra/radius/environments/*` now OCI-backed recipe artifacts
+- Workflow integration complete with `scripts/publish-radius-recipes.sh`
+- Validations: all Bicep files build, .NET tests pass, Radius contract violation resolved
+- Platform rule documented: Radius recipe `templatePath` values must resolve to OCI artifacts during `rad deploy`
