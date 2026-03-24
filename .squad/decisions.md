@@ -815,3 +815,148 @@ Move to a framework **if and only if**:
 - ❌ **Framework migration:** Not justified; would add setup complexity without advancing the demo story
 - 🔄 **Revisit:** In Phase 8+ (if UI expands into product surface) or when team composition changes
 
+---
+
+## 2026-03-24: Phase 7 — Public Access & Kubernetes-First Narrative
+
+### 2026-03-24: Hosted Demo UI (Camila)
+**Status:** APPROVED  
+**What:** Host the initial RadiusClaim web UI from `expense-api` (under `src/expense-api/wwwroot/app/`) instead of creating a separate frontend application.  
+**Why:** Keeps the demo teachable (one app URL, no CORS), fits .NET-first conventions, avoids adding Node build chain just to prove UX.  
+**Impact:** Browser entry point is `/app`. `expense-api` now exposes `GET /expenses/{id}/workflow` for workflow visibility.
+
+### 2026-03-24: User Directives (Wesley Backelant via Copilot)
+
+**2026-03-24T09:52:59Z:** Replace ACA-based deployment framing with AKS/Kubernetes-first framing because portability is the priority. The repo should support AKS, Arc-enabled AKS/Azure Local, or self-managed Kubernetes where appropriate.
+
+**2026-03-24T09:56:35Z:** Investigate adding `infra/radius/environments/azure-local.bicep` to demonstrate Arc-enabled AKS/Azure Local environment with self-managed backing service recipes (Redis, RabbitMQ) so portability story is runnable across both environments.
+
+**2026-03-24T11:57:10Z:** The web UI needs to be accessible publicly, not just via local port-forward.
+
+### 2026-03-24: Public Access for Kubernetes-First Radius Path (Graham)
+**Status:** APPROVED  
+**Decision:** Use a Radius `Applications.Core/gateways` resource in `infra/radius/app.bicep` to publish `expense-api` publicly on the Kubernetes-first deployment path.  
+**Why:** Model-driven and Radius-native; stays coherent for AKS, Arc-enabled, and self-managed Kubernetes clusters; keeps the platform story honest.  
+**Consequences:** `rad deploy` now emits public endpoint; docs treat public endpoint as primary human path; kubectl port-forward remains deterministic fallback for automation/propagation lag.
+
+### 2026-03-24: Public Gateway for expense-api — APPROVED (Daisy, Lead)
+**Status:** APPROVED  
+**Verdict:** Graham's implementation satisfies all review criteria.  
+**Rationale:**
+1. Only `expense-api` is publicly exposed via single `Applications.Core/gateways` resource.
+2. Radius-first/Kubernetes-first story intact (gateway in Bicep, no hand-written YAML).
+3. Documentation and workflow expectations are coherent (README Mermaid, walkthrough, checklist).
+4. Public exposure approach is sample-appropriate (parametrized nip.io or custom DNS).
+5. No sprawl, no teaching debt; ten-minute demo story stays clean.
+
+**Implications:** Operators hit `https://<gateway-url>/app` instead of port-forward; CI retains port-forward validation as deterministic fallback.
+
+### 2026-03-24: AKS vs ACA — Why ACA Fallback is the Right Choice (Daisy, Lead)
+**Status:** ACCEPTED  
+**Question:** Would using AKS instead of ACA make the portability story easier or better?  
+**Answer:** No. Keep ACA fallback as-is.  
+**Analysis:**
+- Portability is achieved by Dapr abstractions + Radius declarations; compute choice (AKS vs ACA) is orthogonal.
+- ACA fallback teaches that platform choice is separate from app architecture.
+- Switching to AKS would muddy the teaching: "You need Kubernetes to be portable" contradicts the claim.
+- Accessibility is a feature; ACA widens audience to teams without K8s infrastructure.
+
+**Recommendation:** Keep ACA fallback. Strongly advise against switching to AKS.
+
+### 2026-03-24: AKS vs ACA for Dapr + Radius Portability (Graham, Platform Dev)
+**Status:** ANALYSIS (no code change recommended)  
+**Recommendation:** Stay on Radius-first path with ACA fallback. Do not switch to AKS or add AKS as dual path.  
+**Why:**
+- Portability story is already strong (Dapr + Radius = platform-agnostic).
+- Introducing AKS complicates narrative without solving real problem.
+- ACA fills serverless niche; removing it removes legitimate Azure option.
+- Three-path deployment fragments narrative; two-path is clearer.
+
+**Summary Table:**
+| Dimension | Current | If Add AKS | Assessment |
+|-----------|---------|-----------|------------|
+| App Portability | ✅ Dapr | ✅ Dapr | No change |
+| Platform Portability | ✅ Radius | ✅ Radius | No change |
+| Narrative Clarity | ✅ Clear | ❌ Confused | Worse |
+| Maintenance Cost | ✅ Moderate | ⚠️ Higher | +300 lines |
+
+### 2026-03-24: Reframe from ACA-Primary to Kubernetes-First (Daisy, Lead)
+**Status:** APPROVED (implementation pending)  
+**Supersedes:** `daisy-aks-portability.md` (which recommended keeping ACA framing)  
+**Decision:** Replace ACA-based deployment framing with Kubernetes-first because user explicitly reweighted: portability is the priority.  
+**Lead Assessment:**
+1. Shift materially improves Arc-enabled/self-managed K8s discoverability through narrative alignment.
+2. Radius-first path already targets Kubernetes; `rad deploy` works unchanged on AKS, Arc-enabled, Azure Local, self-managed.
+3. Honest caveats: Azure backing services still require Azure connectivity; recipe portability is real gap for non-Azure K8s; demo complexity increases.
+
+**What Changes:** Narrative framing, ACA fallback demotion, documentation, Bicep outputs.  
+**What Doesn't:** App code, Dapr component names, Radius app model, recipe architecture, workflow structure.
+
+**Alignment:** Respects "Dapr owns portable app layer," "Radius owns service/infrastructure wiring," "Azure is first target, not app-code dependency."
+
+### 2026-03-24: Kubernetes-First Deployment Narrative (Eddie, Docs/Story)
+**Status:** IMPLEMENTED  
+**What:** Reframed all deployment docs from "Radius-first with ACA fallback" to "Kubernetes-first with Azure backing services via Radius recipes."  
+**Why:** Conceptual clarity; honest portability; future scalability (recipes, not dual paths); removed debt.  
+**What's Portable:** App code (Dapr), deployment model (Radius), service topology, compute (AKS/Arc/self-managed).  
+**What's Backed by Recipes:** Azure (current); AWS/GCP (future via recipes).
+
+**Documentation Changed:** README, ADR-0001, demo walkthrough, validation checklists, scripts README.
+
+### 2026-03-24: Cleanup Boundary — RadiusClaim Naming (Daisy, Lead)
+**Status:** APPROVED  
+**Decision:** Treat `CloudExpense*` residue as acceptable only in intentional team-memory artifacts (historical decision/casting records). Current sample assets, build paths, Dockerfiles, and active squad skills use `RadiusClaim` naming.  
+**Why:** Demo story needs one current product name; historical squad records preserve origin and prior decisions.
+
+### 2026-03-24: Kubernetes-First Workflow Finish (Graham)
+**Status:** COMPLETE  
+**Decision:** `.github/workflows/deploy-azure.yml` stays on one deployment path: Radius deploying to Kubernetes. Selector describes K8s target profile (`aks`, `arc-enabled`, `self-managed`), not whether to fall back to ACA.  
+**Why:** Current truthful story is "Radius drives service wiring onto Kubernetes." Azure matters as source of backing services (recipes), not as second compute path. ACA template kept as labeled legacy reference, not as fallback job.
+
+**Impact:** Workflow validates K8s target selection and platform Bicep before deployment. `infra/radius/environments/azure-radius.*` is authoritative. `infra/radius/environments/azure.*` is legacy reference only.
+
+### 2026-03-24: Kubernetes-First Portability Pivot (Graham)
+**Status:** COMPLETE  
+**Decision:** `.github/workflows/deploy-azure.yml` frames deployment as Kubernetes-first with no ACA fallback job. AKS is explicit example in workflow text and environment outputs. Arc-enabled Kubernetes/Azure Local and self-managed Kubernetes remain valid where Radius can reach cluster and prerequisites are satisfied.  
+**Honesty Rule:** Backing services still Azure-specific (`azure-blob-state`, `azure-servicebus-pubsub`, `azure-keyvault-secrets`); portability applies to compute and service wiring, not every backing implementation.  
+**Legacy Artifact Handling:** `infra/radius/environments/azure.bicep` stays as legacy ACA reference template, not primary story.
+
+### 2026-03-24: Workflow Parser Errors Fixed (Graham)
+**Status:** COMPLETE  
+**Problem:** GitHub Actions parser rejected job conditionals using `env.*` (not allowed in job-level conditionals).  
+**Decision:** Use job outputs pattern: validate job outputs `deployment_mode`; both deploy jobs reference `needs.validate.outputs.deployment_mode`.  
+**Changes:**
+- Added job output pattern to validate job
+- Updated solution file ref (`CloudExpenseLite.slnx` → `RadiusClaim.slnx`)
+- Updated image prefix (`cloudexpense-lite` → `radiusclaim`)
+- Updated Kubernetes namespace to `radiusclaim-azure`
+
+**Validation:** YAML syntax valid, job conditionals use only valid `needs.*`, parser errors eliminated, all squad workflows remain valid.
+
+### 2026-03-24: RadiusClaim Dockerfile Cleanup (Graham)
+**Status:** COMPLETE  
+**What:** Updated COPY paths in all service Dockerfiles from `CloudExpenseLite.slnx` to `RadiusClaim.slnx` and `src/shared/CloudExpense.Contracts/` to `src/shared/RadiusClaim.Contracts/`.  
+**Why:** Container builds line up with current repo layout without changing platform model.
+
+### 2026-03-24: Kubernetes-First Portability Validation (Karen, Tester)
+**Status:** HOLD — blockers identified  
+**Verdict:** Kubernetes-first update is structurally credible; repo does not yet tell one consistent story.  
+**Validation Passed:**
+- YAML parsing of deploy-azure.yml
+- .NET restore/build/test (RadiusClaim.slnx)
+- Script syntax validation
+- Radius Bicep parsing (`az bicep build`)
+
+**Blocking Inconsistencies:**
+1. **Workflow/docs input drift:** README says `deployment_mode=radius-first`; workflow now uses `kubernetes_target`.
+2. **Kubeconfig handling ambiguity:** Docs say base64-encoded; workflow writes directly without decode step.
+3. **Legacy naming residue:** Validation checklist still instructs `rad group create cloudexpense`; workflow uses `RADIUS_GROUP=radiusclaim`.
+4. **Legacy ACA troubleshooting:** Demo walkthrough still uses `az containerapp` commands (conflicts with K8s-first story).
+5. **ADR narrative drift:** ADR-0001 says "primary (and only)" then later "both paths exist."
+
+**Required Manual Follow-Up:**
+1. Align docs with actual workflow inputs, job names, Radius group name.
+2. Resolve `RADIUS_KUBECONFIG` contract (raw or base64-encoded).
+3. Replace ACA troubleshooting commands with kubectl/Radius guidance in demo walkthrough.
+4. Run one real Radius deployment against reachable cluster for end-to-end proof.
+

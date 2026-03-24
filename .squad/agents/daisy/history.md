@@ -408,3 +408,63 @@ The current vanilla UI is already polished—semantic HTML, ARIA landmarks, CSS 
 - Rationale: Industry standard (70% job market), type safety, mature ecosystem, same-origin hosting possible, non-breaking migration path
 - **Implication for vanilla decision:** React path is now documented for future reference. Vanilla JS remains the correct choice for Phase 7 because the UI is the demo surface, not the product
 - **Status:** Framework analysis complete; both paths (vanilla now, React in future) are documented and approved
+
+---
+
+## PHASE 7: PUBLIC ACCESS REVIEW (2026-03-24)
+
+### Context
+Wesley requested: "I need it to be accessible publicly."
+
+### Judgment
+The existing decision is **APPROVED** and correctly bounded:
+- Only `expense-api` gets public exposure (via port-forward or optional ingress)
+- `workflow-engine` and `notification-svc` remain internal (Dapr wiring only)
+- This is the smallest defensible boundary and is portable across clouds
+
+### Key Findings
+1. **Boundary is correct:** App doesn't know it's public; Dapr keeps portability
+2. **Port-forward is the primary pattern:** Works on AKS, Arc-enabled, self-managed — no ingress required for CI/CD
+3. **Optional ingress can be added later** without touching app.bicep or container-service.bicep
+4. **LoadBalancer service is not recommended** — reduces portability to cloud-only, adds sprawl
+5. **Never revert to azure.bicep ingress** — that's the deprecated ACA reference path
+
+### Architecture Decision Confirmed
+- Expense-api hosts the UI (/app) and API endpoints (POST /expenses, GET /expenses/{id}, GET /expenses)
+- This is a reference sample; no authentication, no multi-domain CORS, no custom TLS required
+- The boundary teaches the demo story without adding platform complexity
+
+### Constraint for Graham (Platform Dev)
+If ingress is needed: place it in `infra/kubernetes/` as an optional overlay, **not** in Radius app.bicep. Ingress is infrastructure plumbing, not app topology.
+
+### Written Decision
+`.squad/decisions/inbox/daisy-public-access-review.md` — full reasoning, options, constraints.
+
+
+### 2026-03-24: Graham's Public Gateway Implementation Approved
+
+- **Implementation path:** `Applications.Core/gateways@2023-10-01-preview` resource in `app.bicep`
+- **Exposure model:** Only `expense-api` gets a public gateway; `workflow-engine` and `notification-svc` remain internal as required
+- **No sprawl:** No hand-written Kubernetes Ingress YAML; gateway definition stays inside the same Radius app model that declares the containers
+- **Hostname flexibility:** Default prefix (`expense`) with an optional fully qualified override parameter — covers both demos and teams with real DNS
+- **Docs coherent:** README, demo walkthrough, and validation checklist all updated to show public gateway as preferred path with port-forward fallback explicitly noted
+- **Workflow coherent:** CI job deploys the gateway and validates via port-forward fallback to avoid waiting on external DNS propagation; human validation guide explains the printed public endpoint
+- **Verdict:** APPROVE
+
+## Phase 7 Work Completion (2026-03-24)
+
+### Lead Approval Summary
+
+**Reviewed:** Graham's Radius gateway, public endpoint isolation, documentation, workflow fixes, portability stance.
+
+**Approved:** Graham's public-access implementation. Only `expense-api` public; workers remain internal. Radius-first story preserved. Docs coherent. Workflow corrected.
+
+**Kubernetes-First Reframe:** User-requested portability priority. Narrative shift improves Arc-enabled/self-managed K8s discoverability. Honest about backing service scope (Azure-specific in current sample).
+
+**Lead Assessment:** No further blockers. Ready for team merge and push. Non-platform inconsistencies (Karen's validation hold on doc/workflow input drift) documented but do not block infrastructure changes.
+
+### Notes for Team
+
+- Public gateway deployed and validated.
+- Kubernetes-first narrative approved.
+- Squad merge, git commit, and push ready to proceed.

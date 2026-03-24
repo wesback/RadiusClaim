@@ -269,3 +269,34 @@ Team communication moving forward should reference the sample as "RadiusClaim" i
 
 **Recipes as the portability lever:** Instead of dual deployment paths, frame recipes as the future mechanism for multi-cloud support.
 
+## Phase 7 Work (2026-03-24)
+
+### Documentation & Narrative Reframe — Kubernetes-First Deployment
+
+**Status:** IMPLEMENTED
+
+**What:** Reframed all deployment documentation from "Radius-first with ACA fallback" to "Kubernetes-first with Azure backing services via Radius recipes."
+
+**Why:** Conceptual clarity; honest portability; future scalability; removed teaching debt.
+
+**What's Portable:** App code (Dapr abstractions), deployment model (Radius app + environment patterns), service topology, compute targets (AKS, Arc-enabled, self-managed Kubernetes).
+
+**What's Backed by Recipes:** Azure services (Blob Storage, Service Bus, Key Vault); AWS/GCP recipes are additive, not rearchitecture.
+
+**Documentation Changed:**
+- README.md (opening tagline, deployment story, secrets table, footer)
+- ADR-0001 (complete reframe from ACA fallback to K8s-first roadmap)
+- docs/phase-7-demo-walkthrough.md (kubectl logs instead of az containerapp)
+- docs/phase-7-validation-checklist.md (single K8s path)
+- docs/radius-validation-checklist.md (K8s-native commands)
+- scripts/README.md (kubectl patterns)
+
+**Messaging:**
+> "RadiusClaim runs on any Kubernetes cluster with Dapr and Radius. AKS with Azure backing services is the primary example. When Radius recipes for AWS or GCP exist, the same app model targets those clouds with only recipe/environment changes."
+
+**No Longer Valid:**
+- ACA fallback narrative (removed from user-facing docs)
+- "Radius-first vs. ACA fallback" framing
+- Dual-path deployment configuration in docs
+- Azure Container Apps as "compute alternative" in this sample
+

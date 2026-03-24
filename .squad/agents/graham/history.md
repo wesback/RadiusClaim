@@ -364,3 +364,79 @@ None. The changes are:
 - Compute portability and backing-service portability are separate promises; call out Blob Storage, Service Bus, and Key Vault as Azure-specific even when compute stays portable.
 - User preference: prefer Kubernetes-first framing over ACA fallback framing, even when the older ACA path still functions.
 - Key files for this pivot: `.github/workflows/deploy-azure.yml`, `infra/radius/environments/azure-radius.bicep`, `infra/radius/environments/azure-radius.parameters.json`, `infra/radius/environments/azure.bicep`, and `scripts/README.md`.
+
+## Public Gateway Exposure (2026-03-24)
+
+### Work Completed
+- Added a Radius `Applications.Core/gateways` resource in `infra/radius/app.bicep` so the Kubernetes-first path exposes `expense-api` publicly without hand-written Kubernetes YAML.
+- Kept `workflow-engine` and `notification-svc` internal-only; the gateway routes all public HTTP traffic to `expense-api`, including the hosted `/app` UI.
+- Updated `.github/workflows/deploy-azure.yml`, `README.md`, `docs/radius-validation-checklist.md`, `docs/phase-7-validation-checklist.md`, and `docs/phase-7-demo-walkthrough.md` so the public gateway is the primary human path and port-forward is documented as fallback/CI stabilization only.
+- Regenerated `infra/radius/app.json` to keep the checked-in JSON contract aligned with the Bicep source.
+
+### Validation
+- ✅ `az bicep build --file infra/radius/app.bicep`
+- ✅ `az bicep build --file infra/radius/environments/azure-radius.bicep`
+- ✅ `dotnet restore RadiusClaim.slnx --nologo`
+- ✅ `dotnet build RadiusClaim.slnx --configuration Release --no-restore --nologo`
+- ✅ `dotnet test RadiusClaim.slnx --configuration Release --no-build --nologo`
+- ✅ Workflow YAML parse via Ruby `YAML.load_file('.github/workflows/deploy-azure.yml')`
+- ✅ Reverted `bin/` and `obj/` validation exhaust after the build/test pass
+
+## Learnings
+
+- Radius `Applications.Core/gateways` is the cleanest repo-fit way to publish a Kubernetes-hosted service; it keeps the public entrypoint inside the Radius app model instead of teaching teams to hand-author ingress YAML.
+- For a hosted UI sample, route only the frontend-facing service (`expense-api`) through the public gateway and keep worker services (`workflow-engine`, `notification-svc`) internal so the service topology remains teachable.
+- When Radius emits a public endpoint during `rad deploy`, the operator workflow should explicitly treat that line as deploy output worth capturing; CI can still use port-forward as a deterministic fallback while external DNS/load-balancer propagation settles.
+- User preference: make the primary Kubernetes-first deployment path publicly accessible for demos instead of implying port-forward is the only credible path.
+- Key files for this pattern: `infra/radius/app.bicep`, `infra/radius/app.json`, `.github/workflows/deploy-azure.yml`, `README.md`, `docs/radius-validation-checklist.md`, `docs/phase-7-validation-checklist.md`, and `docs/phase-7-demo-walkthrough.md`.
+
+## Phase 7 Work (2026-03-24)
+
+### Delivered
+
+**Radius Public Gateway Implementation**
+- Added `Applications.Core/gateways` resource to `infra/radius/app.bicep` routing `/` to `http://expense-api:8080`
+- Generated `infra/radius/app.json` ARM template from gateway-enabled app model
+- Gateway parameters: `publicGatewayPrefix` (default: "expense") and optional `publicGatewayHostname` for DNS flexibility
+
+**Documentation & Demo**
+- Updated `README.md` deployment story and Mermaid architecture diagram (Client → Gateway → expense-api)
+- Created `docs/phase-7-demo-walkthrough.md` — Walkthrough for public gateway endpoint; kubectl port-forward as deterministic fallback
+- Created `docs/phase-7-validation-checklist.md` — Validation checklist for public gateway
+- Updated `docs/radius-validation-checklist.md` — Kubernetes-first validation procedures
+
+**GitHub Actions Correction**
+- Fixed job conditional syntax in `.github/workflows/deploy-azure.yml` (GitHub Actions does not allow `env.*` in job conditions)
+- Implemented job outputs pattern: validate job outputs `deployment_mode`; both deploy jobs reference `needs.validate.outputs.deployment_mode`
+- Updated CloudExpenseLite references to RadiusClaim (solution file, image prefix)
+- Updated Kubernetes namespace to `radiusclaim-azure`
+
+**Dockerfile Cleanup**
+- Updated COPY paths in all service Dockerfiles: `RadiusClaim.slnx`, `src/shared/RadiusClaim.Contracts/`
+
+**Kubernetes-First Platform Narrative**
+- Implemented Kubernetes-first deployment framing (supersedes earlier ACA-primary model)
+- Removed dual-path complexity from workflow (Radius-only, no ACA fallback job)
+- Arc-enabled Kubernetes / Azure Local and self-managed Kubernetes clusters documented as valid targets
+- Backing services remain Azure-specific (recipes pattern enables cloud-agnostic future)
+
+**Skills & Records**
+- Created `.squad/skills/radius-public-gateway/SKILL.md` — Pattern documentation
+
+### Validation
+
+- ✅ `az bicep build infra/radius/app.bicep`
+- ✅ `az bicep build infra/radius/environments/azure-radius.bicep`
+- ✅ GitHub Actions YAML parsing (job outputs pattern, no `env.*` in conditionals)
+- ✅ .NET build/test (Dockerfile refs correct, solution file present)
+- ✅ Syntax validation: `bash -n scripts/validate-deployment.sh`
+
+### Design Decision (Public Gateway Pattern)
+
+Radius `Applications.Core/gateways` is the cleanest fit for publishing Kubernetes-hosted services — keeps public entrypoint inside the Radius app model instead of teaching hand-written ingress YAML. Gateway resource is parametrized for both demo (auto nip.io) and production (custom DNS) use.
+
+### Notes for Team
+
+- Lead review (Daisy) approved. All platform changes validated.
+- Karen flagged remaining doc/workflow input inconsistencies (blocking for final push, non-platform).
+- Public gateway is deployed and documented. Ready for team merge.
