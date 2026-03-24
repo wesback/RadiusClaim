@@ -570,3 +570,84 @@ This work directly implements that directive.
 ### Status: COMPLETE
 
 ---
+
+## Phase 10 Work (2026-03-24) — Azure Credential Registration Documentation
+
+### Diagnosed Issue
+
+Graham's recipe troubleshooting identified a critical bootstrap gap:
+- Radius Azure recipe deployment fails with missing `azure-azurecloud-default` secret error
+- Root cause: Azure credential not registered with Radius before deploying environments with Azure-backed recipes
+- The error occurs because `rad credential register azure` must run **after** workspace/environment creation but **before** deploying Bicep files that reference Azure recipes
+- This step was missing from both the GitHub Actions workflow and the manual deployment documentation
+
+### Work Completed
+
+**1. README.md Enhancement**
+- Added prominent "Azure credential registration (required)" section right after the idempotent deployment paragraph
+- Explains the purpose, the exact error message if skipped, and directs readers to validation checklist for details
+- Keeps the README narrative high-level while surfacing the criticality
+
+**2. docs/radius-validation-checklist.md — Comprehensive Coverage**
+- Added "✅ Azure Provider Credentials" checkbox section in Pre-Deployment Checks
+  - Explains what the step does and why it matters
+  - Shows the command and expected output
+  - References the workflow implementation
+  - Separated from workspace/group section for clarity
+- Inserted "Step 2: Register Azure Provider Credentials" in Deployment Steps sequence (between environment creation and recipe publishing)
+  - Includes the command, verification, and critical warning
+  - Maintains step numbering (Steps 3, 4, 5 for recipe publish, environment deploy, app deploy)
+- Added new troubleshooting entry: "Issue: `rad deploy` fails with missing `azure-azurecloud-default` secret"
+  - Diagnosis, solution with retry, and explanation of why it matters
+  - Directs readers to the credential registration step in the pre-deployment section
+
+**3. docs/end-to-end-setup-walkthrough.md — Manual Deployment Path**
+- Inserted credential registration block in the "Option B: Manual Deployment with `rad` CLI" section
+  - Placed right after `rad env switch` and before `rad deploy` of the environment Bicep
+  - Includes interactive prompt explanation and verification command
+  - Comments explain what the credential enables (Blob Storage, Service Bus, Key Vault provisioning)
+
+**4. .github/workflows/deploy-azure.yml — CI/CD Implementation**
+- Added new step "Register Azure provider credentials with Radius" 
+  - Placed between "Configure Radius workspace" and "Deploy Azure-backed Radius environment"
+  - Uses the same KUBECONFIG setup as other Radius operations
+  - Includes comment explaining the purpose
+  - Step runs `./rad credential register azure` with proper environment
+
+### Key Design Decisions
+
+1. **Pre-deployment validation section covers the "what":** Why credentials matter, what happens without them, how to verify success
+2. **Deployment steps show the "when":** Exact sequence: create env → register credential → publish recipes → deploy environment → deploy app
+3. **Troubleshooting gives the "how to recover":** Diagnosis, retry steps, and explanation of why the error occurred
+4. **README surfaces urgency:** The credibility of "this must happen before deployment" is better served by mentioning it in the main narrative than hiding it in a checklist
+
+### Validation
+
+- ✅ All four documentation artifacts (README, walkthrough, validation checklist, workflow) consistently mention credential registration
+- ✅ Placed at the right sequence point in all paths
+- ✅ Explains the `azure-azurecloud-default` error message (helps operators recognize the issue)
+- ✅ Links between docs (validation checklist links to workflow, README links to checklist)
+- ✅ No speculative wording; all guidance is grounded in Graham's diagnosis
+
+### Files Modified
+
+1. `README.md` — Added "Azure credential registration (required)" paragraph
+2. `docs/radius-validation-checklist.md` — Added pre-deployment check, deployment step, and troubleshooting entry
+3. `docs/end-to-end-setup-walkthrough.md` — Added credential registration commands in manual deployment section
+4. `.github/workflows/deploy-azure.yml` — Added "Register Azure provider credentials with Radius" job step
+
+### Learnings
+
+- **Bootstrap order matters in Radius:** The sequence is workspace → environment → credential → recipes, not just any order
+- **Error messages are documentation:** When an error message mentions a Kubernetes secret name (`azure-azurecloud-default`), that's a hook operators can use to diagnose; calling out the message in the troubleshooting section helps them recognize the failure
+- **Credibility in sequence:** Operators trust workflows that show clear step-by-step order more than workflows that hide setup steps
+- **CI/CD should mirror manual guidance:** Both paths now have the same credential registration step in the same sequence, reducing mental load for teams moving between automation and manual ops
+
+### Pattern Notes
+
+This aligns with Graham's troubleshooting skill (`radius-azure-recipe-troubleshooting/SKILL.md`):
+- Treats Azure provider credentials as a separate bootstrap concern from the environment model
+- Separates the "missing credential" symptom from "recipe output contract bugs"
+- Points operators to the credential registration step as the first diagnostic/fix
+
+### Status: COMPLETE

@@ -1,6 +1,6 @@
 ---
 name: "radius-namespace-migration"
-description: "Safely migrate deprecated Applications.Core resources to Radius.Core and Radius.Compute while documenting mixed-catalog limits"
+description: "Move between stock Applications.Core resources and preview Radius.Core/Compute types using first-party catalog evidence"
 domain: "platform"
 confidence: "high"
 source: "graham-earned"
@@ -8,7 +8,7 @@ source: "graham-earned"
 
 ## Context
 
-Use this when a Radius repo still declares `Applications.Core/*` environment, application, container, or gateway resources and the installed Radius catalog already exposes the newer `Radius.Core/*` and `Radius.Compute/*` replacements. This is especially useful when the catalog has moved only part of the resource surface and Dapr resources still live under `Applications.Dapr/*`. For repos with already-provisioned Dapr resources, treat application/environment identity continuity as a first-class migration constraint.
+Use this when a Radius repo is deciding whether to stay on stock `Applications.Core/*` resources or pivot to newer `Radius.Core/*` / `Radius.Compute/*` names. The key question is not whether a future catalog might support the new namespace — it is whether the installed control plane and first-party docs prove that support today. This is especially useful when the catalog has moved only part of the resource surface and Dapr resources still live under `Applications.Dapr/*`. For repos with already-provisioned Dapr resources, treat application/environment identity continuity as a first-class migration constraint.
 
 ## Patterns
 
@@ -17,6 +17,13 @@ Use this when a Radius repo still declares `Applications.Core/*` environment, ap
 - If deployed `Applications.Dapr/*` resources already exist, keep the owning application/environment on `Applications.Core/applications` and `Applications.Core/environments` until Radius publishes a Dapr migration path that preserves ownership continuity.
 - Existing Dapr resources are keyed to their application/environment IDs, not just their logical names. Repointing them to `Radius.Core/*` owners breaks idempotent updates for resources such as `statestore`, `pubsub`, and `platform-secrets`.
 - You can still advance compute and ingress independently: `Applications.Core/containers` may move to `Radius.Compute/containers`, and `Applications.Core/gateways` may move to `Radius.Compute/routes`, while app/environment identity stays stable.
+
+### Let live namespace rejection override speculative migrations
+
+- If `rad deploy` fails with `InvalidResourceNamespace` for `Radius.Compute/containers`, stop treating `Radius.Compute/*` as a harmless schema-lag warning. The installed catalog does not support that surface.
+- On stock Radius 0.55, revert app services to `Applications.Core/containers@2023-10-01-preview` and public ingress to `Applications.Core/gateways@2023-10-01-preview` unless your platform team can point to first-party docs or catalog metadata for the preview types in the target environment.
+- Validate the rollback with two proofs together: official docs that still model containers/gateways under `Applications.Core/*`, and a clean `az bicep build` of `infra/radius/app.bicep` without `Radius.Compute/*` `BCP081` warnings.
+- Keep the exact future pivot documented for later: `Applications.Core/containers` ↔ `Radius.Compute/containers` and `Applications.Core/gateways` ↔ `Radius.Compute/routes`, with the associated shape change from `properties.container` to `properties.containers[...]` and from `extensions[]` to `extensions.daprSidecar`.
 
 ### Migrate environments with recipe packs, not inline recipes
 
@@ -46,11 +53,13 @@ Use this when a Radius repo still declares `Applications.Core/*` environment, ap
 - Container module: `infra/radius/modules/container-service.bicep`
 - Environment models: `infra/radius/environments/dev.bicep`, `infra/radius/environments/azure-radius.bicep`
 - Operator docs: `docs/radius-validation-checklist.md`
+- Stock-aligned gateway extraction: `docs/end-to-end-setup-walkthrough.md`
 
 ## Anti-Patterns
 
 - Renaming every `Applications.*` resource blindly even when the installed catalog does not provide the new type.
 - Migrating application/environment owners to `Radius.Core/*` while existing Dapr resources still live under `Applications.Dapr/*`; that breaks idempotent updates because the owning IDs change.
 - Treating generic `Radius.*` resource-type concepts as proof that a specific Dapr resource now has a supported replacement.
+- Treating `BCP081` warnings on `Radius.Compute/*` as acceptable after a live deployment has already failed with `InvalidResourceNamespace`.
 - Porting `Applications.Core/environments` without introducing `Radius.Core/recipePacks`; the old inline recipe structure does not carry forward.
 - Treating route hostname prefix hints as guaranteed behavior after moving to `Radius.Compute/routes`; the current route model leaves generated hostname selection to the active recipe.

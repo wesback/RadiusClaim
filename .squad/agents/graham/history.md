@@ -690,3 +690,50 @@ Closure criteria: Execute `rad deploy` twice against same environment, verify se
 - Expected next checkpoint: after Phase 1 credential registration and Phase 7 re-validation
 
 ---
+
+## Recipe Resource Tracking Fix (2026-03-24)
+
+### Delivered
+
+- Removed manual Azure resource ID emission from `output result` in `infra/radius/recipes/azure/state-store.bicep`, `infra/radius/recipes/azure/pubsub.bicep`, and `infra/radius/recipes/azure/secrets.bicep`.
+- Regenerated the checked-in JSON mirrors (`state-store.json`, `pubsub.json`, `secrets.json`) so the compiled output no longer carries `outputs.result.value.resources`.
+- Kept the Radius app/environment model unchanged because this defect was isolated to recipe output tracking, not application wiring.
+
+### Validation
+
+- ✅ `az bicep build --file infra/radius/recipes/azure/state-store.bicep`
+- ✅ `az bicep build --file infra/radius/recipes/azure/pubsub.bicep`
+- ✅ `az bicep build --file infra/radius/recipes/azure/secrets.bicep`
+- ✅ `dotnet build RadiusClaim.slnx`
+- ✅ `dotnet test RadiusClaim.slnx --no-build`
+
+## Learnings
+
+- For Azure-backed Radius recipes, omit `result.resources` entirely when the recipe only creates Azure resources; manual Azure IDs cause bad resource tracking and deployment churn.
+- JSON mirrors under `infra/radius/recipes/azure/*.json` are part of the contract and must be regenerated immediately after any recipe output change.
+- Minimal, architecture-safe repair here means touching only the recipe contract layer and leaving `infra/radius/app.bicep`, `infra/radius/environments/azure-radius.bicep`, and `scripts/publish-radius-recipes.sh` alone unless the defect proves otherwise.
+- User preferences to preserve: avoid outdated parameters, keep platform changes minimal, and avoid architecture-specific Docker/build guidance.
+- Key file paths: `infra/radius/recipes/azure/state-store.bicep`, `infra/radius/recipes/azure/pubsub.bicep`, `infra/radius/recipes/azure/secrets.bicep`, and their generated `.json` mirrors.
+- Stock Radius 0.55 docs and live deployment errors beat speculative namespace migration: if `rad deploy` throws `InvalidResourceNamespace` for `Radius.Compute/containers`, revert the repo to `Applications.Core/containers` and `Applications.Core/gateways` instead of treating `BCP081` as harmless.
+- The exact future compute/ingress pivot remains `Applications.Core/containers` ↔ `Radius.Compute/containers` and `Applications.Core/gateways` ↔ `Radius.Compute/routes`; the move also requires `properties.container` ↔ `properties.containers[...]` and `extensions[]` ↔ `extensions.daprSidecar` shape changes.
+- For stock Radius gateway deployments, public endpoint docs should read the generated ingress/gateway host, not the backing `expense-api` service status.
+- Key file paths for this rollback pattern: `infra/radius/app.bicep`, `infra/radius/modules/container-service.bicep`, `infra/radius/app.json`, `README.md`, `docs/end-to-end-setup-walkthrough.md`, and `docs/radius-validation-checklist.md`.
+
+---
+
+## 2026-03-24T17:36:38Z: Scribe Session — Orchestration & Decision Log
+
+**Work:** Consolidated all pending inbox decisions into `.squad/decisions/decisions.md`, created orchestration logs for Daisy and Graham, created session log for radius-compute-review, cleared inbox.
+
+**Files Written:**
+- `.squad/orchestration-log/2026-03-24T17:36:38Z-daisy.md` — Radius.Compute rejection and follow-up orchestration
+- `.squad/orchestration-log/2026-03-24T17:36:38Z-graham.md` — Radius.Compute revert implementation orchestration
+- `.squad/log/2026-03-24T17:36:38Z-radius-compute-review.md` — Session summary for radius-compute review and revert
+- `.squad/decisions/decisions.md` — Consolidated 5 decisions
+
+**Decisions Merged:**
+1. Daisy full-codebase review (7 criticals, 11 importants, 13 minors)
+2. Radius.Compute/* rejection decision (revert to Applications.Core/*)
+3. Azure credential registration documentation (Eddie)
+4. Compute revert implementation (Graham)
+5. Recipe resource tracking cleanup (Graham — proposed)

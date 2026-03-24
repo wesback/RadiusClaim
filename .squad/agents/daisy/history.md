@@ -743,3 +743,70 @@ Coordinated final decision documentation for Dapr namespace research and migrati
 **Leadership Decision:** Approved Graham's Phase 1 fix (credential registration) and Phase 2–5 diagnostic sequence without requiring all fixes in parallel. Maintains teaching moment for operators: credential registration is explicit bootstrap, recipe output contracts are real constraints, trial-and-error is expensive. Small, scripted debugging path > guessing.
 
 ---
+
+### 2026-03-24: Full Codebase Review (Opus 4.6 Deep Audit)
+
+**Scope:** Complete review of all source code (17 .cs/.csproj files), all infrastructure (Radius bicep, recipes, environments, local Dapr, scripts), all documentation (README, docs/*.md), and CI/CD workflow.
+
+**Findings Summary:**
+- 7 Critical, 11 Important, 13 Minor across three review tracks
+- App code is clean: zero portability violations, correct Dapr SDK usage, sound workflow design
+- Infrastructure has deployment blockers: `Radius.Compute/*` type resolution unknown, pub/sub recipe outputs wrong component type, state store version mismatch between recipe and ACA bootstrap
+- Documentation has drifted: stale `sovereignapp/` name in README tree, wrong Contracts path, `dev.bicep` mislabeled as local environment, Quick Start still says "Coming in Phase 2"
+- CI/CD: `deploy-azure.yml` missing `azure/login` step, `dotnet test` is vacuous (zero test projects)
+
+**Key Architectural Observations:**
+- Dapr component names are consistent in code (`statestore`, `pubsub` via constants) — Billy's work is solid
+- The Dapr-vs-Radius boundary is correctly maintained in app code (no Azure SDK leakage)
+- Infrastructure tells two different stories: ACA bootstrap (managed identity, v2 state, hardened KV) vs. recipe path (shared keys, v1 state, soft KV) — these should converge
+- Dead contracts (`ExpenseRejected`, `Rejected` status) create expectation without delivery
+
+**Decision:** Written to `.squad/decisions/inbox/daisy-full-codebase-review.md` with specific ownership assignments for Graham (infra criticals + CI auth), Eddie (docs criticals), Billy (dead contract cleanup), Karen (test projects or remove `dotnet test`).
+
+## Learnings
+
+- Recipe output contracts (Dapr component type, version) are a real integration seam — mismatches are silent failures that only surface at runtime. Always cross-check recipe outputs against consumer expectations.
+- `Radius.Compute/*` vs `Applications.Core/*` namespace choice is load-bearing — it determines whether stock Radius 0.55 works or a preview build is required. This must be documented as an explicit prerequisite.
+- Documentation drift accelerates when infra files change names/types during redesign phases. A reconciliation pass should be a Phase 7 gate.
+- CI `dotnet test` with no test projects creates false confidence. Either add tests or remove the step — don't ship a green badge on an empty test run.
+
+## 2026-03-24: Radius.Compute/* Rejection — Deployment-Confirmed Blocker
+
+**Context:** Live deployment proved `Radius.Compute/containers@2025-08-01-preview` and `Radius.Compute/routes@2025-08-01-preview` fail at deploy time against the running Radius environment. Azure-backed recipes (Dapr state, pub/sub, secrets) succeed — the recipes are sound, the compute namespace is not.
+
+**Decision:** REJECT `Radius.Compute/*`. Revert `container-service.bicep` and `app.bicep` to `Applications.Core/containers@2023-10-01-preview` and `Applications.Core/httpRoutes@2023-10-01-preview`. This is not a string swap — the resource shapes differ (containers map vs container singular, extensions object vs extensions array, routes vs httpRoutes rule semantics).
+
+**Assignment:** Graham does the revert (shape expertise), Karen validates against live `rad deploy` (no more compile-only gates).
+
+**Immediate follow-ups after unblock:**
+1. C2: Pub/sub recipe type mismatch (`pubsub.azure.servicebus` vs `.topics`)
+2. C3: State store version mismatch (v1 recipe vs v2 ACA bootstrap)
+3. C7: CI workflow missing `azure/login` step
+
+## Learnings
+
+- `BCP081` warnings from `az bicep build` on Radius extension types mean "unresolvable type" — treat as a deployment risk signal, not acceptable noise, especially for reference samples targeting stock tooling.
+- Compile-time validation is necessary but not sufficient for Radius. The only trustworthy gate is a successful `rad deploy` against the target environment.
+- When a namespace migration compiles but doesn't deploy, the safest revert path goes through the original author (shape knowledge) with a different reviewer (fresh eyes on the gate).
+- Reference samples must deploy on stock releases. Preview namespaces, even if they represent the "future direction," violate the ten-minute-demo contract.
+
+---
+
+## 2026-03-24T17:36:38Z: Scribe Session — Orchestration & Decision Log
+
+**Work:** Consolidated all pending inbox decisions into `.squad/decisions/decisions.md`, created orchestration logs for Daisy and Graham, created session log for radius-compute-review, cleared inbox.
+
+**Files Written:**
+- `.squad/orchestration-log/2026-03-24T17:36:38Z-daisy.md` — Radius.Compute rejection and follow-up orchestration
+- `.squad/orchestration-log/2026-03-24T17:36:38Z-graham.md` — Radius.Compute revert implementation orchestration
+- `.squad/log/2026-03-24T17:36:38Z-radius-compute-review.md` — Session summary for radius-compute review and revert
+- `.squad/decisions/decisions.md` — Consolidated 5 decisions (full codebase review, Radius.Compute rejection, credential docs, compute revert implementation, recipe resource tracking)
+
+**Decisions Registry Includes:**
+1. Daisy full-codebase review (7 criticals, 11 importants, 13 minors)
+2. Radius.Compute/* rejection decision (revert to Applications.Core/*)
+3. Azure credential registration documentation (Eddie)
+4. Compute revert implementation (Graham)
+5. Recipe resource tracking cleanup (Graham — proposed)
+
+**Inbox Cleaned:** All 5 inbox decision files removed and directory purged.
