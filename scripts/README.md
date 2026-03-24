@@ -6,6 +6,26 @@ This directory contains operational and validation scripts for RadiusClaim.
 
 ## Available Scripts
 
+### `publish-radius-recipes.sh`
+
+**Purpose:** Publish the repo's custom Radius recipes to an OCI registry before deploying an environment that references them.
+
+**Usage:**
+```bash
+./scripts/publish-radius-recipes.sh <recipe-registry> <tag>
+```
+
+**Example:**
+```bash
+docker login ghcr.io
+./scripts/publish-radius-recipes.sh ghcr.io/<your-org>/radiusclaim/recipes local
+```
+
+**Why it exists:**
+- Radius recipe `templatePath` values must resolve to OCI-backed artifacts, not local relative files
+- The script keeps the three custom recipes (`state-store`, `pubsub`, `secrets`) published under one teachable command
+- GitHub Actions reuses the same script before deploying `infra/radius/environments/azure-radius.bicep`
+
 ### `validate-deployment.sh`
 
 **Purpose:** End-to-end validation script for deployed RadiusClaim instances on Kubernetes.

@@ -21,22 +21,16 @@ param publicGatewayPrefix string = 'expense'
 @description('Optional fully qualified hostname for the public expense-api gateway. Leave empty to let Radius generate a hostname.')
 param publicGatewayHostname string = ''
 
-@description('Logical Dapr backing definitions. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets.')
+@description('Logical Dapr recipe selections. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets.')
 param daprBackings object = {
   stateStore: {
     recipeName: 'azure-blob-state'
-    type: 'state.azure.blobstorage'
-    version: 'v1'
   }
   pubsub: {
     recipeName: 'azure-servicebus-pubsub'
-    type: 'pubsub.azure.servicebus'
-    version: 'v1'
   }
   secretStore: {
     recipeName: 'azure-keyvault-secrets'
-    type: 'secretstores.azure.keyvault'
-    version: 'v1'
   }
 }
 
@@ -80,16 +74,6 @@ resource stateStore 'Applications.Dapr/stateStores@2023-10-01-preview' = {
         containerName: stateStoreContainerName
       }
     }
-    type: stateStoreBacking.type
-    version: stateStoreBacking.version
-    metadata: {
-      accountName: {
-        value: stateStoreAccountName
-      }
-      containerName: {
-        value: stateStoreContainerName
-      }
-    }
   }
 }
 
@@ -107,16 +91,6 @@ resource pubsub 'Applications.Dapr/pubSubBrokers@2023-10-01-preview' = {
         topicName: notificationTopicName
       }
     }
-    type: pubsubBacking.type
-    version: pubsubBacking.version
-    metadata: {
-      namespaceName: {
-        value: pubsubNamespaceName
-      }
-      disableEntityManagement: {
-        value: 'true'
-      }
-    }
   }
 }
 
@@ -131,16 +105,6 @@ resource platformSecretStore 'Applications.Dapr/secretStores@2023-10-01-preview'
       name: secretStoreBacking.recipeName
       parameters: {
         vaultName: secretVaultName
-      }
-    }
-    type: secretStoreBacking.type
-    version: secretStoreBacking.version
-    metadata: {
-      vaultName: {
-        value: secretVaultName
-      }
-      azureEnvironment: {
-        value: 'AZUREPUBLICCLOUD'
       }
     }
   }

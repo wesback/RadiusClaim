@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "10845260619380442465"
+      "templateHash": "7520344786238026972"
     }
   },
   "parameters": {
@@ -62,23 +62,17 @@
       "type": "object",
       "defaultValue": {
         "stateStore": {
-          "recipeName": "azure-blob-state",
-          "type": "state.azure.blobstorage",
-          "version": "v1"
+          "recipeName": "azure-blob-state"
         },
         "pubsub": {
-          "recipeName": "azure-servicebus-pubsub",
-          "type": "pubsub.azure.servicebus",
-          "version": "v1"
+          "recipeName": "azure-servicebus-pubsub"
         },
         "secretStore": {
-          "recipeName": "azure-keyvault-secrets",
-          "type": "secretstores.azure.keyvault",
-          "version": "v1"
+          "recipeName": "azure-keyvault-secrets"
         }
       },
       "metadata": {
-        "description": "Logical Dapr backing definitions. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets."
+        "description": "Logical Dapr recipe selections. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets."
       }
     }
   },
@@ -129,16 +123,6 @@
               "storageAccountName": "[variables('stateStoreAccountName')]",
               "containerName": "[variables('stateStoreContainerName')]"
             }
-          },
-          "type": "[variables('stateStoreBacking').type]",
-          "version": "[variables('stateStoreBacking').version]",
-          "metadata": {
-            "accountName": {
-              "value": "[variables('stateStoreAccountName')]"
-            },
-            "containerName": {
-              "value": "[variables('stateStoreContainerName')]"
-            }
           }
         }
       },
@@ -162,16 +146,6 @@
               "namespaceName": "[variables('pubsubNamespaceName')]",
               "topicName": "[variables('notificationTopicName')]"
             }
-          },
-          "type": "[variables('pubsubBacking').type]",
-          "version": "[variables('pubsubBacking').version]",
-          "metadata": {
-            "namespaceName": {
-              "value": "[variables('pubsubNamespaceName')]"
-            },
-            "disableEntityManagement": {
-              "value": "true"
-            }
           }
         }
       },
@@ -193,16 +167,6 @@
             "name": "[variables('secretStoreBacking').recipeName]",
             "parameters": {
               "vaultName": "[variables('secretVaultName')]"
-            }
-          },
-          "type": "[variables('secretStoreBacking').type]",
-          "version": "[variables('secretStoreBacking').version]",
-          "metadata": {
-            "vaultName": {
-              "value": "[variables('secretVaultName')]"
-            },
-            "azureEnvironment": {
-              "value": "AZUREPUBLICCLOUD"
             }
           }
         }

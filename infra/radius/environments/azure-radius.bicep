@@ -12,6 +12,12 @@ param azureProviderScope string
 @description('Azure location for backing resources created by recipes.')
 param location string
 
+@description('OCI registry prefix that stores published Radius recipe artifacts for this repo.')
+param recipeRegistry string = 'ghcr.io/wesback/radiusclaim/recipes'
+
+@description('OCI tag used when resolving published Radius recipe artifacts.')
+param recipeTag string = 'latest'
+
 resource env 'Applications.Core/environments@2023-10-01-preview' = {
   name: environmentName
   properties: {
@@ -29,7 +35,7 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
       'Applications.Dapr/stateStores': {
         'azure-blob-state': {
           templateKind: 'bicep'
-          templatePath: '../recipes/azure/state-store.bicep'
+          templatePath: '${recipeRegistry}/state-store:${recipeTag}'
           parameters: {
             location: location
           }
@@ -38,7 +44,7 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
       'Applications.Dapr/pubSubBrokers': {
         'azure-servicebus-pubsub': {
           templateKind: 'bicep'
-          templatePath: '../recipes/azure/pubsub.bicep'
+          templatePath: '${recipeRegistry}/pubsub:${recipeTag}'
           parameters: {
             location: location
           }
@@ -47,7 +53,7 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
       'Applications.Dapr/secretStores': {
         'azure-keyvault-secrets': {
           templateKind: 'bicep'
-          templatePath: '../recipes/azure/secrets.bicep'
+          templatePath: '${recipeRegistry}/secrets:${recipeTag}'
           parameters: {
             location: location
           }
@@ -62,6 +68,10 @@ output environmentModel object = {
   computeTarget: 'radius-kubernetes'
   namespace: kubernetesNamespace
   azureProviderScope: azureProviderScope
+  recipeArtifacts: {
+    registry: recipeRegistry
+    tag: recipeTag
+  }
   recipes: {
     stateStore: 'azure-blob-state'
     pubsub: 'azure-servicebus-pubsub'

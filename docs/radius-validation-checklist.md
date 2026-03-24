@@ -136,6 +136,17 @@ docker push ghcr.io/<your-org>/radiusclaim/workflow-engine:local
 docker push ghcr.io/<your-org>/radiusclaim/notification-svc:local
 ```
 
+### ✅ Radius Recipe Artifacts
+
+Publish the custom recipe Bicep files before deploying the Radius environment:
+
+```bash
+docker login ghcr.io
+./scripts/publish-radius-recipes.sh ghcr.io/<your-org>/radiusclaim/recipes <your-tag>
+```
+
+**Why:** Radius recipe `templatePath` values are OCI references. Local relative paths under `infra/radius/recipes/azure/` are source files for authoring, not deployable recipe addresses.
+
 ### ✅ Radius Workspace and Group
 
 ```bash
@@ -167,7 +178,14 @@ rad env create bootstrap-test
 rad env switch bootstrap-test
 ```
 
-### Step 2: Deploy Azure Environment
+### Step 2: Publish Radius Recipe Artifacts
+
+```bash
+docker login ghcr.io
+./scripts/publish-radius-recipes.sh ghcr.io/<your-org>/radiusclaim/recipes <your-tag>
+```
+
+### Step 3: Deploy Azure Environment
 
 ```bash
 rad deploy infra/radius/environments/azure-radius.bicep \
@@ -175,7 +193,9 @@ rad deploy infra/radius/environments/azure-radius.bicep \
   --parameters environmentName=azure \
   --parameters kubernetesNamespace=radiusclaim-azure \
   --parameters azureProviderScope="/subscriptions/<subscription-id>/resourceGroups/<resource-group>" \
-  --parameters location=<azure-location>
+  --parameters location=<azure-location> \
+  --parameters recipeRegistry='ghcr.io/<your-org>/radiusclaim/recipes' \
+  --parameters recipeTag='<your-tag>'
 ```
 
 **Expected output:**
@@ -198,7 +218,7 @@ rad env show azure
 # Expected: Shows compute kind as kubernetes, namespace, and Azure provider scope
 ```
 
-### Step 3: Deploy Application Model
+### Step 4: Deploy Application Model
 
 ```bash
 rad deploy infra/radius/app.bicep \

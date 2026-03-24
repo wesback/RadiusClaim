@@ -91,6 +91,7 @@ Radius generates the Kubernetes manifests and Dapr component specs — no hand-w
 
 **Primary deployment path** (`.github/workflows/deploy-azure.yml`, `deploy-kubernetes` job):
 - Builds and publishes images, then runs `rad deploy` against `infra/radius/environments/azure-radius.bicep` and `infra/radius/app.bicep`
+- Publishes the repo's custom Radius recipes as OCI artifacts before environment deployment, because Radius recipe `templatePath` values must resolve to registry-backed artifacts rather than local file paths
 - Keeps service topology, Dapr component names, and resource wiring in Radius
 - Deploys to a Kubernetes cluster (AKS in the Azure example, or any K8s cluster with Radius control plane)
 - Exposes only `expense-api` publicly through a Radius `Applications.Core/gateways` resource; `workflow-engine` and `notification-svc` stay internal

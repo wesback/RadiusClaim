@@ -23,6 +23,8 @@ Use this when Radius is the primary deployment contract, Kubernetes is the compu
 - Treat `infra/radius/environments/azure-radius.bicep` as the authoritative Azure-backed Kubernetes environment.
 - Keep `infra/radius/environments/azure.bicep` only as a legacy ACA reference when it still teaches something, and label it clearly as non-primary.
 - Make the environment outputs say both truths: compute is Kubernetes-portable, backing services are still Azure Blob Storage, Service Bus, and Key Vault.
+- When a Dapr resource uses `resourceProvisioning: 'recipe'`, keep `type`, `version`, and `metadata` in the recipe output object, not on the application resource itself; Radius rejects mixed manual+recipe declarations.
+- Register recipe `templatePath` values as OCI artifacts (for example GHCR), not local relative files, or `rad deploy` will fail when the control plane tries to download the recipe.
 
 ### Keep generated platform artifacts in sync
 

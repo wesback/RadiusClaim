@@ -141,6 +141,10 @@ jobs:
           ./rad bicep download
           ./rad --version
 
+      - name: Publish Radius recipe artifacts to GHCR
+        run: |
+          RAD_BIN=./rad ./scripts/publish-radius-recipes.sh "$GHCR_PREFIX/recipes" "$IMAGE_TAG"
+
       - name: Configure Radius workspace for Kubernetes target
         run: |
           printf '%s' "$RADIUS_KUBECONFIG_SECRET" > "$RUNNER_TEMP/radius-kubeconfig"
@@ -168,7 +172,9 @@ jobs:
             --parameters environmentName="$RADIUS_ENVIRONMENT_NAME" \
             --parameters kubernetesNamespace="$RADIUS_KUBERNETES_NAMESPACE" \
             --parameters azureProviderScope="$AZURE_PROVIDER_SCOPE" \
-            --parameters location="$AZURE_LOCATION"
+            --parameters location="$AZURE_LOCATION" \
+            --parameters recipeRegistry="$GHCR_PREFIX/recipes" \
+            --parameters recipeTag="$IMAGE_TAG"
           ./rad env switch "$RADIUS_ENVIRONMENT_NAME"
 
       - name: Deploy application through Radius to Kubernetes with public expense-api gateway

@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "3769207197916501222"
+      "templateHash": "17418302257657783474"
     }
   },
   "parameters": {
@@ -34,6 +34,20 @@
       "type": "string",
       "metadata": {
         "description": "Azure location for backing resources created by recipes."
+      }
+    },
+    "recipeRegistry": {
+      "type": "string",
+      "defaultValue": "ghcr.io/wesback/radiusclaim/recipes",
+      "metadata": {
+        "description": "OCI registry prefix that stores published Radius recipe artifacts for this repo."
+      }
+    },
+    "recipeTag": {
+      "type": "string",
+      "defaultValue": "latest",
+      "metadata": {
+        "description": "OCI tag used when resolving published Radius recipe artifacts."
       }
     }
   },
@@ -64,7 +78,7 @@
             "Applications.Dapr/stateStores": {
               "azure-blob-state": {
                 "templateKind": "bicep",
-                "templatePath": "../recipes/azure/state-store.bicep",
+                "templatePath": "[format('{0}/state-store:{1}', parameters('recipeRegistry'), parameters('recipeTag'))]",
                 "parameters": {
                   "location": "[parameters('location')]"
                 }
@@ -73,7 +87,7 @@
             "Applications.Dapr/pubSubBrokers": {
               "azure-servicebus-pubsub": {
                 "templateKind": "bicep",
-                "templatePath": "../recipes/azure/pubsub.bicep",
+                "templatePath": "[format('{0}/pubsub:{1}', parameters('recipeRegistry'), parameters('recipeTag'))]",
                 "parameters": {
                   "location": "[parameters('location')]"
                 }
@@ -82,7 +96,7 @@
             "Applications.Dapr/secretStores": {
               "azure-keyvault-secrets": {
                 "templateKind": "bicep",
-                "templatePath": "../recipes/azure/secrets.bicep",
+                "templatePath": "[format('{0}/secrets:{1}', parameters('recipeRegistry'), parameters('recipeTag'))]",
                 "parameters": {
                   "location": "[parameters('location')]"
                 }
@@ -101,6 +115,10 @@
         "computeTarget": "radius-kubernetes",
         "namespace": "[parameters('kubernetesNamespace')]",
         "azureProviderScope": "[parameters('azureProviderScope')]",
+        "recipeArtifacts": {
+          "registry": "[parameters('recipeRegistry')]",
+          "tag": "[parameters('recipeTag')]"
+        },
         "recipes": {
           "stateStore": "azure-blob-state",
           "pubsub": "azure-servicebus-pubsub",
