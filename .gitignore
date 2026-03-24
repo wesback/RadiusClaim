@@ -5,6 +5,8 @@
 .squad/sessions/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
+# Copilot CLI artifacts
+.commit-msg
 
 # .NET build outputs
 bin/
