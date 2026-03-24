@@ -2,6 +2,16 @@
 
 ## Active Decisions
 
+
+### 2026-03-24: Fix AKS Autoscaler Flag in End-to-End Setup Walkthrough
+**By:** Eddie (Docs/Story Agent)
+**Status:** COMPLETE
+**What:** Fixed incorrect Azure CLI flag in end-to-end setup walkthrough documentation.
+**Change:** `docs/end-to-end-setup-walkthrough.md` line 150: `--enable-cluster-autoscaling` → `--enable-cluster-autoscaler`
+**Why:** The Azure CLI `az aks create` command uses `--enable-cluster-autoscaler` (not `--enable-cluster-autoscaling`). The typo would cause the command to fail if users followed the walkthrough exactly.
+**Validation:** Full file scanned; no remaining incorrect occurrences.
+
+
 ### 2026-03-24: Project renamed to RadiusClaim
 **By:** Wesley Backelant (via Copilot)
 **What:** The app has been renamed to `RadiusClaim`. Use `RadiusClaim` as the project/app name going forward.

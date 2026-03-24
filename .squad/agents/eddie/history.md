@@ -432,3 +432,22 @@ This update finalizes the portability narrative by making it honest and concrete
 - All instances verified for consistency
 
 **Outcome:** ✅ Complete. Documentation now guides users to deploy using Belgium Central as the Azure region for all Radius deployment steps.
+
+## Phase 8 Work — AKS Walkthrough Documentation Fix (2026-03-24)
+
+### Delivered
+
+**Fixed Azure CLI Flag Error in End-to-End Setup Walkthrough**
+
+**File:** `docs/end-to-end-setup-walkthrough.md` (Line 150)  
+**Change:** `--enable-cluster-autoscaling` → `--enable-cluster-autoscaler`
+
+**Problem:** The walkthrough documented an incorrect Azure CLI flag for the `az aks create` command. If users copied the command exactly, the CLI would reject it with an "unrecognized argument" error.
+
+**Verification:** Scanned entire file; no remaining incorrect occurrences of the autoscaler flag pattern.
+
+**Impact:** Operators following the walkthrough will now encounter no syntax errors when provisioning AKS clusters. Command references are now accurate against Azure CLI documentation.
+
+### Status: COMPLETE
+
+---
