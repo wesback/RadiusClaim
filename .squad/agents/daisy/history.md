@@ -360,3 +360,44 @@ Conducted comprehensive final review of all Phase 7 deliverables:
 - Verified the known target files in current state before editing instead of trusting earlier summaries; several suspected leftovers had already been fixed by Graham and were left untouched.
 - Cleaned the remaining active-repo `cloudexpense` residue in local Docker, Radius dev defaults, GHCR parameter files, and Service Bus namespace defaults without broad platform rewrites.
 - Aligned the docs with the current workflow by removing the stale `deployment_mode=radius-first` reference, renaming the CI job mention to `deploy-kubernetes`, and documenting `RADIUS_KUBECONFIG` as raw kubeconfig content because the workflow writes it directly to the kubeconfig file.
+
+### 2026-03-24: Frontend Framework Fit Analysis
+
+**Query:** "The webapp seems very basic? Should it not use any good frontend framework? Do research for the best framework for UI enabled development"
+
+**Research Summary:**
+- Lightweight frameworks (Svelte, SolidJS, Preact, Alpine.js): 3–25 KB gzipped, excellent performance, modern DX
+- Vue, React: more mature ecosystems (16 KB, 42 KB) but heavier footprints
+- HTMX: server-rendering optimized, good for backend-driven interactivity
+- Vanilla JS (current): 3 KB, zero framework overhead, no build step required
+
+**Framework Fit Analysis:**
+The current vanilla UI is already polished—semantic HTML, ARIA landmarks, CSS custom properties, live polling, proper error handling, trace ID surfacing, workflow telemetry. It is *minimal* without being primitive.
+
+**Decision: KEEP VANILLA. No framework change justified.**
+
+**Rationale:**
+1. **Purpose mismatch:** RadiusClaim is a reference sample for Dapr + Radius portability, not a product UI showcase. The webapp is the demo surface, not the core output. A framework adds pedagogical friction without advancing the platform story.
+2. **Portability claims:** Vanilla JS hosted from `expense-api` (same-origin, no CORS, no separate deployment) runs anywhere .NET runs. Framework build step introduces Node.js tooling that some K8s targets may not have. Vanilla is truly portable.
+3. **Operational simplicity:** No `npm install`, no build pipeline, no transpilation. Developers can edit UI directly and reload; demos work from a checkout with just `dotnet run`. Current code (567 lines) is readable, traceable, and modifiable without framework knowledge.
+4. **Demo legibility:** The demo doesn't need framework abstractions; it needs direct control. Polling intervals, DOM updates, form handling, and error states are all explicit and traceable—perfect for live demo walkthrough.
+5. **Team context:** No team member has specialized frontend skills; vanilla JS keeps UI maintenance accessible to .NET developers. Adding framework maintenance would dilute focus from core Dapr and Radius story.
+
+**Cost/Benefit Trade-Off:**
+- Framework bundle: 12–25 KB; Vanilla: 3 KB. Backward.
+- Build step required: Framework yes; Vanilla no. Backward.
+- Component reuse: UI is one page; no reuse needed. Not applicable.
+- Type safety: Small vanilla codebase is self-documenting. Not justified.
+- Dev ergonomics: Framework abstracts polling; vanilla explicit. Trade-off favors vanilla for educational demo.
+
+**Reconsider if:**
+1. The UI becomes the product (not just the demo surface) and polish/features demand it.
+2. Multiple page routes, complex navigation, or large component libraries are required.
+3. The team wants to decouple the UI into a separate SPA with independent CI/CD, CORS, and deployment.
+4. A new team member with strong framework experience joins and the codebase is ready to level up.
+
+**None of these conditions are true today.**
+
+**Decision File:** `.squad/decisions/inbox/daisy-framework-fit.md`
+
+**Key Learning:** Reference samples fail when they sprawl. The UI is not "basic"—it's *intentionally minimal*. Minimal + polished beats bloated + elaborate every time for teaching. Add a framework only when the UI genuinely demands it, not because it *might* become useful someday.
