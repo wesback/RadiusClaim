@@ -208,7 +208,7 @@ Radius orchestrates the deployment of services and wires Dapr components to back
 wget -q https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh -O - | /bin/bash
 
 # Install Radius on the cluster
-rad install kubernetes --set clusterType=generic --wait
+rad install kubernetes --set clusterType=generic
 # This may take a few minutes
 
 # Verify Radius is running
@@ -228,26 +228,63 @@ Installs the Radius control plane into the `radius-system` namespace. When you r
 
 RadiusClaim's Radius recipes (state store, pub/sub, secrets) must be published to a container registry before deployment.
 
+### Create a GitHub Personal Access Token (PAT)
+
+If you're using GitHub Container Registry (GHCR) to publish recipes, you need a personal access token with minimal required permissions.
+
+**Create a fine-grained PAT (Recommended):**
+
+1. Go to [GitHub Settings → Personal access tokens → Fine-grained tokens](https://github.com/settings/tokens?type=beta)
+2. Click **Generate new token**
+3. **Token name:** `radiusclaim-ghcr` (or similar)
+4. **Expiration:** Choose an expiration (30 days recommended for security; adjust as needed)
+5. **Resource owner:** Select your GitHub username or organization
+6. **Repository access:** Select *Only select repositories* → choose *RadiusClaim* (or allow all if you prefer)
+7. **Permissions:** Under *Packages*, grant:
+   - `write:packages` — to push recipe images to GHCR
+   - `read:packages` — to read packages if needed
+8. Click **Generate token** and **copy it immediately**
+
+**Store the token safely:**
+
+```bash
+# Export to environment variables (do NOT commit to version control)
+export GITHUB_USERNAME="your-github-username"
+export GHCR_TOKEN="ghp_your_token_here"
+
+# Verify it works
+echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_USERNAME" --password-stdin
+```
+
+⚠️ **Security:**
+- Never commit tokens to Git or share in Slack/email
+- If you accidentally commit a token, GitHub will revoke it automatically
+- Rotate tokens periodically (every 30–90 days)
+- Tokens are personal—do not share with team members; each person should create their own
+
+---
+
 ### If Using GitHub Container Registry (GHCR)
 
 ```bash
 # Log in to GHCR
-# Requires a personal access token with 'write:packages' and 'read:packages' scope
+# Use the PAT created in the "Create a GitHub Personal Access Token" section above
+export GITHUB_USERNAME="your-github-username"
 export GHCR_TOKEN="ghp_xxxxxxxxxxxx"  # Your personal access token
 
-echo "$GHCR_TOKEN" | docker login ghcr.io --username "<your-github-username>" --password-stdin
+echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_USERNAME" --password-stdin
 
 # Clone or navigate to the RadiusClaim repository
 cd /path/to/RadiusClaim
 
 # Publish the recipes
-export RECIPE_REGISTRY="ghcr.io/<your-github-username>/radiusclaim/recipes"
+export RECIPE_REGISTRY="ghcr.io/$GITHUB_USERNAME/radiusclaim/recipes"
 export RECIPE_TAG="latest"
 
 ./scripts/publish-radius-recipes.sh "$RECIPE_REGISTRY" "$RECIPE_TAG"
 
 # Verify publication (you should see recipe images in GHCR)
-# https://github.com/<your-username>?tab=packages
+# https://github.com/$GITHUB_USERNAME?tab=packages
 ```
 
 ### If Using Local Docker Registry (for testing only)
@@ -344,13 +381,14 @@ The environment definition wires Dapr components to Azure backing services.
 
 ```bash
 # Set environment variables
+export GITHUB_USERNAME="your-github-username"
 export AZURE_SUBSCRIPTION_ID="<your-subscription-id>"
 export AZURE_RESOURCE_GROUP="radiusclaim-rg"
 export AZURE_LOCATION="belgiumcentral"
 export AZURE_PROVIDER_SCOPE="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP"
 export RADIUS_ENVIRONMENT_NAME="azure"
 export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"
-export RECIPE_REGISTRY="ghcr.io/<your-org>/radiusclaim/recipes"
+export RECIPE_REGISTRY="ghcr.io/$GITHUB_USERNAME/radiusclaim/recipes"
 export RECIPE_TAG="latest"
 
 # Create or switch to the target environment (idempotent)
@@ -390,7 +428,8 @@ The workflow automatically deploys the app after the environment is ready.
 
 ```bash
 # Build and push container images to GHCR
-export GHCR_PREFIX="ghcr.io/<your-org>/radiusclaim"
+export GITHUB_USERNAME="your-github-username"
+export GHCR_PREFIX="ghcr.io/$GITHUB_USERNAME/radiusclaim"
 export IMAGE_TAG="v1.0"  # or use git SHA, e.g., ${GIT_SHA::7}
 
 # Log in to GHCR
