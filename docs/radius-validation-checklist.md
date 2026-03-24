@@ -61,6 +61,9 @@ For CI/CD deployment, verify these are configured:
 **Required Secrets:**
 ```bash
 # AZURE_SUBSCRIPTION_ID (also a variable for clarity)
+# AZURE_CLIENT_ID (for rad credential register azure sp / wi)
+# AZURE_CLIENT_SECRET (for rad credential register azure sp)
+# AZURE_TENANT_ID (for rad credential register azure sp / wi)
 # RADIUS_KUBECONFIG (raw kubeconfig content for the Kubernetes cluster with Radius)
 ```
 
@@ -167,6 +170,41 @@ rad group create radiusclaim -w <workspace-name>
 rad group switch radiusclaim -w <workspace-name>
 ```
 
+### ✅ Azure Provider Credentials (Required for Azure-Backed Recipes)
+
+**Before deploying an environment with Azure backing services, register the Azure credential with Radius:**
+
+```bash
+# Register Azure service principal credentials with the active Radius workspace
+# This enables Radius to provision Azure resources (Blob Storage, Service Bus, Key Vault, etc.)
+rad credential register azure sp \
+  --client-id "$AZURE_CLIENT_ID" \
+  --client-secret "$AZURE_CLIENT_SECRET" \
+  --tenant-id "$AZURE_TENANT_ID"
+
+# Verify the credential was registered
+rad credential list
+# Expected: Shows azure credential with status
+```
+
+If your Radius installation is configured for workload identity instead of a service principal, use:
+
+```bash
+rad credential register azure wi \
+  --client-id "$AZURE_CLIENT_ID" \
+  --tenant-id "$AZURE_TENANT_ID"
+```
+
+**Why this matters:**
+- Radius uses the registered credential to authenticate with Azure when deploying recipes
+- Without this step, `rad deploy infra/radius/environments/azure-radius.bicep` will fail with a missing `azure-azurecloud-default` secret error
+- The credential is stored securely in the Radius control plane, not in your environment variables
+- Each workspace must have the Azure credential registered independently
+
+**For CI/CD (GitHub Actions):**
+- The workflow automatically handles this by running `rad credential register azure sp ...` before deploying the environment
+- See `.github/workflows/deploy-azure.yml` for the implementation
+
 ---
 
 ## Deployment Steps
@@ -182,14 +220,32 @@ rad env switch azure
 
 **Note:** `rad deploy` on an environment Bicep will update the environment configuration. No temporary bootstrap environment is needed.
 
-### Step 2: Publish Radius Recipe Artifacts
+### Step 2: Register Azure Provider Credentials
+
+Before deploying the Azure environment with recipes, ensure the Azure credential is registered with Radius:
+
+```bash
+# Register Azure credentials with an explicit auth mode
+rad credential register azure sp \
+  --client-id "$AZURE_CLIENT_ID" \
+  --client-secret "$AZURE_CLIENT_SECRET" \
+  --tenant-id "$AZURE_TENANT_ID"
+
+# Verify the credential is registered
+rad credential list
+# Expected: Shows azure provider in the list
+```
+
+**Critical:** If you skip this step, the environment deployment will fail when Radius tries to provision Azure resources via recipes.
+
+### Step 3: Publish Radius Recipe Artifacts
 
 ```bash
 docker login ghcr.io
 ./scripts/publish-radius-recipes.sh ghcr.io/<your-org>/radiusclaim/recipes <your-tag>
 ```
 
-### Step 3: Deploy Azure Environment
+### Step 4: Deploy Azure Environment
 
 ```bash
 rad deploy infra/radius/environments/azure-radius.bicep \
@@ -222,7 +278,7 @@ rad env show azure
 # Expected: Shows compute kind as kubernetes, namespace, and Azure provider scope
 ```
 
-### Step 4: Deploy Application Model
+### Step 5: Deploy Application Model
 
 ```bash
 rad deploy infra/radius/app.bicep \
@@ -388,6 +444,35 @@ rad env switch azure
 ```
 
 **Note:** GitHub Actions workflow now handles this automatically.
+
+### Issue: `rad deploy` fails with "missing `azure-azurecloud-default` secret" or "recipe provisioning failed"
+
+**Cause:** The Azure credential was not registered with the Radius control plane before deploying the environment with Azure-backed recipes.
+
+**Solution:**
+```bash
+# Register Azure provider credentials with Radius
+rad credential register azure sp \
+  --client-id "$AZURE_CLIENT_ID" \
+  --client-secret "$AZURE_CLIENT_SECRET" \
+  --tenant-id "$AZURE_TENANT_ID"
+
+# Verify the credential was registered
+rad credential list
+# Expected: Shows 'azure' provider in the list
+
+# Then retry the environment deployment
+rad deploy infra/radius/environments/azure-radius.bicep \
+  --parameters @infra/radius/environments/azure-radius.parameters.json \
+  --parameters environmentName=azure \
+  --parameters kubernetesNamespace=radiusclaim-azure \
+  --parameters azureProviderScope="/subscriptions/<subscription-id>/resourceGroups/<resource-group>" \
+  --parameters location=<azure-location> \
+  --parameters recipeRegistry='ghcr.io/<your-org>/radiusclaim/recipes' \
+  --parameters recipeTag='<your-tag>'
+```
+
+**Critical:** This step must be completed before deploying the Radius environment when using Azure-backed recipes. The GitHub Actions workflow includes this step automatically after environment creation.
 
 ### Issue: Pods remain in `Pending` state
 

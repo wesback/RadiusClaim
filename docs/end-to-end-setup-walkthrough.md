@@ -78,6 +78,9 @@ rad --version
 # Optional (for validation scripts)
 - jq (JSON processor)
 - curl (HTTP client)
+
+# For multi-platform builds (Mac ARM, Linux, Windows)
+- docker buildx (usually included with Docker Desktop)
 ```
 
 ---
@@ -287,6 +290,46 @@ export RECIPE_TAG="latest"
 # https://github.com/$GITHUB_USERNAME?tab=packages
 ```
 
+### Multi-platform Builds (Mac ARM, Linux x86, Windows)
+
+If your local development machine has a different CPU architecture than your Kubernetes cluster (e.g., building on Mac ARM and pushing to an x86 AKS cluster), use `docker buildx` to build for a specific target platform:
+
+```bash
+# Check your local architecture
+docker info | grep Architecture
+
+# Build for a specific platform (e.g., linux/amd64 for x86 AKS, linux/arm64 for ARM-based clusters)
+docker buildx build \
+  --file src/expense-api/Dockerfile \
+  --platform linux/amd64 \
+  --tag "$GHCR_PREFIX/expense-api:$IMAGE_TAG" \
+  --push .
+
+docker buildx build \
+  --file src/workflow-engine/Dockerfile \
+  --platform linux/amd64 \
+  --tag "$GHCR_PREFIX/workflow-engine:$IMAGE_TAG" \
+  --push .
+
+docker buildx build \
+  --file src/notification-svc/Dockerfile \
+  --platform linux/amd64 \
+  --tag "$GHCR_PREFIX/notification-svc:$IMAGE_TAG" \
+  --push .
+```
+
+For **multi-platform manifests** (supporting both ARM and x86 in the same image tag), use:
+
+```bash
+docker buildx build \
+  --file src/expense-api/Dockerfile \
+  --platform linux/amd64,linux/arm64 \
+  --tag "$GHCR_PREFIX/expense-api:$IMAGE_TAG" \
+  --push .
+```
+
+⚠️ **Note:** Multi-platform builds require pushing to a registry (`--push`). For local testing, build native only or use `--load` (single platform) with a local builder.
+
 ### If Using Local Docker Registry (for testing only)
 
 ```bash
@@ -340,8 +383,11 @@ The environment definition wires Dapr components to Azure backing services.
    Go to your repository → **Settings** → **Secrets and variables** → **Actions** → **New repository secret/variable**.
 
    **Required Secrets:**
-   - `AZURE_SUBSCRIPTION_ID` — Your Azure subscription ID
-   - `RADIUS_KUBECONFIG` — Your kubeconfig file content (base64 or raw)
+    - `AZURE_SUBSCRIPTION_ID` — Your Azure subscription ID
+    - `AZURE_CLIENT_ID` — Azure service principal client ID for Radius credential registration
+    - `AZURE_CLIENT_SECRET` — Azure service principal client secret for Radius credential registration
+    - `AZURE_TENANT_ID` — Azure tenant ID for Radius credential registration
+    - `RADIUS_KUBECONFIG` — Your kubeconfig file content (base64 or raw)
 
    **Required Variables:**
    - `AZURE_LOCATION` — Azure region (e.g., `belgiumcentral`)
@@ -383,8 +429,11 @@ The environment definition wires Dapr components to Azure backing services.
 # Set environment variables
 export GITHUB_USERNAME="your-github-username"
 export AZURE_SUBSCRIPTION_ID="<your-subscription-id>"
+export AZURE_CLIENT_ID="<azure-service-principal-client-id>"
+export AZURE_CLIENT_SECRET="<azure-service-principal-client-secret>"
 export AZURE_RESOURCE_GROUP="radiusclaim-rg"
 export AZURE_LOCATION="belgiumcentral"
+export AZURE_TENANT_ID="<azure-tenant-id>"
 export AZURE_PROVIDER_SCOPE="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP"
 export RADIUS_ENVIRONMENT_NAME="azure"
 export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"
@@ -394,6 +443,20 @@ export RECIPE_TAG="latest"
 # Create or switch to the target environment (idempotent)
 rad env create "$RADIUS_ENVIRONMENT_NAME" || true
 rad env switch "$RADIUS_ENVIRONMENT_NAME"
+
+# Register Azure provider credentials with the Radius control plane
+# This enables Radius to authenticate with Azure when provisioning backing services (Blob Storage, Service Bus, Key Vault, etc.)
+rad credential register azure sp \
+  --client-id "$AZURE_CLIENT_ID" \
+  --client-secret "$AZURE_CLIENT_SECRET" \
+  --tenant-id "$AZURE_TENANT_ID"
+
+# Verify the credential was registered
+rad credential list
+# Expected: Shows azure provider in the list
+
+# If your Radius installation is configured for workload identity instead,
+# use: rad credential register azure wi --client-id "$AZURE_CLIENT_ID" --tenant-id "$AZURE_TENANT_ID"
 
 # Deploy the Azure-backed Radius environment
 rad deploy infra/radius/environments/azure-radius.bicep \
@@ -433,9 +496,13 @@ export GHCR_PREFIX="ghcr.io/$GITHUB_USERNAME/radiusclaim"
 export IMAGE_TAG="v1.0"  # or use git SHA, e.g., ${GIT_SHA::7}
 
 # Log in to GHCR
-docker login ghcr.io
+docker login ghcr.io --username "$GITHUB_USERNAME"
 
 # Build and push images
+# Note: Use native Docker build (below) if your local machine matches your Kubernetes cluster architecture.
+# If deploying to a different architecture (e.g., building on Mac ARM and deploying to x86 AKS),
+# use docker buildx (see "Multi-platform builds" section).
+
 docker build --file src/expense-api/Dockerfile --tag "$GHCR_PREFIX/expense-api:$IMAGE_TAG" .
 docker push "$GHCR_PREFIX/expense-api:$IMAGE_TAG"
 
@@ -580,7 +647,7 @@ kubectl rollout restart deployment/radius-controller-manager -n radius-system
 **Solution:**
 ```bash
 # Verify GHCR login
-docker login ghcr.io
+docker login ghcr.io --username "$GITHUB_USERNAME"
 
 # Manually publish recipes
 ./scripts/publish-radius-recipes.sh "$RECIPE_REGISTRY" "$RECIPE_TAG"
@@ -681,9 +748,12 @@ Once the app is open in your browser:
 To redeploy after code changes:
 
 ```bash
-# Rebuild and push images
+# Rebuild and push images (using native build, which matches your local machine architecture)
 docker build --file src/expense-api/Dockerfile --tag "$GHCR_PREFIX/expense-api:$NEW_TAG" .
 docker push "$GHCR_PREFIX/expense-api:$NEW_TAG"
+
+# Or, if deploying to a different architecture, use docker buildx with --platform:
+# docker buildx build --file src/expense-api/Dockerfile --platform linux/amd64 --tag "$GHCR_PREFIX/expense-api:$NEW_TAG" --push .
 
 # Redeploy the app
 rad deploy infra/radius/app.bicep \

@@ -47,10 +47,6 @@ var storageAccountKeys = storageAccount.listKeys()
 
 #disable-next-line outputs-should-not-contain-secrets
 output result object = {
-  resources: [
-    storageAccount.id
-    container.id
-  ]
   values: {
     type: 'state.azure.blobstorage'
     version: 'v1'

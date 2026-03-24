@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "633490722775589670"
+      "templateHash": "16754547499706589791"
     }
   },
   "parameters": {
@@ -85,10 +85,6 @@
     "result": {
       "type": "object",
       "value": {
-        "resources": [
-          "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
-          "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', parameters('containerName'))]"
-        ],
         "values": {
           "type": "state.azure.blobstorage",
           "version": "v1",

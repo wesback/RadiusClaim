@@ -50,11 +50,6 @@ var authRuleKeys = authRule.listKeys()
 
 #disable-next-line outputs-should-not-contain-secrets
 output result object = {
-  resources: [
-    namespace.id
-    topic.id
-    authRule.id
-  ]
   values: {
     type: 'pubsub.azure.servicebus'
     version: 'v1'

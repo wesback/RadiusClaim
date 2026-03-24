@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "2135653486359978832"
+      "templateHash": "2269085676151578895"
     }
   },
   "parameters": {
@@ -80,11 +80,6 @@
     "result": {
       "type": "object",
       "value": {
-        "resources": [
-          "[resourceId('Microsoft.ServiceBus/namespaces', parameters('namespaceName'))]",
-          "[resourceId('Microsoft.ServiceBus/namespaces/topics', parameters('namespaceName'), parameters('topicName'))]",
-          "[resourceId('Microsoft.ServiceBus/namespaces/AuthorizationRules', parameters('namespaceName'), 'RootManageSharedAccessKey')]"
-        ],
         "values": {
           "type": "pubsub.azure.servicebus",
           "version": "v1",

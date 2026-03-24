@@ -83,9 +83,12 @@ jobs:
     needs: validate
     runs-on: ubuntu-latest
     env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
       AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       AZURE_PROVIDER_SCOPE: /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       GHCR_PREFIX: ${{ needs.validate.outputs.ghcr_prefix }}
       IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
       KUBERNETES_TARGET: ${{ needs.validate.outputs.kubernetes_target }}
@@ -101,9 +104,12 @@ jobs:
 
       - name: Validate required Kubernetes-first configuration
         run: |
+          test -n "$AZURE_CLIENT_ID" || { echo "Set secret AZURE_CLIENT_ID for Radius Azure credential registration."; exit 1; }
+          test -n "$AZURE_CLIENT_SECRET" || { echo "Set secret AZURE_CLIENT_SECRET for Radius Azure credential registration."; exit 1; }
           test -n "$AZURE_RESOURCE_GROUP" || { echo "Set repository variable AZURE_RESOURCE_GROUP."; exit 1; }
           test -n "$AZURE_LOCATION" || { echo "Set repository variable AZURE_LOCATION."; exit 1; }
           test -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" || { echo "Set secret AZURE_SUBSCRIPTION_ID for Azure-backed Radius recipes."; exit 1; }
+          test -n "$AZURE_TENANT_ID" || { echo "Set secret AZURE_TENANT_ID for Radius Azure credential registration."; exit 1; }
           test -n "$RADIUS_KUBECONFIG_SECRET" || { echo "Set secret RADIUS_KUBECONFIG for the Kubernetes cluster that hosts Radius and the app workloads."; exit 1; }
 
       - name: Describe Kubernetes-first framing
@@ -162,6 +168,16 @@ jobs:
           # Create or switch to the target environment (idempotent)
           ./rad env create "$RADIUS_ENVIRONMENT_NAME" || true
           ./rad env switch "$RADIUS_ENVIRONMENT_NAME"
+
+      - name: Register Azure provider credentials with Radius
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          # Register Azure service principal credentials with the Radius control plane
+          # This enables Radius to authenticate with Azure when provisioning backing services
+          ./rad credential register azure sp \
+            --client-id "$AZURE_CLIENT_ID" \
+            --client-secret "$AZURE_CLIENT_SECRET" \
+            --tenant-id "$AZURE_TENANT_ID"
 
       - name: Deploy Azure-backed Radius environment for Kubernetes (idempotent)
         run: |

@@ -32,9 +32,6 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 }
 
 output result object = {
-  resources: [
-    keyVault.id
-  ]
   values: {
     type: 'secretstores.azure.keyvault'
     version: 'v1'
