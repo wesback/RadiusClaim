@@ -278,3 +278,49 @@ Conducted comprehensive final review of all Phase 7 deliverables:
 - Within 2-week timeline per established Phase 7 pattern
 - Committed as the final gate decision for external demo and distribution approval
 
+
+### 2026-03-24: Renamed CloudExpense Lite → RadiusClaim (Branding Update)
+
+**Task:** Sweep the repo for CloudExpense Lite references and rename to RadiusClaim, preserving Dapr component names (no breaking changes to Dapr contracts).
+
+**Scope Boundaries:**
+- **Renamed (user-facing, technical identity):**
+  - Solution file: `CloudExpenseLite.slnx` → `RadiusClaim.slnx`
+  - C# project folder: `CloudExpense.Contracts` → `RadiusClaim.Contracts`
+  - C# project file: `CloudExpense.Contracts.csproj` → `RadiusClaim.Contracts.csproj`
+  - C# namespace prefix: `CloudExpense.*` → `RadiusClaim.*` across all source files
+  - Dapr constants class: `CloudExpenseDapr` → `RadiusClaimDapr`
+  - Bicep descriptions: "CloudExpense Lite" → "RadiusClaim"
+  - Bicep defaults: `applicationName` "cloudexpense-lite" → "radiusclaim"; `containerRegistry` "cloudexpense-lite" → "radiusclaim"
+
+- **Preserved (internal/historical):**
+  - Dapr component names: `statestore`, `pubsub`, `expense-notifications`, `ExpenseApprovalWorkflow` unchanged (no app-level breaking changes)
+  - Service names (Dapr AppIds): `expense-api`, `workflow-engine`, `notification-svc` unchanged
+  - Squad history/decisions: Left as-is (historical record of CloudExpense Lite origins, teaching artifact)
+  - Internal state keys, topic names: Unchanged (Dapr portability requirement)
+
+**Changes Made:**
+1. Renamed Contracts project folder and .csproj file
+2. Updated RadiusClaim.slnx project reference
+3. Updated all C# files in Contracts to use `RadiusClaim.Contracts` namespace
+4. Renamed `CloudExpenseDapr.cs` → `RadiusClaimDapr.cs` and updated class name
+5. Updated using statements in expense-api, workflow-engine, notification-svc, and all activities/models
+6. Updated .csproj ProjectReference paths in all service projects
+7. Updated all `CloudExpenseDapr.*` references to `RadiusClaimDapr.*` across service code
+8. Updated Bicep descriptions and defaults in app.bicep, app.json, pubsub.bicep, pubsub.json
+
+**Validation:**
+- ✅ `dotnet build RadiusClaim.slnx --nologo` — 0 warnings, 0 errors
+- ✅ `dotnet test RadiusClaim.slnx --nologo` — passes (no tests but build validates dependency graph)
+- ✅ `az bicep build --file infra/radius/app.bicep` — passes
+- ✅ No remaining CloudExpense references in src/ or infra/ (squad history preserved intentionally)
+- ✅ All Dapr component names, AppIds, state keys, topics, and workflows unchanged (zero runtime impact)
+
+**Decision Rationale:**
+- **Why rename namespaces?** CloudExpense.* is an artifact of original naming; RadiusClaim.* aligns with repo and brand identity. Renames are safe in private codebase before external sharing.
+- **Why preserve Dapr names?** Dapr components (statestore, pubsub, expense-notifications) must remain stable across local/Kubernetes/Azure Radius deployment paths. Renaming here would break portability claim and demo flow.
+- **Why preserve squad history?** The .squad/ folder documents the team's decision-making journey. Renaming it would obscure the CloudExpense Lite origin and design rationale that future maintainers may need to understand. Historical accuracy > cosmetic consistency.
+
+**Commit:** be860d1 — "Rename app from CloudExpense to RadiusClaim: update C# namespaces, projects, and Bicep descriptions"
+
+**Key Learning:** Renaming in a growing codebase requires clear boundaries between "branding/identity" (safe to rename for clarity) and "contracts/stability" (preserve to protect ecosystem). Dapr component names are contracts; C# namespaces are identity. Kept them separate.
