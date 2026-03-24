@@ -829,3 +829,23 @@ Coordinated final decision documentation for Dapr namespace research and migrati
 5. Recipe resource tracking cleanup (Graham — proposed)
 
 **Inbox Cleaned:** All 5 inbox decision files removed and directory purged.
+
+
+---
+
+## 2026-03-24T17:53:40Z: Scribe Session — Graham Follow-ups Orchestration
+
+**Work:** Consolidated Daisy follow-up critical findings. Graham implemented all three recipe/CI fixes. Merged decisions into registry, cleared inbox, created orchestration + session logs.
+
+**Orchestration Completed:**
+- Graham follow-up batch: C2 (pub/sub topics), C3 (state-store v2), C7 (workflow OIDC cleanup) — all validated, decision merged
+- Daisy validation cycle closed
+
+**Files Written:**
+- `.squad/orchestration-log/2026-03-24T175340Z-graham.md` — Implementation orchestration for Graham's follow-ups
+- `.squad/log/2026-03-24T175340Z-daisy-followups.md` — Session summary for Daisy→Graham handoff
+- `.squad/decisions/decisions.md` — Two inbox decisions merged: Graham C2/C3/C7 + Karen approval
+
+**Inbox Cleared:** graham-daisy-followups.md, karen-radius-compute-review.md removed and directory purged.
+
+**Next Phase:** Recipe artifact republishing + GHCR image pull auth resolution required before live demo resumption.

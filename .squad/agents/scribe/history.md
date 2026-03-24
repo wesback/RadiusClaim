@@ -36,3 +36,21 @@
 - ✅ Prepared git commit
 
 **Outcome:** ✅ Scribe records complete. Team logs documented.
+
+
+---
+
+## 2026-03-24T17:53:40Z: Orchestration & Decision Merge Session
+
+**Work:** Consolidated pending inbox decisions (2 files), created orchestration + session logs for Graham's Daisy follow-ups, cleaned inbox.
+
+**Files Written:**
+- `.squad/orchestration-log/2026-03-24T175340Z-graham.md` — Graham's follow-up implementation orchestration
+- `.squad/log/2026-03-24T175340Z-daisy-followups.md` — Session handoff summary
+- `.squad/decisions/decisions.md` — Updated with Decisions 6–7 (Graham C2/C3/C7 + Karen approval)
+
+**Inbox Purged:** graham-daisy-followups.md, karen-radius-compute-review.md removed.
+
+**Decisions Registry Status:** 7 active decisions, updated 2026-03-24T17:53:40Z.
+
+**Agents Updated:** Graham, Daisy, Karen history files appended with follow-up orchestration work.

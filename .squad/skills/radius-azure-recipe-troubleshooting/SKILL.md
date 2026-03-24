@@ -29,6 +29,26 @@ This fits Kubernetes-first Radius environments where Azure backing services are 
 - Only manually populate `output result.resources` for **Kubernetes/UCP IDs** that the deployment engine cannot infer.
 - If a recipe manually emits Azure resource IDs like storage accounts, Service Bus namespaces, or Key Vaults, treat that as suspicious contract drift.
 
+### Keep Dapr component contracts aligned across deployment surfaces
+
+- If the repo carries both a Radius recipe path and a legacy direct-Azure reference path, compare the Dapr `type` and `version` contracts before debugging runtime behavior.
+- For RadiusClaim-style Azure backings, the stable pair is:
+  - `state.azure.blobstorage` → `version: v2`
+  - `pubsub.azure.servicebus.topics` → `version: v1`
+- Regenerate the checked-in JSON mirrors immediately after changing the Bicep source so reviewers see the compiled contract, not the stale one.
+
+### When Service Bus topics disable entity management, provision the subscription too
+
+- `pubsub.azure.servicebus.topics` with `disableEntityManagement: true` should not rely on Dapr to create the subscriber's topic/subscription pair later.
+- If the demo or app model has a known subscriber app ID (for example `notification-svc`), create that Service Bus subscription in the recipe or bootstrap environment explicitly.
+- Keep the topic and subscription names visible in the app model when they are part of the demo contract; otherwise the platform story becomes tribal knowledge.
+
+### Separate runner auth from Radius control-plane auth
+
+- A GitHub Actions workflow that reaches the cluster via kubeconfig and registers an Azure service principal with `rad credential register azure sp ...` does **not** also need `azure/login` just to make Radius recipes work.
+- If the runner never performs direct Azure resource operations, remove unused OIDC permissions so the workflow does not imply a second auth path that the deployment does not use.
+- Treat `azure/login` as necessary only when the runner itself must call Azure APIs, not when Radius is the Azure client.
+
 ### Review the three layers in order
 
 1. **Bootstrap layer:** `rad credential register azure ...`
@@ -48,6 +68,7 @@ This fits Kubernetes-first Radius environments where Azure backing services are 
   - `infra/radius/recipes/azure/state-store.bicep`
   - `infra/radius/recipes/azure/pubsub.bicep`
   - `infra/radius/recipes/azure/secrets.bicep`
+- Legacy contract reference: `infra/radius/environments/azure.bicep`
 
 ## Anti-Patterns
 
@@ -55,3 +76,5 @@ This fits Kubernetes-first Radius environments where Azure backing services are 
 - Debugging `app.bicep` first when the Azure provider credential is missing.
 - Manually listing Azure resource IDs in Bicep recipe `result.resources`.
 - Fixing recipe source without republishing the OCI artifacts referenced by the environment.
+- Mixing `pubsub.azure.servicebus` queues with a topics-based app flow and assuming the subscriber will still work.
+- Leaving `id-token: write` in CI while the workflow actually uses service-principal bootstrap and no runner-side Azure auth.

@@ -725,6 +725,11 @@ Closure criteria: Execute `rad deploy` twice against same environment, verify se
 - The exact future compute/ingress pivot remains `Applications.Core/containers` ↔ `Radius.Compute/containers` and `Applications.Core/gateways` ↔ `Radius.Compute/routes`; the move also requires `properties.container` ↔ `properties.containers[...]` and `extensions[]` ↔ `extensions.daprSidecar` shape changes.
 - For stock Radius gateway deployments, public endpoint docs should read the generated ingress/gateway host, not the backing `expense-api` service status.
 - Key file paths for this rollback pattern: `infra/radius/app.bicep`, `infra/radius/modules/container-service.bicep`, `infra/radius/app.json`, `README.md`, `docs/end-to-end-setup-walkthrough.md`, and `docs/radius-validation-checklist.md`.
+- Keep Dapr component contracts aligned across the Radius recipe path and the legacy ACA reference path: Service Bus pub/sub should stay on `pubsub.azure.servicebus.topics`, Azure Blob state should stay on `state.azure.blobstorage` `v2`, and checked-in JSON mirrors must be regenerated when either side changes.
+- If a Service Bus topics component keeps `disableEntityManagement: true`, pre-create both the topic and the subscriber-facing subscription in the recipe; otherwise the demo quietly depends on runtime entity creation that the component has explicitly disabled.
+- The current CI story is kubeconfig + `rad credential register azure sp`, not runner-side `azure/login`; removing unused OIDC permissions keeps the workflow honest and makes the Azure bootstrap boundary teachable.
+- User preference reinforced: keep the demo story coherent across deployment paths and avoid extra auth glue when Radius itself is the Azure control-plane client.
+- Key file paths for Daisy follow-ups: `infra/radius/recipes/azure/pubsub.bicep`, `infra/radius/recipes/azure/pubsub.json`, `infra/radius/recipes/azure/state-store.bicep`, `infra/radius/recipes/azure/state-store.json`, `.github/workflows/deploy-azure.yml`, and `docs/radius-validation-checklist.md`.
 
 ---
 
@@ -744,3 +749,26 @@ Closure criteria: Execute `rad deploy` twice against same environment, verify se
 3. Azure credential registration documentation (Eddie)
 4. Compute revert implementation (Graham)
 5. Recipe resource tracking cleanup (Graham — proposed)
+
+
+---
+
+## 2026-03-24T17:53:40Z: Daisy Follow-up Implementation — Graham
+
+**Work:** Picked up Daisy's post-revert critical findings and closed three recipe/CI alignment gaps.
+
+**Changes:**
+- **C2:** Pub/sub recipe now outputs `pubsub.azure.servicebus.topics` with pre-created topic + subscription
+- **C3:** State store recipe now outputs `state.azure.blobstorage` version v2 (aligned to ACA bootstrap)
+- **C7:** Workflow cleanup — removed unused OIDC permission, documented real auth boundary (kubeconfig + credential registration)
+
+**Validation:**
+- ✓ Bicep builds: app.bicep, azure-radius.bicep, pubsub.bicep, state-store.bicep
+- ✓ `dotnet build` + `dotnet test` (Release config)
+- ✓ Workflow YAML parsing
+
+**Impact:** Demo story is now coherent across Radius + ACA paths. Service Bus topics + disabled entity management stays honest because recipe pre-creates the subscription pair the app uses. CI boundary is teachable: kubeconfig to cluster, service principal so Radius reaches Azure.
+
+**Decisions Merged:** Graham — Daisy follow-ups (C2, C3, C7) → decisions.md
+
+**Open:** GHCR image pull 403; recipe artifacts require republishing before next live demo.

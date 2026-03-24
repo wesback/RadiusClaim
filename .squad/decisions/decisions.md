@@ -1,6 +1,6 @@
 # Decisions Registry
 
-**Last Updated:** 2026-03-24
+**Last Updated:** 2026-03-24T17:53:40Z
 
 ---
 
@@ -258,3 +258,72 @@ Radius already tracks Azure backing resources for these recipes. Manually emitti
 ### Implication
 
 Future Azure/AWS recipe work should only populate `result.resources` for Kubernetes/UCP IDs that Radius cannot infer.
+
+---
+
+## 6. Graham — Daisy follow-ups (C2, C3, C7)
+
+**By:** Graham (Platform Dev)  
+**Date:** 2026-03-24  
+**Status:** IMPLEMENTED
+
+### Decision
+
+Close Daisy's next platform follow-ups by aligning the Radius recipe contract with the repo's existing ACA reference contract, while keeping CI bootstrap explicit instead of adding runner-side Azure auth glue.
+
+### What Changed
+
+1. **C2 — Pub/sub recipe contract aligned to topics**
+   - `infra/radius/recipes/azure/pubsub.bicep` now outputs `pubsub.azure.servicebus.topics`
+   - The recipe now pre-creates the demo topic (`expense-notifications`) and subscriber-facing subscription (`notification-svc`)
+   - `namespaceName` metadata is now emitted as the Service Bus FQDN to match Dapr's topics guidance
+   - `infra/radius/app.bicep` passes the subscription name explicitly so the app model stays teachable
+
+2. **C3 — State store contract aligned to v2**
+   - `infra/radius/recipes/azure/state-store.bicep` now emits `state.azure.blobstorage` version `v2`
+   - This matches `infra/radius/environments/azure.bicep`, which already modeled the ACA reference path on v2
+
+3. **C7 — Investigated workflow auth/bootstrap gap**
+   - Current workflow already uses the right bootstrap primitive for Radius: `rad credential register azure sp`
+   - No `azure/login` step was added because the runner does not provision Azure resources directly; Radius does, using the registered service principal
+   - Removed the unused `id-token: write` permission and documented the intent inline so the workflow no longer suggests an OIDC path it does not use
+
+### Why
+
+- The demo story is cleaner when both deployment surfaces prove the same Dapr component contracts.
+- Service Bus topics plus disabled entity management only stays honest if the recipe creates the topic/subscription pair the app actually uses.
+- CI should show the real trust boundary: kubeconfig to reach the cluster, service principal registration so Radius can reach Azure.
+
+### Validation
+
+- ✓ `az bicep build --file infra/radius/app.bicep`
+- ✓ `az bicep build --file infra/radius/environments/azure-radius.bicep`
+- ✓ `az bicep build --file infra/radius/recipes/azure/pubsub.bicep`
+- ✓ `az bicep build --file infra/radius/recipes/azure/state-store.bicep`
+- ✓ `dotnet build RadiusClaim.slnx --configuration Release`
+- ✓ `dotnet test RadiusClaim.slnx --configuration Release --no-build`
+- ✓ YAML parse of `.github/workflows/deploy-azure.yml`
+
+---
+
+## 7. Karen: approve the stock Applications.Core revert
+
+**By:** Karen (Reviewer)  
+**Date:** 2026-03-24  
+**Status:** APPROVED
+
+### Decision
+
+Approve Graham's revert from `Radius.Compute/*` back to stock `Applications.Core/*` resources for the deployable app surface on the current Radius environment.
+
+### Why
+
+- Local evidence is now live, not hypothetical: stock Radius `0.55.0` is installed and reachable on this machine, and `rad deploy infra/radius/app.bicep` advanced past the old namespace failure.
+- The deploy created `Applications.Core/containers` resources for `expense-api`, `workflow-engine`, and `notification-svc`, which directly disproves the earlier `InvalidResourceNamespace` blocker for the reverted model.
+- The checked-in Bicep/JSON contract is internally consistent again: containers use `properties.container`, Dapr wiring uses the legacy `extensions[]` array, and ingress reverts to `Applications.Core/gateways`.
+
+### Team Impact
+
+- For stock Radius `0.55`, keep `Applications.Core/containers` and `Applications.Core/gateways` in `infra/radius/app.bicep` unless the platform team can point to a real preview catalog installed in the target environment.
+- If a live deploy now fails later on pod readiness or image pull, treat that as a separate runtime issue; do not reopen the namespace migration by default.
+- Current follow-up blocker for the demo path is image availability/auth for `ghcr.io/sovereignapp/radiusclaim/*:phase1`, not the Radius namespace choice.

@@ -43,6 +43,13 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - Own the scenario coverage for validation rules, approval thresholds, state transitions, and demo reliability.
 - See `.squad/decisions.md` for canonical decision log: CloudExpense Lite architecture, naming conventions, and Azure-first-but-portable strategy.
 
+### 2026-03-24: Radius.Compute revert review
+
+- Fresh live evidence beats compile-only confidence for namespace disputes. On this machine, `rad version` and the installed control plane both report stock Radius `0.55.0`, and `rad deploy infra/radius/app.bicep` progressed far enough to create `Applications.Core/containers` resources for `expense-api`, `workflow-engine`, and `notification-svc` without repeating the earlier `InvalidResourceNamespace` failure.
+- Graham's revert is functionally correct in the key files: `infra/radius/app.bicep`, `infra/radius/app.json`, `infra/radius/modules/container-service.bicep`, `README.md`, `docs/end-to-end-setup-walkthrough.md`, and `docs/radius-validation-checklist.md`.
+- The revert must be judged separately from runtime image availability. After the namespace fix, the next observed blocker was `ImagePullBackOff` / GHCR `403 Forbidden` for `ghcr.io/sovereignapp/radiusclaim/*:phase1`, which is a registry/tag/auth issue rather than a resource-type regression.
+- User preference is explicit now: do not accept “build succeeds” as proof when a real Radius environment is reachable; use live `rad deploy` evidence before granting release confidence on the demo path.
+
 ### 2026-03-24: Live Radius validation blocker confirmed
 
 - I attempted the remaining live Radius validation from this machine and did **not** fake it.
@@ -452,3 +459,22 @@ Live idempotency test (second `rad deploy` execution) blocked by Kubernetes envi
 3. **Radius environments update in place when targeting same name** — not recreated, automatically in-place
 4. **Bootstrap patterns from early examples may be unnecessary** — validate each pattern's necessity for production
 5. **Simple, well-understood fixes can be approved based on structural validation** — when live testing is blocked, structural evidence + pattern analysis + documentation consistency provides sufficient confidence
+
+
+---
+
+## 2026-03-24T17:53:40Z: Scribe — Graham Follow-ups Orchestration
+
+**Work:** Formalized Graham's Daisy follow-up batch. Merged two pending inbox decisions into the registry. Cleared inbox directory.
+
+**Decisions Registry Updated:**
+- **Decision 6:** Graham — Daisy follow-ups (C2, C3, C7) — pub/sub topics contract alignment, state-store v2 alignment, workflow auth cleanup
+- **Decision 7:** Karen — approval of stock Applications.Core revert (structural + live evidence rationale)
+
+**Inbox Cleared:** All 5 pending decisions (from earlier Daisy review) consolidated and cleared.
+
+**Documentation Created:**
+- Orchestration log: Graham's C2/C3/C7 implementation + validation sequence
+- Session log: Daisy→Graham handoff summary
+
+**Next:** Monitor recipe artifact republishing and GHCR image pull auth before live demo resumption.

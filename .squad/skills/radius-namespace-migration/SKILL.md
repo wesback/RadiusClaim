@@ -25,6 +25,12 @@ Use this when a Radius repo is deciding whether to stay on stock `Applications.C
 - Validate the rollback with two proofs together: official docs that still model containers/gateways under `Applications.Core/*`, and a clean `az bicep build` of `infra/radius/app.bicep` without `Radius.Compute/*` `BCP081` warnings.
 - Keep the exact future pivot documented for later: `Applications.Core/containers` ↔ `Radius.Compute/containers` and `Applications.Core/gateways` ↔ `Radius.Compute/routes`, with the associated shape change from `properties.container` to `properties.containers[...]` and from `extensions[]` to `extensions.daprSidecar`.
 
+### Treat post-revert runtime failures as a different layer
+
+- After reverting to `Applications.Core/*`, use the next live `rad deploy` attempt to prove the namespace issue is gone. If Radius creates `Applications.Core/containers` resources for the affected services, the namespace fix is validated even if the deployment later stalls.
+- If the next failure is Kubernetes runtime noise such as `ImagePullBackOff`, `ErrImagePull`, or registry `403 Forbidden`, do not reopen the namespace decision automatically. Hand off to whoever owns image publishing, tags, or registry authentication.
+- For reviewer writeups, say both things plainly: the namespace regression is fixed, and the demo path can still be blocked by a separate workload issue.
+
 ### Migrate environments with recipe packs, not inline recipes
 
 - Replace `Applications.Core/environments` with `Radius.Core/environments` only for fresh environments or explicit cutovers where recreating Dapr-owned resources is acceptable.
