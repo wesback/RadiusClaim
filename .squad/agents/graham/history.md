@@ -495,3 +495,18 @@ Daisy approved the straight rename approach: no namespace aliasing, no dual-path
 - Do not add compatibility code supporting both old and new namespaces in the shared sample
 - Migration help for teams' own estates belongs in rollout docs, not core sample
 - Acceptable to defer: historical records preserving old naming, further non-runtime cleanup, broader parameterization
+
+## Learnings
+
+- For partial Radius catalog migrations, use official docs as the first gate: if Radius still documents Dapr resources under `Applications.Dapr/*@2023-10-01-preview`, treat that as a blocker and document it instead of inventing future `Radius.*` names.
+- The clean proof pattern is docs first, toolchain second: cite Radius+Dapr docs for namespace ownership, then use `az bicep build` and generated JSON artifacts to confirm which `Radius.Core/*` and `Radius.Compute/*` replacements are actually deployable in the current repo.
+- Key files for this documentation-first blocker pattern are `README.md`, `docs/radius-validation-checklist.md`, `infra/radius/app.bicep`, and `infra/radius/environments/{dev,azure-radius}.bicep`.
+
+---
+
+## Scribe Orchestration (2026-03-24)
+
+Coordinated decision documentation for Dapr namespace research:
+- Authored `.squad/orchestration-log/2026-03-24T14:46:49Z-graham.md` summarizing research findings
+- Merged decision from `.squad/decisions/inbox/graham-dapr-namespace-blocker.md` into `.squad/decisions.md`
+- Coordinated cross-team updates with Daisy's approval decision

@@ -28,6 +28,8 @@ Use this when a Radius repo still declares `Applications.Core/*` environment, ap
 ### Keep mixed namespaces explicit when the catalog is incomplete
 
 - Leave `Applications.Dapr/*` in place when the active Radius catalog does not expose equivalent `Radius.*` Dapr resource types.
+- Require direct first-party evidence before approving any Dapr migration: the target `Radius.*` type should have its own official Radius schema/API docs, not just a conceptual mention on the generic Resource Types page.
+- Treat official Radius Dapr authoring docs plus the Dapr schema/API reference as the source of truth for whether `stateStores`, `pubSubBrokers`, and `secretStores` are still expected to live under `Applications.Dapr/*`.
 - Document any non-blocking schema lag, such as `BCP081` warnings from `az bicep build` for newly introduced `Radius.Compute/*` resources.
 - Regenerate checked-in JSON artifacts immediately after migration so reviewers see the real compiled contract.
 
@@ -41,5 +43,6 @@ Use this when a Radius repo still declares `Applications.Core/*` environment, ap
 ## Anti-Patterns
 
 - Renaming every `Applications.*` resource blindly even when the installed catalog does not provide the new type.
+- Treating generic `Radius.*` resource-type concepts as proof that a specific Dapr resource now has a supported replacement.
 - Porting `Applications.Core/environments` without introducing `Radius.Core/recipePacks`; the old inline recipe structure does not carry forward.
 - Treating route hostname prefix hints as guaranteed behavior after moving to `Radius.Compute/routes`; the current route model leaves generated hostname selection to the active recipe.

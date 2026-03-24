@@ -578,3 +578,19 @@ Graham confirmed `az bicep build` succeeds on all files; JSON artifacts regenera
 **Cross-Agent Update from Graham**
 
 Namespace migration complete: migrated five core resource types, regenerated all JSON artifacts, updated validation checklist and README to document mixed-namespace interim state. Dapr components remain on `Applications.Dapr/*` as a known deferral. All build/test validations pass.
+
+## Learnings
+
+- Official Radius docs still document Dapr building blocks under `Applications.Dapr/*` in both the Dapr authoring guide and the resource schema/API reference. I did not find a documented, first-party `Radius.*` drop-in replacement for `stateStores`, `pubSubBrokers`, or `secretStores`.
+- The `How Resource Types abstract deployed resources` page describes the newer `Radius.*` namespace as a generic resource-type model, but that is not enough to approve a migration of this sample’s Dapr abstractions without a concrete schema/API page for the target type.
+- Smallest honest path for this sample: keep `infra/radius/app.bicep` Dapr resources on `Applications.Dapr/*`, keep the matching recipe-pack keys in `infra/radius/environments/dev.bicep` and `infra/radius/environments/azure-radius.bicep`, and document the mixed state instead of inventing unsupported replacements.
+- User preference reinforced: only approve migrations that are both officially documented and teachable in the ten-minute demo; do not trade clarity for speculative modernization.
+
+---
+
+## Scribe Orchestration (2026-03-24)
+
+Coordinated final decision documentation for Dapr namespace research and migration approval:
+- Authored `.squad/orchestration-log/2026-03-24T14:46:49Z-daisy.md` summarizing independent review verdict
+- Merged decision from `.squad/decisions/inbox/daisy-dapr-migration-verdict.md` into `.squad/decisions.md`
+- Deduplicating and consolidating Dapr namespace decision: Graham's research findings + Daisy's approval verdict → unified `.squad/decisions.md` entry documenting mixed-namespace interim state as team consensus

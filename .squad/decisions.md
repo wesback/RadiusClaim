@@ -1040,3 +1040,27 @@ If a platform team wants purge protection enforced by default, use Azure Policy 
 - Further cleanup of non-runtime examples, as long as active deployment docs and workflow defaults already point to `radiusclaim-azure`
 - Broader parameterization beyond the current explicit `RADIUS_KUBERNETES_NAMESPACE` override
 
+
+### 2026-03-24: Do not migrate Dapr namespace to speculative Radius types
+**By:** Graham (Platform Dev) and Daisy (Lead)
+**Status:** APPROVED
+**Decision:** Keep `Applications.Dapr/stateStores`, `Applications.Dapr/pubSubBrokers`, and `Applications.Dapr/secretStores` unchanged. Do not invent unsupported `Radius.*` Dapr resource types.
+**Why:**
+- Official Radius resource-schema docs still publish these exact resource types under `Applications.Dapr`.
+- The Radius API reference still groups them under `Applications.Dapr`, not a `Radius.*` Dapr namespace.
+- Dapr's own docs describe state stores, pub/sub brokers, and secret stores as component categories and `type`/`version` values, which does not prove any Radius namespace rename.
+- The generic Radius resource-types concept page does not document a supported one-to-one replacement for these three Dapr resources in the current product docs.
+**Team Impact:**
+- Mixed namespace state is intentional: `Radius.*` for core app/compute/environment, `Applications.Dapr/*` for Dapr backing components.
+- Operators must understand this mixed state is not a temporary hack but an honest interim state pending first-party Dapr type documentation.
+- Keep `infra/radius/app.bicep` with Applications.Dapr resources as the truthful app contract.
+**Smallest Honest Next Step:**
+If the team wants to revisit this later, require all three before approving:
+1. Official Radius docs for the exact `Radius.*` type
+2. A documented mapping for Dapr component naming/connection behavior
+3. A validated deployment path that preserves the sample's current Dapr story
+**Repo touchpoints:**
+- `README.md` (blocker notes and citations)
+- `docs/radius-validation-checklist.md` (mixed-namespace explanation)
+- `.squad/skills/radius-namespace-migration/SKILL.md`
+- `infra/radius/app.bicep` (unchanged Applications.Dapr resources)
