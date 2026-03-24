@@ -174,3 +174,20 @@ Kept the Radius-first story intact while making validation requirements explicit
 
 **Status:** COMPLETE — Platform validation lane finalized
 
+## Learnings
+
+- Closing the Radius CI gap worked best by reusing the shared flow-validation script and collecting runtime-specific evidence separately: `kubectl port-forward`/`kubectl logs` for Radius, runtime-native commands for other targets.
+- When a validation script also emits a small machine-readable artifact (expense IDs, correlation IDs, summary counts), CI can prove downstream pub/sub evidence without duplicating the flow logic.
+
+## Phase 7 Completion (2026-03-24)
+
+### Orchestration Log Published
+- Session date: 2026-03-24T09:11:24Z
+- Documented CI validation gap closure
+- Confirmed non-blocking live Radius validation item
+- Filed orchestration-log/20260324T091124Z-graham.md
+
+### Decision Merged to Squad Records
+- Graham — Radius CI validation path decision added to squad/decisions.md
+- Captures port-forward pattern and script reuse as core pattern for distributed validation
+- Committed to squad records as reference for future deployments

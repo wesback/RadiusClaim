@@ -25,6 +25,15 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - Own the scenario coverage for validation rules, approval thresholds, state transitions, and demo reliability.
 - See `.squad/decisions.md` for canonical decision log: CloudExpense Lite architecture, naming conventions, and Azure-first-but-portable strategy.
 
+### 2026-03-24: Live Radius validation blocker confirmed
+
+- I attempted the remaining live Radius validation from this machine and did **not** fake it.
+- The strongest executable proof artifact is still `scripts/validate-deployment.sh`, but it requires a reachable `expense-api` base URL; none is available from the current environment.
+- Local Kubernetes access is stale: current context is `abc-wesback-aks`, but `kubectl get pods -n radius-system` fails because `abc-wesback-aks-dns-zj0uskhi.hcp.belgiumcentral.azmk8s.io` does not resolve.
+- Azure subscription `5b6c36e5-b279-4005-8bf1-c73b1c2b71c2` shows no `expense`, `cloudexpense`, or `radius` resources, and resource group `RG-TestOOS` referenced by the kube context is not present.
+- Structural readiness is still good: Radius Bicep files parse cleanly, and `dotnet restore/build/test` passed.
+- Verdict: the live Radius validation item stays **OPEN** until the team provides a reachable Radius control-plane cluster or a live deployed `expense-api` endpoint for the Radius path.
+
 ### 2026-03-23: Phase 1 validation gate defined
 
 - The repo started without an app scaffold or test harness, so Phase 1 validation should stay evidence-based: checklist, contract outline, root build, and Radius parse.
@@ -225,3 +234,16 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 
 **Status:** APPROVED — 2026-03-24
 
+## Phase 7 Completion (2026-03-24)
+
+### Orchestration Log Published
+- Session date: 2026-03-24T09:11:24Z
+- Documented live Radius validation blocker assessment
+- Confirmed environment unavailability (not design blocker)
+- Filed orchestration-log/20260324T091124Z-karen.md
+
+### Decision Merged to Squad Records
+- Karen — Live Radius validation blocker decision added to squad/decisions.md
+- Captures honest assessment: kubeconfig unreachable, DNS resolution fails, no discoverable resources
+- Establishes closure standard: need working kubeconfig + deployed Radius environment OR live expense-api HTTPS URL
+- Committed as reference for future environment setup requirements
