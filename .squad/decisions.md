@@ -2,6 +2,11 @@
 
 ## Active Decisions
 
+### 2026-03-24: Project renamed to RadiusClaim
+**By:** Wesley Backelant (via Copilot)
+**What:** The app has been renamed to `RadiusClaim`. Use `RadiusClaim` as the project/app name going forward.
+**Why:** User request — captured for team memory.
+
 ### 2026-03-23: CloudExpense Lite is the reference sample
 **By:** Wesley Backelant (captured by Squad)
 **What:** Build `CloudExpense Lite`, a small, reference-quality expense filing sample that demonstrates Dapr and Radius together through an employee submit → validate → approve/deny → reimburse → notify flow.

@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/expense-api/">
+    <Project Path="src/expense-api/ExpenseApi.csproj" />
+  </Folder>
+  <Folder Name="/src/notification-svc/">
+    <Project Path="src/notification-svc/NotificationSvc.csproj" />
+  </Folder>
+  <Folder Name="/src/shared/">
+    <Project Path="src/shared/RadiusClaim.Contracts/RadiusClaim.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/src/workflow-engine/">
+    <Project Path="src/workflow-engine/WorkflowEngine.csproj" />
+  </Folder>
+</Solution>

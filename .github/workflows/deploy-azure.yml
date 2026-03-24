@@ -1,0 +1,519 @@
+name: deploy-azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      deployment_mode:
+        description: 'Primary path is Radius-first; ACA direct remains a fallback.'
+        type: choice
+        options:
+          - radius-first
+          - aca-fallback
+        default: radius-first
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/deploy-azure.yml'
+      - 'infra/**'
+      - 'src/**'
+      - 'CloudExpenseLite.slnx'
+      - 'global.json'
+
+permissions:
+  contents: read
+  id-token: write
+  packages: write
+
+concurrency:
+  group: cloudexpense-azure
+  cancel-in-progress: true
+
+env:
+  DEPLOYMENT_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.deployment_mode || vars.AZURE_DEPLOYMENT_MODE || 'radius-first' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+      ghcr_prefix: ${{ steps.vars.outputs.ghcr_prefix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore, build, and test
+        run: |
+          dotnet restore CloudExpenseLite.slnx --nologo
+          dotnet build CloudExpenseLite.slnx --configuration Release --no-restore --nologo
+          dotnet test CloudExpenseLite.slnx --configuration Release --no-build --nologo
+
+      - name: Compute shared deployment variables
+        id: vars
+        run: |
+          ghcr_prefix=$(printf 'ghcr.io/%s/cloudexpense-lite' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "image_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "ghcr_prefix=$ghcr_prefix" >> "$GITHUB_OUTPUT"
+
+  deploy-radius:
+    needs: validate
+    if: ${{ env.DEPLOYMENT_MODE == 'radius-first' }}
+    runs-on: ubuntu-latest
+    env:
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_PROVIDER_SCOPE: /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ vars.AZURE_RESOURCE_GROUP }}
+      GHCR_PREFIX: ${{ needs.validate.outputs.ghcr_prefix }}
+      IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
+      RADIUS_ENVIRONMENT_NAME: azure
+      RADIUS_BOOTSTRAP_ENVIRONMENT: bootstrap-${{ github.run_id }}
+      RADIUS_GROUP: cloudexpense
+      RADIUS_KUBECONFIG_SECRET: ${{ secrets.RADIUS_KUBECONFIG }}
+      RADIUS_KUBERNETES_CONTEXT: ${{ vars.RADIUS_KUBERNETES_CONTEXT }}
+      RADIUS_KUBERNETES_NAMESPACE: ${{ vars.RADIUS_KUBERNETES_NAMESPACE || 'cloudexpense-lite-azure' }}
+      RADIUS_WORKSPACE: cloudexpense-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required Radius-first configuration
+        run: |
+          test -n "$AZURE_RESOURCE_GROUP" || { echo "Set repository variable AZURE_RESOURCE_GROUP."; exit 1; }
+          test -n "$AZURE_LOCATION" || { echo "Set repository variable AZURE_LOCATION."; exit 1; }
+          test -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" || { echo "Set secret AZURE_SUBSCRIPTION_ID for Azure-backed Radius recipes."; exit 1; }
+          test -n "$RADIUS_KUBECONFIG_SECRET" || { echo "Set secret RADIUS_KUBECONFIG for the Radius control-plane cluster."; exit 1; }
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ github.token }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Build and push service images for Radius deployment
+        run: |
+          build_and_push() {
+            local service_name="$1"
+            local dockerfile_path="$2"
+            docker build \
+              --file "$dockerfile_path" \
+              --tag "$GHCR_PREFIX/$service_name:$IMAGE_TAG" \
+              .
+            docker push "$GHCR_PREFIX/$service_name:$IMAGE_TAG"
+          }
+
+          build_and_push expense-api src/expense-api/Dockerfile
+          build_and_push workflow-engine src/workflow-engine/Dockerfile
+          build_and_push notification-svc src/notification-svc/Dockerfile
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Radius CLI
+        run: |
+          wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash
+          ./rad bicep download
+          ./rad --version
+
+      - name: Configure Radius workspace
+        run: |
+          printf '%s' "$RADIUS_KUBECONFIG_SECRET" > "$RUNNER_TEMP/radius-kubeconfig"
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+
+          workspace_args=(workspace create kubernetes "$RADIUS_WORKSPACE")
+          if [ -n "$RADIUS_KUBERNETES_CONTEXT" ]; then
+            workspace_args+=(--context "$RADIUS_KUBERNETES_CONTEXT")
+          fi
+
+          ./rad "${workspace_args[@]}"
+          ./rad group create "$RADIUS_GROUP" -w "$RADIUS_WORKSPACE"
+          ./rad workspace switch "$RADIUS_WORKSPACE"
+          ./rad group switch "$RADIUS_GROUP" -w "$RADIUS_WORKSPACE"
+
+          # Radius currently requires an environment to exist before an environment Bicep can be deployed.
+          ./rad env create "$RADIUS_BOOTSTRAP_ENVIRONMENT"
+          ./rad env switch "$RADIUS_BOOTSTRAP_ENVIRONMENT"
+
+      - name: Deploy Radius Azure environment
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          ./rad deploy infra/radius/environments/azure-radius.bicep \
+            --parameters @infra/radius/environments/azure-radius.parameters.json \
+            --parameters environmentName="$RADIUS_ENVIRONMENT_NAME" \
+            --parameters kubernetesNamespace="$RADIUS_KUBERNETES_NAMESPACE" \
+            --parameters azureProviderScope="$AZURE_PROVIDER_SCOPE" \
+            --parameters location="$AZURE_LOCATION"
+          ./rad env switch "$RADIUS_ENVIRONMENT_NAME"
+
+      - name: Deploy application through Radius
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          ./rad deploy infra/radius/app.bicep \
+            --parameters containerRegistry="$GHCR_PREFIX" \
+            --parameters imageTag="$IMAGE_TAG" \
+            --parameters deploymentTarget='radius'
+
+      - name: Validate Radius wiring
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          set -euo pipefail
+
+          wait_for_resource() {
+            local kind="$1"
+            local name="$2"
+
+            for _ in $(seq 1 30); do
+              if kubectl get "$kind" "$name" -n "$RADIUS_KUBERNETES_NAMESPACE" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 10
+            done
+
+            echo "Timed out waiting for $kind/$name in namespace '$RADIUS_KUBERNETES_NAMESPACE'."
+            exit 1
+          }
+
+          find_pod_name() {
+            local workload_name="$1"
+
+            kubectl get pods -n "$RADIUS_KUBERNETES_NAMESPACE" -o json \
+              | jq -r --arg workload "$workload_name" '
+                  .items[]
+                  | select(.metadata.name == $workload or (.metadata.name | startswith($workload + "-")))
+                  | .metadata.name' \
+              | head -n 1
+          }
+
+          for app_name in expense-api workflow-engine notification-svc; do
+            wait_for_resource deployment "$app_name"
+            kubectl rollout status "deployment/$app_name" -n "$RADIUS_KUBERNETES_NAMESPACE" --timeout=5m
+
+            pod_name=$(find_pod_name "$app_name")
+            test -n "$pod_name" || { echo "Could not find pod for '$app_name'."; exit 1; }
+
+            kubectl get pod "$pod_name" -n "$RADIUS_KUBERNETES_NAMESPACE" -o json \
+              | jq -e '[.spec.containers[].name] | index("daprd")' >/dev/null
+          done
+
+          wait_for_resource service expense-api
+
+          for _ in $(seq 1 30); do
+            if components=$(kubectl get components -n "$RADIUS_KUBERNETES_NAMESPACE" -o json 2>/dev/null); then
+              if jq -e '[.items[].metadata.name] | contains(["statestore", "pubsub", "platform-secrets"])' <<<"$components" >/dev/null; then
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+
+          echo "Timed out waiting for Dapr components to become available in '$RADIUS_KUBERNETES_NAMESPACE'."
+          exit 1
+
+      - name: Run end-to-end validation against Radius deployment
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          set -euo pipefail
+
+          validation_output="$RUNNER_TEMP/radius-validation.json"
+          port_forward_log="$RUNNER_TEMP/radius-expense-api-port-forward.log"
+
+          kubectl port-forward -n "$RADIUS_KUBERNETES_NAMESPACE" svc/expense-api 18080:8080 >"$port_forward_log" 2>&1 &
+          port_forward_pid=$!
+
+          cleanup() {
+            kill "$port_forward_pid" 2>/dev/null || true
+            wait "$port_forward_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          if ! curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:18080/healthz | jq -e '.status == "ok"' >/dev/null; then
+            cat "$port_forward_log"
+            exit 1
+          fi
+
+          VALIDATION_OUTPUT_PATH="$validation_output" ./scripts/validate-deployment.sh http://127.0.0.1:18080
+
+          small_expense_id=$(jq -r '.autoApprove.expenseId' "$validation_output")
+          small_correlation_id=$(jq -r '.autoApprove.correlationId' "$validation_output")
+          large_expense_id=$(jq -r '.manualReview.expenseId' "$validation_output")
+          large_correlation_id=$(jq -r '.manualReview.correlationId' "$validation_output")
+
+          for _ in $(seq 1 12); do
+            logs=$(kubectl logs -n "$RADIUS_KUBERNETES_NAMESPACE" deployment/notification-svc -c notification-svc --tail=300 2>/dev/null || true)
+            if grep -q 'EventType=ExpenseApproved' <<<"$logs" \
+              && grep -q 'EventType=ManualReviewRequested' <<<"$logs" \
+              && grep -q "ExpenseId=$small_expense_id" <<<"$logs" \
+              && grep -q "ExpenseId=$large_expense_id" <<<"$logs" \
+              && grep -q "CorrelationId=$small_correlation_id" <<<"$logs" \
+              && grep -q "CorrelationId=$large_correlation_id" <<<"$logs"; then
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "Notification evidence did not appear in notification-svc logs in time."
+          exit 1
+
+  deploy-aca-fallback:
+    needs: validate
+    if: ${{ env.DEPLOYMENT_MODE == 'aca-fallback' }}
+    runs-on: ubuntu-latest
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+      IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required ACA fallback configuration
+        run: |
+          test -n "$AZURE_RESOURCE_GROUP" || { echo "Set repository variable AZURE_RESOURCE_GROUP."; exit 1; }
+          test -n "$AZURE_LOCATION" || { echo "Set repository variable AZURE_LOCATION."; exit 1; }
+          test -n "$AZURE_ACR_NAME" || { echo "Set repository variable AZURE_ACR_NAME."; exit 1; }
+          test -n "${{ secrets.AZURE_CLIENT_ID }}" || { echo "Set secret AZURE_CLIENT_ID for OIDC login."; exit 1; }
+          test -n "${{ secrets.AZURE_TENANT_ID }}" || { echo "Set secret AZURE_TENANT_ID for OIDC login."; exit 1; }
+          test -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" || { echo "Set secret AZURE_SUBSCRIPTION_ID for OIDC login."; exit 1; }
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Azure Container Apps extension
+        run: az extension add --name containerapp --upgrade --yes
+
+      - name: Provision ACA fallback environment
+        id: infra
+        run: |
+          az group create --name "$AZURE_RESOURCE_GROUP" --location "$AZURE_LOCATION" --output none
+
+          outputs=$(az deployment group create \
+            --name "cloudexpense-${GITHUB_RUN_ID}" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file infra/radius/environments/azure.bicep \
+            --parameters @infra/radius/environments/azure.parameters.json \
+            --parameters location="$AZURE_LOCATION" acrName="$AZURE_ACR_NAME" \
+            --query properties.outputs \
+            --output json)
+
+          echo "acr_login_server=$(jq -r '.containerRegistryLoginServer.value' <<<"$outputs")" >> "$GITHUB_OUTPUT"
+          echo "repository_prefix=$(jq -r '.containerRegistryRepositoryPrefix.value' <<<"$outputs")" >> "$GITHUB_OUTPUT"
+          echo "environment_id=$(jq -r '.containerAppsEnvironmentId.value' <<<"$outputs")" >> "$GITHUB_OUTPUT"
+          echo "environment_name=$(jq -r '.containerAppsEnvironmentResourceName.value' <<<"$outputs")" >> "$GITHUB_OUTPUT"
+          echo "workload_identity_id=$(jq -r '.workloadIdentityResourceId.value' <<<"$outputs")" >> "$GITHUB_OUTPUT"
+          echo "storage_account_id=$(jq -r '.storageAccountId.value' <<<"$outputs")" >> "$GITHUB_OUTPUT"
+          echo "servicebus_namespace_id=$(jq -r '.serviceBusNamespaceId.value' <<<"$outputs")" >> "$GITHUB_OUTPUT"
+          echo "keyvault_id=$(jq -r '.keyVaultId.value' <<<"$outputs")" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push service images for ACA fallback
+        env:
+          REPOSITORY_PREFIX: ${{ steps.infra.outputs.repository_prefix }}
+          ACR_NAME: ${{ vars.AZURE_ACR_NAME }}
+        run: |
+          az acr login --name "$ACR_NAME"
+
+          build_and_push() {
+            local service_name="$1"
+            local dockerfile_path="$2"
+            docker build \
+              --file "$dockerfile_path" \
+              --tag "$REPOSITORY_PREFIX/$service_name:$IMAGE_TAG" \
+              .
+            docker push "$REPOSITORY_PREFIX/$service_name:$IMAGE_TAG"
+          }
+
+          build_and_push expense-api src/expense-api/Dockerfile
+          build_and_push workflow-engine src/workflow-engine/Dockerfile
+          build_and_push notification-svc src/notification-svc/Dockerfile
+
+      - name: Wait for Dapr components in ACA fallback
+        env:
+          ENVIRONMENT_NAME: ${{ steps.infra.outputs.environment_name }}
+        run: |
+          set -euo pipefail
+
+          for _ in $(seq 1 30); do
+            if components=$(az containerapp env dapr-component list --name "$ENVIRONMENT_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --output json 2>/dev/null); then
+              if jq -e 'map(.name) | contains(["statestore", "pubsub", "platform-secrets"])' <<<"$components" >/dev/null; then
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+
+          echo "Timed out waiting for Dapr components to become available in '$ENVIRONMENT_NAME'."
+          exit 1
+
+      - name: Deploy ACA fallback applications
+        env:
+          REPOSITORY_PREFIX: ${{ steps.infra.outputs.repository_prefix }}
+          ENVIRONMENT_ID: ${{ steps.infra.outputs.environment_id }}
+          ACR_LOGIN_SERVER: ${{ steps.infra.outputs.acr_login_server }}
+          WORKLOAD_IDENTITY_ID: ${{ steps.infra.outputs.workload_identity_id }}
+        run: |
+          set -euo pipefail
+          manifest_dir=$(mktemp -d)
+
+          write_manifest() {
+            local app_name="$1"
+            local image="$2"
+            local ingress_mode="$3"
+            local ingress_block=""
+
+            if [ "$ingress_mode" = "external" ] || [ "$ingress_mode" = "internal" ]; then
+              local external_value="false"
+              if [ "$ingress_mode" = "external" ]; then
+                external_value="true"
+              fi
+              ingress_block='
+              ingress:
+                external: '"$external_value"'
+                targetPort: 8080
+                transport: http
+                allowInsecure: false
+                traffic:
+                  - latestRevision: true
+                    weight: 100'
+            fi
+
+            cat > "$manifest_dir/$app_name.yaml" <<EOF_MANIFEST
+            location: $AZURE_LOCATION
+            name: $app_name
+            identity:
+              type: UserAssigned
+              userAssignedIdentities:
+                $WORKLOAD_IDENTITY_ID: {}
+            properties:
+              environmentId: $ENVIRONMENT_ID
+              configuration:
+                registries:
+                  - server: $ACR_LOGIN_SERVER
+                    identity: $WORKLOAD_IDENTITY_ID
+                dapr:
+                  enabled: true
+                  appId: $app_name
+                  appPort: 8080
+                  appProtocol: http$ingress_block
+              template:
+                containers:
+                  - name: $app_name
+                    image: $image
+                    env:
+                      - name: SERVICE_NAME
+                        value: $app_name
+                      - name: PLATFORM_TARGET
+                        value: aca
+                    probes:
+                      - type: Liveness
+                        httpGet:
+                          path: /healthz
+                          port: 8080
+                        initialDelaySeconds: 20
+                        periodSeconds: 15
+                      - type: Readiness
+                        httpGet:
+                          path: /healthz
+                          port: 8080
+                        initialDelaySeconds: 10
+                        periodSeconds: 10
+                    resources:
+                      cpu: 0.5
+                      memory: 1Gi
+                scale:
+                  minReplicas: 1
+                  maxReplicas: 3
+            EOF_MANIFEST
+          }
+
+          deploy_app() {
+            local app_name="$1"
+            local ingress_mode="$2"
+            local image="$REPOSITORY_PREFIX/$app_name:$IMAGE_TAG"
+
+            write_manifest "$app_name" "$image" "$ingress_mode"
+
+            if az containerapp show --name "$app_name" --resource-group "$AZURE_RESOURCE_GROUP" >/dev/null 2>&1; then
+              az containerapp update \
+                --name "$app_name" \
+                --resource-group "$AZURE_RESOURCE_GROUP" \
+                --yaml "$manifest_dir/$app_name.yaml" \
+                --output none
+            else
+              az containerapp create \
+                --name "$app_name" \
+                --resource-group "$AZURE_RESOURCE_GROUP" \
+                --yaml "$manifest_dir/$app_name.yaml" \
+                --output none
+            fi
+          }
+
+          deploy_app expense-api external
+          deploy_app workflow-engine internal
+          deploy_app notification-svc none
+
+      - name: Validate ACA fallback wiring
+        env:
+          ENVIRONMENT_NAME: ${{ steps.infra.outputs.environment_name }}
+          STORAGE_ACCOUNT_ID: ${{ steps.infra.outputs.storage_account_id }}
+          SERVICEBUS_NAMESPACE_ID: ${{ steps.infra.outputs.servicebus_namespace_id }}
+          KEYVAULT_ID: ${{ steps.infra.outputs.keyvault_id }}
+        run: |
+          az resource show --ids "$STORAGE_ACCOUNT_ID" --output none
+          az resource show --ids "$SERVICEBUS_NAMESPACE_ID" --output none
+          az resource show --ids "$KEYVAULT_ID" --output none
+
+          components=$(az containerapp env dapr-component list --name "$ENVIRONMENT_NAME" --resource-group "$AZURE_RESOURCE_GROUP" --output json)
+          jq -e '.[] | select(.name == "statestore")' <<<"$components" >/dev/null
+          jq -e '.[] | select(.name == "pubsub")' <<<"$components" >/dev/null
+          jq -e '.[] | select(.name == "platform-secrets")' <<<"$components" >/dev/null
+
+          for app_name in expense-api workflow-engine notification-svc; do
+            az containerapp show \
+              --name "$app_name" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query 'properties.configuration.dapr.enabled' \
+              --output tsv | grep -qi true
+          done
+
+      - name: Run end-to-end validation against ACA fallback
+        run: |
+          set -euo pipefail
+          api_fqdn=$(az containerapp show \
+            --name expense-api \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query 'properties.configuration.ingress.fqdn' \
+            --output tsv)
+          api_url="https://$api_fqdn"
+          validation_output="$RUNNER_TEMP/aca-validation.json"
+
+          curl --fail --silent --show-error --retry 12 --retry-delay 10 --retry-connrefused "$api_url/healthz" | jq -e '.status == "ok"' >/dev/null
+
+          VALIDATION_OUTPUT_PATH="$validation_output" ./scripts/validate-deployment.sh "$api_url"
+
+          small_expense_id=$(jq -r '.autoApprove.expenseId' "$validation_output")
+          small_correlation_id=$(jq -r '.autoApprove.correlationId' "$validation_output")
+          large_expense_id=$(jq -r '.manualReview.expenseId' "$validation_output")
+          large_correlation_id=$(jq -r '.manualReview.correlationId' "$validation_output")
+
+          for _ in $(seq 1 12); do
+            logs=$(az containerapp logs show --name notification-svc --resource-group "$AZURE_RESOURCE_GROUP" --tail 300 2>/dev/null || true)
+            if grep -q 'ExpenseApproved' <<<"$logs" \
+              && grep -q 'ManualReviewRequested' <<<"$logs" \
+              && grep -q "ExpenseId=$small_expense_id" <<<"$logs" \
+              && grep -q "ExpenseId=$large_expense_id" <<<"$logs" \
+              && grep -q "CorrelationId=$small_correlation_id" <<<"$logs" \
+              && grep -q "CorrelationId=$large_correlation_id" <<<"$logs"; then
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "Notification evidence did not appear in notification-svc logs in time."
+          exit 1

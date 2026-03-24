@@ -1,6 +1,6 @@
 # Squad Team
 
-> CloudExpense Lite — Dapr + Radius reference sample
+> RadiusClaim — Dapr + Radius reference sample
 
 ## Coordinator
 
@@ -53,7 +53,7 @@
 ## Project Context
 
 - **Owner:** Wesley Backelant
-- **Project:** CloudExpense Lite — Dapr + Radius reference sample
+- **Project:** RadiusClaim — Dapr + Radius reference sample
 - **Stack:** .NET 10 minimal APIs, Dapr .NET SDK, Dapr Workflows, Radius, Azure Container Apps, Azure-backed Dapr components
 - **Description:** A small, reference-quality expense filing sample that demonstrates portable app patterns with Dapr in the app layer and Radius in the platform layer.
 - **Created:** 2026-03-23

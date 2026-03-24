@@ -1,0 +1,114 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.41.2.15936",
+      "templateHash": "7822043181257348770"
+    }
+  },
+  "parameters": {
+    "environmentName": {
+      "type": "string",
+      "defaultValue": "dev",
+      "metadata": {
+        "description": "Radius dev environment name."
+      }
+    },
+    "kubernetesNamespace": {
+      "type": "string",
+      "defaultValue": "cloudexpense-lite-dev",
+      "metadata": {
+        "description": "Kubernetes namespace used for the local Radius development slice."
+      }
+    },
+    "azureProviderScope": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().id]",
+      "metadata": {
+        "description": "Azure provider scope used by recipe-backed resources."
+      }
+    },
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure location for backing resources created by recipes."
+      }
+    }
+  },
+  "imports": {
+    "radius": {
+      "provider": "Radius",
+      "version": "0.55"
+    }
+  },
+  "resources": {
+    "env": {
+      "import": "radius",
+      "type": "Applications.Core/environments@2023-10-01-preview",
+      "properties": {
+        "name": "[parameters('environmentName')]",
+        "properties": {
+          "compute": {
+            "kind": "kubernetes",
+            "resourceId": "self",
+            "namespace": "[parameters('kubernetesNamespace')]"
+          },
+          "providers": {
+            "azure": {
+              "scope": "[parameters('azureProviderScope')]"
+            }
+          },
+          "recipes": {
+            "Applications.Dapr/stateStores": {
+              "azure-blob-state": {
+                "templateKind": "bicep",
+                "templatePath": "../recipes/azure/state-store.bicep",
+                "parameters": {
+                  "location": "[parameters('location')]"
+                }
+              }
+            },
+            "Applications.Dapr/pubSubBrokers": {
+              "azure-servicebus-pubsub": {
+                "templateKind": "bicep",
+                "templatePath": "../recipes/azure/pubsub.bicep",
+                "parameters": {
+                  "location": "[parameters('location')]"
+                }
+              }
+            },
+            "Applications.Dapr/secretStores": {
+              "azure-keyvault-secrets": {
+                "templateKind": "bicep",
+                "templatePath": "../recipes/azure/secrets.bicep",
+                "parameters": {
+                  "location": "[parameters('location')]"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "outputs": {
+    "environmentModel": {
+      "type": "object",
+      "value": {
+        "name": "[reference('env').name]",
+        "computeTarget": "local-kubernetes",
+        "namespace": "[parameters('kubernetesNamespace')]",
+        "azureProviderScope": "[parameters('azureProviderScope')]",
+        "recipes": {
+          "stateStore": "azure-blob-state",
+          "pubsub": "azure-servicebus-pubsub",
+          "secretStore": "azure-keyvault-secrets"
+        }
+      }
+    }
+  }
+}

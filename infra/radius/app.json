@@ -1,0 +1,745 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "languageVersion": "2.0",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.41.2.15936",
+      "templateHash": "15919046346474345429"
+    }
+  },
+  "parameters": {
+    "environment": {
+      "type": "string",
+      "metadata": {
+        "description": "The ID of your Radius environment. Automatically injected by the rad CLI."
+      }
+    },
+    "applicationName": {
+      "type": "string",
+      "defaultValue": "radiusclaim",
+      "metadata": {
+        "description": "Logical Radius application name for the RadiusClaim deployment."
+      }
+    },
+    "containerRegistry": {
+      "type": "string",
+      "defaultValue": "ghcr.io/sovereignapp/radiusclaim",
+      "metadata": {
+        "description": "Container registry/repository prefix for RadiusClaim service images."
+      }
+    },
+    "imageTag": {
+      "type": "string",
+      "defaultValue": "phase1",
+      "metadata": {
+        "description": "Shared image tag for the service images used by the current environment."
+      }
+    },
+    "deploymentTarget": {
+      "type": "string",
+      "defaultValue": "local",
+      "metadata": {
+        "description": "Deployment target label kept aligned to the active Radius environment."
+      }
+    },
+    "daprBackings": {
+      "type": "object",
+      "defaultValue": {
+        "stateStore": {
+          "recipeName": "azure-blob-state",
+          "type": "state.azure.blobstorage",
+          "version": "v1"
+        },
+        "pubsub": {
+          "recipeName": "azure-servicebus-pubsub",
+          "type": "pubsub.azure.servicebus",
+          "version": "v1"
+        },
+        "secretStore": {
+          "recipeName": "azure-keyvault-secrets",
+          "type": "secretstores.azure.keyvault",
+          "version": "v1"
+        }
+      },
+      "metadata": {
+        "description": "Logical Dapr backing definitions. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets."
+      }
+    }
+  },
+  "variables": {
+    "radiusLocation": "global",
+    "servicePort": 8080,
+    "stateStoreAccountName": "[toLower(format('ce{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'statestore'), 20)))]",
+    "stateStoreContainerName": "expense-state",
+    "pubsubNamespaceName": "[format('cloudexpense-{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'pubsub'), 18))]",
+    "notificationTopicName": "expense-notifications",
+    "secretVaultName": "[format('ce-{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'platform-secrets'), 20))]",
+    "stateStoreBacking": "[parameters('daprBackings').stateStore]",
+    "pubsubBacking": "[parameters('daprBackings').pubsub]",
+    "secretStoreBacking": "[parameters('daprBackings').secretStore]"
+  },
+  "imports": {
+    "radius": {
+      "provider": "Radius",
+      "version": "0.55"
+    }
+  },
+  "resources": {
+    "app": {
+      "import": "radius",
+      "type": "Applications.Core/applications@2023-10-01-preview",
+      "properties": {
+        "name": "[parameters('applicationName')]",
+        "location": "[variables('radiusLocation')]",
+        "properties": {
+          "environment": "[parameters('environment')]"
+        }
+      }
+    },
+    "stateStore": {
+      "import": "radius",
+      "type": "Applications.Dapr/stateStores@2023-10-01-preview",
+      "properties": {
+        "name": "statestore",
+        "location": "[variables('radiusLocation')]",
+        "properties": {
+          "environment": "[parameters('environment')]",
+          "application": "[reference('app').id]",
+          "resourceProvisioning": "recipe",
+          "recipe": {
+            "name": "[variables('stateStoreBacking').recipeName]",
+            "parameters": {
+              "storageAccountName": "[variables('stateStoreAccountName')]",
+              "containerName": "[variables('stateStoreContainerName')]"
+            }
+          },
+          "type": "[variables('stateStoreBacking').type]",
+          "version": "[variables('stateStoreBacking').version]",
+          "metadata": {
+            "accountName": {
+              "value": "[variables('stateStoreAccountName')]"
+            },
+            "containerName": {
+              "value": "[variables('stateStoreContainerName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "app"
+      ]
+    },
+    "pubsub": {
+      "import": "radius",
+      "type": "Applications.Dapr/pubSubBrokers@2023-10-01-preview",
+      "properties": {
+        "name": "pubsub",
+        "location": "[variables('radiusLocation')]",
+        "properties": {
+          "environment": "[parameters('environment')]",
+          "application": "[reference('app').id]",
+          "resourceProvisioning": "recipe",
+          "recipe": {
+            "name": "[variables('pubsubBacking').recipeName]",
+            "parameters": {
+              "namespaceName": "[variables('pubsubNamespaceName')]",
+              "topicName": "[variables('notificationTopicName')]"
+            }
+          },
+          "type": "[variables('pubsubBacking').type]",
+          "version": "[variables('pubsubBacking').version]",
+          "metadata": {
+            "namespaceName": {
+              "value": "[variables('pubsubNamespaceName')]"
+            },
+            "disableEntityManagement": {
+              "value": "true"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "app"
+      ]
+    },
+    "platformSecretStore": {
+      "import": "radius",
+      "type": "Applications.Dapr/secretStores@2023-10-01-preview",
+      "properties": {
+        "name": "platform-secrets",
+        "location": "[variables('radiusLocation')]",
+        "properties": {
+          "environment": "[parameters('environment')]",
+          "application": "[reference('app').id]",
+          "resourceProvisioning": "recipe",
+          "recipe": {
+            "name": "[variables('secretStoreBacking').recipeName]",
+            "parameters": {
+              "vaultName": "[variables('secretVaultName')]"
+            }
+          },
+          "type": "[variables('secretStoreBacking').type]",
+          "version": "[variables('secretStoreBacking').version]",
+          "metadata": {
+            "vaultName": {
+              "value": "[variables('secretVaultName')]"
+            },
+            "azureEnvironment": {
+              "value": "AZUREPUBLICCLOUD"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "app"
+      ]
+    },
+    "expenseApi": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "expense-api-service",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "application": {
+            "value": "[reference('app').id]"
+          },
+          "name": {
+            "value": "expense-api"
+          },
+          "image": {
+            "value": "[format('{0}/expense-api:{1}', parameters('containerRegistry'), parameters('imageTag'))]"
+          },
+          "containerPort": {
+            "value": "[variables('servicePort')]"
+          },
+          "env": {
+            "value": {
+              "SERVICE_NAME": {
+                "value": "expense-api"
+              },
+              "PLATFORM_TARGET": {
+                "value": "[parameters('deploymentTarget')]"
+              }
+            }
+          },
+          "connections": {
+            "value": {
+              "workflow": {
+                "source": "[format('http://workflow-engine:{0}', variables('servicePort'))]"
+              },
+              "state": {
+                "source": "[reference('stateStore').id]"
+              },
+              "secrets": {
+                "source": "[reference('platformSecretStore').id]"
+              }
+            }
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "18031099517849231755"
+            }
+          },
+          "parameters": {
+            "application": {
+              "type": "string",
+              "metadata": {
+                "description": "The Radius application ID that owns this container."
+              }
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Logical service name and Radius container resource name."
+              }
+            },
+            "image": {
+              "type": "string",
+              "metadata": {
+                "description": "Container image reference for the service."
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "global",
+              "metadata": {
+                "description": "Radius resource location."
+              }
+            },
+            "containerPort": {
+              "type": "int",
+              "defaultValue": 8080,
+              "metadata": {
+                "description": "Primary HTTP port exposed by the service."
+              }
+            },
+            "env": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Environment variables to inject into the container."
+              }
+            },
+            "connections": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Radius connections to supporting services or Dapr components."
+              }
+            },
+            "enableDapr": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Whether to enable a Dapr sidecar for the service."
+              }
+            },
+            "daprAppId": {
+              "type": "string",
+              "defaultValue": "[parameters('name')]",
+              "metadata": {
+                "description": "Dapr app ID for the service."
+              }
+            },
+            "daprAppPort": {
+              "type": "int",
+              "defaultValue": "[parameters('containerPort')]",
+              "metadata": {
+                "description": "Port exposed to the Dapr sidecar."
+              }
+            }
+          },
+          "imports": {
+            "radius": {
+              "provider": "Radius",
+              "version": "0.55"
+            }
+          },
+          "resources": {
+            "service": {
+              "import": "radius",
+              "type": "Applications.Core/containers@2023-10-01-preview",
+              "properties": {
+                "name": "[parameters('name')]",
+                "location": "[parameters('location')]",
+                "properties": {
+                  "application": "[parameters('application')]",
+                  "container": {
+                    "image": "[parameters('image')]",
+                    "env": "[parameters('env')]",
+                    "ports": {
+                      "http": {
+                        "containerPort": "[parameters('containerPort')]",
+                        "protocol": "TCP"
+                      }
+                    }
+                  },
+                  "connections": "[parameters('connections')]",
+                  "extensions": "[if(parameters('enableDapr'), createArray(createObject('kind', 'daprSidecar', 'appId', parameters('daprAppId'), 'appPort', parameters('daprAppPort'))), createArray())]"
+                }
+              }
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "value": "[reference('service').id]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "app",
+        "platformSecretStore",
+        "stateStore"
+      ]
+    },
+    "workflowEngine": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "workflow-engine-service",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "application": {
+            "value": "[reference('app').id]"
+          },
+          "name": {
+            "value": "workflow-engine"
+          },
+          "image": {
+            "value": "[format('{0}/workflow-engine:{1}', parameters('containerRegistry'), parameters('imageTag'))]"
+          },
+          "containerPort": {
+            "value": "[variables('servicePort')]"
+          },
+          "env": {
+            "value": {
+              "SERVICE_NAME": {
+                "value": "workflow-engine"
+              },
+              "PLATFORM_TARGET": {
+                "value": "[parameters('deploymentTarget')]"
+              }
+            }
+          },
+          "connections": {
+            "value": {
+              "state": {
+                "source": "[reference('stateStore').id]"
+              },
+              "pubsub": {
+                "source": "[reference('pubsub').id]"
+              },
+              "secrets": {
+                "source": "[reference('platformSecretStore').id]"
+              }
+            }
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "18031099517849231755"
+            }
+          },
+          "parameters": {
+            "application": {
+              "type": "string",
+              "metadata": {
+                "description": "The Radius application ID that owns this container."
+              }
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Logical service name and Radius container resource name."
+              }
+            },
+            "image": {
+              "type": "string",
+              "metadata": {
+                "description": "Container image reference for the service."
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "global",
+              "metadata": {
+                "description": "Radius resource location."
+              }
+            },
+            "containerPort": {
+              "type": "int",
+              "defaultValue": 8080,
+              "metadata": {
+                "description": "Primary HTTP port exposed by the service."
+              }
+            },
+            "env": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Environment variables to inject into the container."
+              }
+            },
+            "connections": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Radius connections to supporting services or Dapr components."
+              }
+            },
+            "enableDapr": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Whether to enable a Dapr sidecar for the service."
+              }
+            },
+            "daprAppId": {
+              "type": "string",
+              "defaultValue": "[parameters('name')]",
+              "metadata": {
+                "description": "Dapr app ID for the service."
+              }
+            },
+            "daprAppPort": {
+              "type": "int",
+              "defaultValue": "[parameters('containerPort')]",
+              "metadata": {
+                "description": "Port exposed to the Dapr sidecar."
+              }
+            }
+          },
+          "imports": {
+            "radius": {
+              "provider": "Radius",
+              "version": "0.55"
+            }
+          },
+          "resources": {
+            "service": {
+              "import": "radius",
+              "type": "Applications.Core/containers@2023-10-01-preview",
+              "properties": {
+                "name": "[parameters('name')]",
+                "location": "[parameters('location')]",
+                "properties": {
+                  "application": "[parameters('application')]",
+                  "container": {
+                    "image": "[parameters('image')]",
+                    "env": "[parameters('env')]",
+                    "ports": {
+                      "http": {
+                        "containerPort": "[parameters('containerPort')]",
+                        "protocol": "TCP"
+                      }
+                    }
+                  },
+                  "connections": "[parameters('connections')]",
+                  "extensions": "[if(parameters('enableDapr'), createArray(createObject('kind', 'daprSidecar', 'appId', parameters('daprAppId'), 'appPort', parameters('daprAppPort'))), createArray())]"
+                }
+              }
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "value": "[reference('service').id]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "app",
+        "platformSecretStore",
+        "pubsub",
+        "stateStore"
+      ]
+    },
+    "notificationService": {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "notification-service",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "application": {
+            "value": "[reference('app').id]"
+          },
+          "name": {
+            "value": "notification-svc"
+          },
+          "image": {
+            "value": "[format('{0}/notification-svc:{1}', parameters('containerRegistry'), parameters('imageTag'))]"
+          },
+          "containerPort": {
+            "value": "[variables('servicePort')]"
+          },
+          "env": {
+            "value": {
+              "SERVICE_NAME": {
+                "value": "notification-svc"
+              },
+              "PLATFORM_TARGET": {
+                "value": "[parameters('deploymentTarget')]"
+              }
+            }
+          },
+          "connections": {
+            "value": {
+              "pubsub": {
+                "source": "[reference('pubsub').id]"
+              },
+              "secrets": {
+                "source": "[reference('platformSecretStore').id]"
+              }
+            }
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "languageVersion": "2.0",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.41.2.15936",
+              "templateHash": "18031099517849231755"
+            }
+          },
+          "parameters": {
+            "application": {
+              "type": "string",
+              "metadata": {
+                "description": "The Radius application ID that owns this container."
+              }
+            },
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Logical service name and Radius container resource name."
+              }
+            },
+            "image": {
+              "type": "string",
+              "metadata": {
+                "description": "Container image reference for the service."
+              }
+            },
+            "location": {
+              "type": "string",
+              "defaultValue": "global",
+              "metadata": {
+                "description": "Radius resource location."
+              }
+            },
+            "containerPort": {
+              "type": "int",
+              "defaultValue": 8080,
+              "metadata": {
+                "description": "Primary HTTP port exposed by the service."
+              }
+            },
+            "env": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Environment variables to inject into the container."
+              }
+            },
+            "connections": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Radius connections to supporting services or Dapr components."
+              }
+            },
+            "enableDapr": {
+              "type": "bool",
+              "defaultValue": true,
+              "metadata": {
+                "description": "Whether to enable a Dapr sidecar for the service."
+              }
+            },
+            "daprAppId": {
+              "type": "string",
+              "defaultValue": "[parameters('name')]",
+              "metadata": {
+                "description": "Dapr app ID for the service."
+              }
+            },
+            "daprAppPort": {
+              "type": "int",
+              "defaultValue": "[parameters('containerPort')]",
+              "metadata": {
+                "description": "Port exposed to the Dapr sidecar."
+              }
+            }
+          },
+          "imports": {
+            "radius": {
+              "provider": "Radius",
+              "version": "0.55"
+            }
+          },
+          "resources": {
+            "service": {
+              "import": "radius",
+              "type": "Applications.Core/containers@2023-10-01-preview",
+              "properties": {
+                "name": "[parameters('name')]",
+                "location": "[parameters('location')]",
+                "properties": {
+                  "application": "[parameters('application')]",
+                  "container": {
+                    "image": "[parameters('image')]",
+                    "env": "[parameters('env')]",
+                    "ports": {
+                      "http": {
+                        "containerPort": "[parameters('containerPort')]",
+                        "protocol": "TCP"
+                      }
+                    }
+                  },
+                  "connections": "[parameters('connections')]",
+                  "extensions": "[if(parameters('enableDapr'), createArray(createObject('kind', 'daprSidecar', 'appId', parameters('daprAppId'), 'appPort', parameters('daprAppPort'))), createArray())]"
+                }
+              }
+            }
+          },
+          "outputs": {
+            "id": {
+              "type": "string",
+              "value": "[reference('service').id]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "app",
+        "platformSecretStore",
+        "pubsub"
+      ]
+    }
+  },
+  "outputs": {
+    "deploymentModel": {
+      "type": "object",
+      "value": {
+        "application": {
+          "name": "[reference('app').name]",
+          "id": "[reference('app').id]"
+        },
+        "target": "[parameters('deploymentTarget')]",
+        "services": [
+          "expense-api",
+          "workflow-engine",
+          "notification-svc"
+        ],
+        "daprComponents": {
+          "stateStore": "[reference('stateStore').name]",
+          "pubsub": "[reference('pubsub').name]",
+          "secretStore": "[reference('platformSecretStore').name]"
+        },
+        "daprBackings": {
+          "stateStore": "[variables('stateStoreBacking')]",
+          "pubsub": "[variables('pubsubBacking')]",
+          "secretStore": "[variables('secretStoreBacking')]"
+        },
+        "azureBacking": {
+          "stateStoreAccountName": "[variables('stateStoreAccountName')]",
+          "pubsubNamespaceName": "[variables('pubsubNamespaceName')]",
+          "secretVaultName": "[variables('secretVaultName')]",
+          "notificationTopicName": "[variables('notificationTopicName')]"
+        },
+        "recipeStatus": "phase5-recipes-wired"
+      }
+    }
+  }
+}

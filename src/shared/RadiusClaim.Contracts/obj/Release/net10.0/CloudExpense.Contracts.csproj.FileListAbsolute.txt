@@ -1,0 +1,11 @@
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/bin/Release/net10.0/CloudExpense.Contracts.deps.json
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/bin/Release/net10.0/CloudExpense.Contracts.dll
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/bin/Release/net10.0/CloudExpense.Contracts.pdb
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/obj/Release/net10.0/CloudExpense.Contracts.GeneratedMSBuildEditorConfig.editorconfig
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/obj/Release/net10.0/CloudExpense.Contracts.AssemblyInfoInputs.cache
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/obj/Release/net10.0/CloudExpense.Contracts.AssemblyInfo.cs
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/obj/Release/net10.0/CloudExpense.Contracts.csproj.CoreCompileInputs.cache
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/obj/Release/net10.0/CloudExpense.Contracts.dll
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/obj/Release/net10.0/refint/CloudExpense.Contracts.dll
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/obj/Release/net10.0/CloudExpense.Contracts.pdb
+/Users/wesleyb/git/sovereignapp/src/shared/CloudExpense.Contracts/obj/Release/net10.0/ref/CloudExpense.Contracts.dll
