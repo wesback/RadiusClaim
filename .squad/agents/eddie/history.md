@@ -1,3 +1,20 @@
+# Eddie History — Documentation & Story
+
+**Role:** Docs/Story — README, deployment walkthrough, validation guides, demo scripts, ADRs.
+
+## Core Context
+
+**Phases 1–7 Summary:**
+- **Phase 1:** README scaffold with project summary, repo structure, locals vs cloud paths
+- **Phase 2–4:** Incremental README updates as phases complete (contracts, state, workflows, pub/sub, notification, Azure)
+- **Phase 5–6:** Phase-7 demo walkthrough (`phase-7-demo-walkthrough.md`), validation checklist enhancements, ADR-0001 for Azure CLI fallback
+- **Phase 7:** Comprehensive documentation sweep: README accuracy, walkthrough clarity, validation checklist completeness, GitHub secrets/variables table, demo narrative truthfulness
+- **2026-03-24:** Critical findings from Daisy's full-codebase audit: stale `sovereignapp/` name, wrong Contracts path, mislabeled `dev.bicep`, "Coming in Phase 2" text, stale registry names. Eddie assigned to reconciliation pass. Completed Azure credential registration documentation across README, workflow, walkthrough, checklist.
+
+**Key Pattern:** Documentation is the credibility contract. Stale docs undermine demo trust. Walkthrough must exactly match code state. Validation guide must match what operators actually need to do.
+
+---
+
 # Project Context
 
 - **Owner:** Wesley Backelant

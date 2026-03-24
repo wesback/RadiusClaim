@@ -1,3 +1,21 @@
+# Karen History — Testing & Validation
+
+**Role:** Tester — Phase gates, acceptance criteria, end-to-end validation, evidence gathering.
+
+## Core Context
+
+**Phases 1–7 Summary:**
+- **Phases 1–4:** Phase gate lead. Set acceptance criteria, validated builds, tested app contracts and workflows locally. Rejected Phase 1 until contracts were explicit; rejected Phase 2 until concurrency was safe.
+- **Phase 5–6:** Validated platform integration. Bicep builds clean. Solution builds/tests pass. Real Azure deployment evidence collected.
+- **Phase 7:** Radius redesign validation. Approved Radius-first path with honest gap documentation (live environment required for full e2e). Validated all structural criteria: bicep builds, dotnet builds, test passes, traceability preserved, demo credible.
+- **2026-03-24:** Tasked with fresh `rad deploy` validation of Radius.Compute revert per Daisy's critical review. Graham implements revert; Karen gates merge with live deployment success.
+
+**Key Pattern:** "Compiles clean" is not sufficient for production/reference code. Karen moved gate bar to "fresh `rad deploy` succeeds" rather than "bicep builds."
+
+**Next:** Pending Karen validation of Radius.Compute → Applications.Core revert against live Radius environment.
+
+---
+
 # Project Context
 
 - **Owner:** Wesley Backelant

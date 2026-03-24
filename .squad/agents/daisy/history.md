@@ -17,6 +17,24 @@
 
 All members drawn from "Daisy Jones & The Six" universe per user naming preference.
 
+---
+
+## Core Context
+
+**Leadership:** Daisy led sample from design through Phase 7 completion (2026-03-23 to 2026-03-24). Established governance: sample stays intentionally small, reference-quality, portable. Dapr handles app patterns; Radius handles platform wiring; Azure is example target only.
+
+**Architecture:** Three-service boundary (expense-api, workflow-engine, notification-svc) with five Dapr building blocks (State, Workflows, Pub/Sub, Service Invocation, Secrets). Shared expense contract model with traceability (ExpenseId + CorrelationId). Auto-approve threshold at $100.
+
+**Key Decisions:**
+1. **Phase 1–4:** App track complete. Dapr contracts stable. Three services wired for state, workflow, pub/sub.
+2. **Phase 5–6:** Platform track complete. Local dev with Redis (Dapr overlays). Azure deployment with recipes.
+3. **Phase 7 Radius redesign:** Radius is primary orchestrator. Azure bootstrap minimal (substrate only). `rad deploy` exercises app + component wiring. ACA fallback documented but not primary path.
+4. **2026-03-24 Critical findings:** Full codebase review found 7 critical infrastructure issues. Radius.Compute namespace must revert to Applications.Core (stock Radius 0.55 incompatibility). Recipe type mismatches (pub/sub, state store) require fix. CI/CD missing auth step.
+
+**Current Status:** All phases complete. Live deployment revealed Radius.Compute blocker. Graham implementing revert. Karen validating fresh deployment. Follow-ups: C2 pub/sub type, C3 state version, C7 CI auth.
+
+---
+
 ## Leadership Arc (2026-03-23 → 2026-03-24)
 
 Daisy led the sample from design through Phase 7 gates:
@@ -26,6 +44,7 @@ Daisy led the sample from design through Phase 7 gates:
 - **Phase 7:** Reviewed and approved two major architectural decisions in Mar-24:
   1. **Key Vault scope:** Reject force-defaulting purge protection or adding existing-vault branching. Smallest fix is omitting the property.
   2. **Namespace migration:** Approve mixed `Radius.*` + `Applications.Dapr/*` interim state pending official Dapr types. No compatibility shims, no dual-path logic.
+  3. **2026-03-24 Critical findings:** Full-depth Opus 4.6 audit confirmed Radius.Compute namespace fails on stock Radius 0.55. Directed revert to Applications.Core. Identified pub/sub recipe type mismatch and state store version mismatch. Flagged CI/CD auth gap.
 
 **Governance principle:** Keep the sample intentionally small, reference-quality, and portable. Dapr handles app patterns; Radius handles platform wiring; Azure is the example target, not the only target.
 

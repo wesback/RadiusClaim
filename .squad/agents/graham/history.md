@@ -1,22 +1,29 @@
 ---
-last_updated: 2026-03-24T14:03:13Z
+last_updated: 2026-03-24T17:36:38Z
 ---
 
 # Graham History
 
 ## Core Context
 
-**Phases 1–5 Summary (2026-03-23)**
+**Role:** Platform Dev — infrastructure, Radius, Dapr, recipes, CI/CD.
 
-Graham led infrastructure platform work across five phases:
-- **Phase 3:** Added local Dapr pub/sub overlay (`infra/dapr/local/pubsub.yaml`) with Redis backend
-- **Phase 5:** Delivered Radius recipe-backed Azure slice: named recipe wiring in `infra/radius/app.bicep` for state, pub/sub, and secrets; created `infra/radius/environments/dev.bicep` with real Azure recipes (Blob Storage, Service Bus, Key Vault)
-- **Phase 5–6:** Restructured GitHub Actions to default to Radius-first deployment with Azure CLI as explicit fallback
-- **Key pattern:** Radius owns service topology and environment layer; local Dapr overlays under `infra/dapr/local/`; Azure-backed recipes in `infra/radius/recipes/azure/`
+**Phases 1–6 Summary:**
+- **Phase 3:** Local Dapr pub/sub (Redis backend, `infra/dapr/local/pubsub.yaml`)
+- **Phase 5:** Radius recipe-backed Azure slice: named recipes in `app.bicep`; real Azure recipes (Blob, Service Bus, Key Vault) in `dev.bicep` environment
+- **Phase 5–6:** Restructured GitHub Actions: Radius-first with Azure CLI fallback
+- **Phase 7 Radius redesign:** Split Azure bootstrap from Radius app deployment. Bootstrap via ARM Bicep (substrate). App deployment via `rad deploy` (containers + Dapr components via recipes).
 
-**Namespace and Dapr Wiring Rule (2026-03-24)**
+**Key Decision Pattern:** Recipe wiring in `app.bicep` → `templatePath` to OCI artifacts → automated publishing in workflow. This enables registry-based recipe resolution at deploy time (vs hardcoded local paths).
 
-Established rule that recipe `templatePath` values in Radius environments must resolve to OCI artifacts (not local Bicep paths). This enables `rad deploy` to fetch recipes from a registry at deploy time. Implemented recipe publishing automation in workflow and scripts.
+**Latest Work (2026-03-24):**
+- Implemented Radius.Compute → Applications.Core revert per Daisy's critical review and live deployment failure
+- Shape changes: `containers` map → singular `container`, `extensions.daprSidecar` → `extensions[]` array
+- Updated bicep validation: clean builds with no warnings
+- Documented future pivot path for when/if preview Radius releases `Radius.Compute/*`
+- Pending follow-ups: C2 pub/sub recipe type mismatch, C3 state store version mismatch, C7 CI auth gap
+
+---
 
 ## Phase 7 Work (2026-03-24)
 
