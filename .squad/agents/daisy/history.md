@@ -607,3 +607,31 @@ Coordinated final decision documentation for Dapr namespace research and migrati
 - **Decision Record:** `eddie-portability-docs-2026-03-24`
 
 **Your Lead Input:** Your earlier decision to reframe from ACA-primary to Kubernetes-first (prioritizing portability) is now reflected in all user-facing documentation.
+
+## 2026-03-24: Finalized Radius Idempotency Fix Commit
+
+**Decision:** Commit the workflow and documentation updates as a single coherent follow-up to the Scribe's orchestration.
+
+**Changes merged into main:**
+- **Commit 76e56b0:** "Radius idempotency fix: update workflow and documentation for stable environment deployment"
+  - `.github/workflows/deploy-azure.yml`: Removed RADIUS_BOOTSTRAP_ENVIRONMENT; switched to idempotent `rad env create || true` pattern
+  - `README.md`: Added paragraph documenting idempotent deployment narrative
+  - `docs/end-to-end-setup-walkthrough.md`: Updated manual deployment steps to use stable environment naming
+  - `docs/radius-validation-checklist.md`: Updated troubleshooting guidance with idempotent resolution steps
+
+**Verification:**
+- Working tree clean after commit
+- Local and upstream in sync (origin/main == HEAD)
+- Trailer included: Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
+
+**Impact on reference sample:**
+- Deployment workflow now repeatable without manual cleanup
+- Documentation teaching story simplified: no bootstrap pattern needed
+- Radius idempotency principle now visible across workflow, README, and troubleshooting
+- Pattern is reusable and earned as `.squad/skills/radius-idempotent-deployment/SKILL.md`
+
+**Learnings:**
+- Stable idempotent naming (vs. temporary bootstrap) makes CI/CD and manual workflows more robust
+- Documentation updates are part of the fix—implementation is incomplete without teaching the pattern
+- Squad orchestration successfully decoupled approval from final commit staging, allowing cleanroom review
+
