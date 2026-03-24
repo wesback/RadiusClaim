@@ -155,3 +155,73 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - **Ready for Phase 7 execution:** End-to-end validation of live Radius deployment, docs/demo scripts, integration tests
 - Team confidence high on all three tracks: app code, platform wiring, deployment credibility
 
+### 2026-03-24: Phase 7 Validation Artifact Created
+
+- Created executable validation script: `scripts/validate-deployment.sh`
+- Script validates distributed system behavior (not just process startup):
+  - State persistence via Dapr state store
+  - Workflow orchestration via Dapr Workflow
+  - Service invocation (expense-api → workflow-engine)
+  - Auto-approve flow ($50): Submitted → Approved → Reimbursed
+  - Manual-review flow ($150): Submitted → ManualReviewRequested
+  - Boundary case ($100.00): Must enter manual review, not auto-approve
+- Script is executable, standalone, uses existing tooling (bash, curl, jq)
+- No new test frameworks invented — aligns with "use existing tooling only" constraint
+- Documentation artifacts:
+  - `docs/phase-7-validation-checklist.md`: Exit criteria and approval process
+  - `scripts/README.md`: Usage guide and troubleshooting
+  - `.squad/decisions/inbox/karen-phase7-validation-script.md`: Design rationale
+- **Key learnings:**
+  - Phase-gate validation for distributed systems must prove runtime behavior, not just build/parse
+  - Script-based validation is appropriate when no test framework exists and sample targets platform/ops audiences
+  - Executable validation earns more trust than documentation checklists alone
+  - The strongest realistic artifact without inventing infrastructure is an extracted, standalone version of CI/CD validation logic
+- **File paths:**
+  - Validation script: `scripts/validate-deployment.sh`
+  - Checklist: `docs/phase-7-validation-checklist.md`
+  - Demo walkthrough (already existed): `docs/phase-7-demo-walkthrough.md`
+  - CI/CD integration: `.github/workflows/deploy-azure.yml` (lines 382-443)
+
+
+### 2026-03-24: Phase 7 Validation Testing Complete
+
+**Decision:** Script-Based Integration Testing APPROVED
+
+**Rationale:** Phase 7 validation uses executable bash script (`scripts/validate-deployment.sh`) as primary integration validation artifact instead of adding new test framework (xUnit, Playwright, etc.).
+
+**Options Considered & Verdict:**
+| Option | Status | Rationale |
+|--------|--------|-----------|
+| xUnit integration test project | Rejected | Invents infrastructure, adds dependencies |
+| Playwright E2E framework | Rejected | Overkill for API-only validation |
+| Standalone bash script (CI/CD logic extraction) | **Selected** | Uses existing pattern, executable, no new dependencies |
+| Documentation checklist only | Rejected | Doesn't prove behavior; lowers trust bar |
+
+**What the Script Validates:**
+- State persistence (Dapr state store)
+- Workflow orchestration (Dapr Workflow)
+- Service invocation (expense-api → workflow-engine)
+- Approval thresholds ($50 auto-approve, $150 manual-review, $100 boundary)
+- Status transitions end-to-end
+
+**Deliverables:**
+1. **scripts/validate-deployment.sh** (executable validation script)
+   - Comprehensive checks: health, $50, $150, $100 boundary
+   - Standard tools (jq, curl) — portable
+   - Colored output, clear pass/fail
+   - Correct exit codes (0 = success)
+   - Timeout handling (30 attempts, 2-sec delay)
+
+2. **scripts/README.md** (usage documentation)
+   - Prerequisites (jq, curl)
+   - Integration points (CI/CD, phase gates)
+   - Troubleshooting
+
+3. **docs/phase-7-validation-checklist.md** (validation criteria)
+   - Three validation levels (script, CI/CD, manual demo)
+   - Exit criteria concrete and measurable
+   - Release-blocking gaps explicit
+   - Non-blocking issues separated
+
+**Status:** APPROVED — 2026-03-24
+

@@ -91,3 +91,86 @@ Kubernetes-based Radius path with Azure recipe support is stronger story than tr
 - When a tool lacks first-party support for a compute target, making the fallback explicit and clearly secondary protects the primary tool's credibility story.
 - Parameterizing Dapr component types in the app model (`daprBackings`) while keeping logical names stable (`statestore`) is the right balance for portability without sacrificing demo clarity.
 - Next team: If you need ACA support in Radius, a clean migration exists because this path separated bootstrap from deployment.
+
+## Phase 7 Work (2026-03-24)
+
+### Delivered
+
+**Phase 7 Platform Validation Lane**
+- Created comprehensive `docs/radius-validation-checklist.md` covering pre-deployment validation, Bicep validation, deployment steps, post-deployment validation, troubleshooting, and known gaps
+- Enhanced README secrets/variables documentation with clear Radius-first vs ACA-fallback requirements table
+- Added "Additional Documentation" section to README with links to demo walkthrough, validation checklist, and ADR
+- Validated all Bicep files parse cleanly (app.bicep, azure-radius.bicep, azure.bicep, all three recipes)
+- Validated solution builds and tests pass (zero warnings, zero errors)
+- Documented honest gaps: end-to-end validation requires live Radius environment (not available here); structural validation complete
+
+### Design Decision
+
+Kept the Radius-first story intact while making validation requirements explicit and accessible. The validation checklist tells operators exactly what to check before deploying, what success looks like, and how to troubleshoot — without pretending we can run end-to-end flows in this environment. The honesty about what requires a live environment is more credible than faking validation.
+
+### Validation
+
+- ✅ `az bicep build --file infra/radius/app.bicep`
+- ✅ `az bicep build --file infra/radius/environments/azure-radius.bicep`
+- ✅ `az bicep build --file infra/radius/environments/azure.bicep`
+- ✅ `az bicep build --file infra/radius/recipes/azure/*.bicep` (all three)
+- ✅ `dotnet build CloudExpenseLite.slnx --configuration Release` (zero warnings)
+- ✅ `dotnet test CloudExpenseLite.slnx --configuration Release` (all passing)
+- ✅ README documentation updated with secrets/variables clarity
+- ✅ Comprehensive validation checklist created for Radius-first path
+- ⚠️ End-to-end validation against live Radius environment: documented as requiring live cluster (honest gap)
+
+### Phase 7 Status
+
+**Platform validation lane: COMPLETE**
+- Structural validation done (Bicep parse, build, test)
+- Documentation complete (validation checklist, secrets/variables clarity)
+- Known gaps documented honestly (live environment needed for end-to-end validation)
+- No platform redesign (Radius-first pattern intact)
+- No workflow changes (existing deploy-azure.yml remains authoritative)
+
+**Remaining Phase 7 work (Eddie's lane):**
+- Demo walkthrough already exists (`docs/phase-7-demo-walkthrough.md`)
+- ADR already exists (`docs/ADR-0001-azure-cli-fallback.md`)
+- Integration test suite noted as "future enhancement" (not blocking)
+
+## Learnings (Phase 7)
+
+- Platform validation documentation should separate "what you can verify now" (Bicep parse, builds, structural checks) from "what requires live deployment" (end-to-end flows) — mixing them creates false confidence or forces teams to fake validation.
+- When documenting secrets/variables for dual-path workflows, use a table that clearly shows which path requires which config — reduces setup errors and eliminates guesswork about which variables to set.
+- Validation checklists become more valuable when they include troubleshooting steps and known gaps — they tell the next team what's normal vs. what's broken.
+- The "Additional Documentation" section in README acts as a navigation hub for deeper content without bloating the main README — keeps the ten-minute story accessible while making validation/ADR discoverable.
+
+### 2026-03-24: Phase 7 Platform Validation Lane Complete
+
+**Deliverables:**
+1. **docs/radius-validation-checklist.md**
+   - Pre-deployment validation (Radius CLI, Kubernetes, Azure provider, secrets/variables)
+   - Bicep validation for all platform files
+   - Step-by-step deployment instructions
+   - Post-deployment validation (pod health, Dapr components, Azure resources)
+   - Troubleshooting guide for common issues
+   - Known gaps documented honestly (live environment needed)
+
+2. **README.md Enhancements**
+   - Secrets/variables table with Radius-first vs ACA-fallback requirements
+   - "Additional Documentation" section linking to validation checklist, demo walkthrough, ADR
+   - Phase 7 status updated
+
+3. **Structural Validation**
+   - All Bicep files parse cleanly (az bicep build)
+   - Solution builds zero warnings (dotnet build)
+   - All tests pass (dotnet test)
+
+**What This Enables:**
+- Platform engineers have clear deployment checklist
+- Secrets/variables requirements explicit and unambiguous
+- Troubleshooting guidance for common failures
+- Known gaps documented honestly
+
+**What Remains (Non-Blocking):**
+- Live end-to-end validation (requires deployed Radius environment)
+- CI/CD end-to-end validation (add when live environment available)
+
+**Status:** COMPLETE — Platform validation lane finalized
+
