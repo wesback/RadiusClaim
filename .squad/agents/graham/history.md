@@ -237,3 +237,27 @@ Trailer includes Copilot co-author metadata per project convention.
 - Graham — Radius CI validation path decision added to squad/decisions.md
 - Captures port-forward pattern and script reuse as core pattern for distributed validation
 - Committed to squad records as reference for future deployments
+
+## Repository Housekeeping (2026-03-24)
+
+### Work Completed
+
+**Cleanup of accidental .commit-msg artifact**
+- Removed `.commit-msg` from tracked files (created during initial publish but unintended)
+- Added `.commit-msg` to `.gitignore` under new "Copilot CLI artifacts" section to prevent recurrence
+- Committed cleanup as normal follow-up (non-history-rewriting) to keep audit trail clean
+- Published both cleanup commit and history preservation commit to `main`
+
+### Design Decision
+
+Accidental Copilot CLI artifacts get a narrowly scoped ignore rule rather than broad wildcards. This preserves signal for when unusual files appear while preventing the specific `.commit-msg` pattern from creeping back in during future CLI-assisted sessions.
+
+### Commits
+- **0635795:** Clean up accidental .commit-msg artifact from initial publish
+- **477c3fd:** Graham: Document initial GitHub publish learnings
+
+### Learnings (Repository Hygiene)
+
+- When an artifact gets tracked unintentionally in the initial publish, follow up with a clean, well-documented commit that explains the context — it's better than leaving the debt or rewriting history.
+- `.gitignore` rules should be specific enough to communicate intent (e.g., "Copilot CLI artifacts") but focused enough to avoid silencing real signal about unexpected files.
+- Even internal cleanup commits benefit from clear commit messages that explain why the artifact existed and why the fix is deliberate — it tells the next team that the state wasn't an oversight.
