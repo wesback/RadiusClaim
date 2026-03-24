@@ -110,7 +110,7 @@ RadiusClaim's backing services (Blob Storage, Service Bus, Key Vault) live in a 
 ```bash
 # Set variables for easy reference
 export AZURE_RESOURCE_GROUP="radiusclaim-rg"
-export AZURE_LOCATION="eastus"  # or your preferred region
+export AZURE_LOCATION="belgiumcentral"  # or your preferred region
 
 # Create the resource group
 az group create \
@@ -135,25 +135,23 @@ If you already have a Kubernetes cluster with Dapr and Radius, skip to **Step 4*
 ```bash
 # Set cluster variables
 export AKS_CLUSTER_NAME="radiusclaim-aks"
-export AKS_RESOURCE_GROUP="$AZURE_RESOURCE_GROUP"  # Use the same resource group
 
 # Create the AKS cluster (this takes 5–10 minutes)
 az aks create \
-  --resource-group "$AKS_RESOURCE_GROUP" \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
   --name "$AKS_CLUSTER_NAME" \
   --node-count 2 \
-  --vm-set-type VirtualMachineScaleSets \
   --load-balancer-sku standard \
   --enable-managed-identity \
   --network-plugin azure \
   --network-policy azure \
-  --enable-cluster-autoscaling \
+  --enable-cluster-autoscaler \
   --min-count 1 \
   --max-count 3
 
 # Get credentials to connect kubectl
 az aks get-credentials \
-  --resource-group "$AKS_RESOURCE_GROUP" \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
   --name "$AKS_CLUSTER_NAME" \
   --overwrite-existing
 
@@ -185,7 +183,7 @@ Dapr provides the building blocks (state, pub/sub, service invocation, workflows
 curl -sL https://raw.githubusercontent.com/dapr/cli/master/install/install.sh | /bin/bash
 
 # Then install Dapr on the cluster
-dapr init --kubernetes --wait
+dapr init -k
 # This may take a few minutes
 
 # Verify Dapr is running
@@ -309,7 +307,7 @@ The environment definition wires Dapr components to Azure backing services.
    - `RADIUS_KUBECONFIG` — Your kubeconfig file content (base64 or raw)
 
    **Required Variables:**
-   - `AZURE_LOCATION` — Azure region (e.g., `eastus`)
+   - `AZURE_LOCATION` — Azure region (e.g., `belgiumcentral`)
    - `AZURE_RESOURCE_GROUP` — Resource group name (e.g., `radiusclaim-rg`)
 
    **Optional Variables:**
@@ -348,7 +346,7 @@ The environment definition wires Dapr components to Azure backing services.
 # Set environment variables
 export AZURE_SUBSCRIPTION_ID="<your-subscription-id>"
 export AZURE_RESOURCE_GROUP="radiusclaim-rg"
-export AZURE_LOCATION="eastus"
+export AZURE_LOCATION="belgiumcentral"
 export AZURE_PROVIDER_SCOPE="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP"
 export RADIUS_ENVIRONMENT_NAME="azure"
 export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"

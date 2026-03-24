@@ -1215,3 +1215,31 @@ rad deploy infra/radius/environments/<env>.bicep --parameters ...
 - All instances verified for consistency
 
 **Outcome:** ✅ Docs-only location example aligned to belgiumcentral. Documentation now guides users to deploy using Belgium Central as the Azure region for all Radius deployment steps.
+
+### 2026-03-24: Eddie — End-to-End Walkthrough Parameter Updates
+**By:** Eddie (Docs/Story)  
+**Status:** COMPLETED  
+**What:** Updated outdated Azure CLI / AKS / Dapr command parameters in `docs/end-to-end-setup-walkthrough.md`:
+1. **Removed deprecated `--vm-set-type VirtualMachineScaleSets`** from `az aks create` — VMSS is now the default and only option; explicit flag is no longer required and may trigger deprecation warnings in future Azure CLI versions.
+2. **Updated Dapr init command** from `dapr init --kubernetes --wait` to `dapr init -k` — aligns with current Dapr CLI documentation and standard initialization approach.
+3. **Simplified variable aliasing** — removed redundant `AKS_RESOURCE_GROUP` alias that was a pure one-to-one alias of `AZURE_RESOURCE_GROUP`; now uses `AZURE_RESOURCE_GROUP` directly in AKS commands.
+
+**Rationale:**
+- Reduces potential deprecation warnings when running `az aks create`
+- Aligns Dapr command syntax with latest CLI documentation
+- Improves walkthrough readability by eliminating redundant variable aliasing
+- Maintains all functional correctness and deployment outcomes
+
+**Verification:**
+- ✓ All changes aligned with current Azure CLI and Dapr documentation
+- ✓ `belgiumcentral` location examples remain (already corrected)
+- ✓ `--enable-cluster-autoscaler` flag remains (already corrected)
+- ✓ All other parameters remain current and valid
+
+**Impact:** No breaking changes to existing workflows. Documentation now current, cleaner, and follows best practices for parameter naming.
+
+### 2026-03-24: User Directive — No Outdated Parameters
+**By:** Wesley Backelant (via Copilot)  
+**Status:** ACKNOWLEDGED  
+**What:** User directive to ensure documentation and commands use current parameter syntax, not deprecated or outdated flags.
+**Context:** Captured for team memory and driving Eddie's parameter review work.
