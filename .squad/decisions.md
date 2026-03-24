@@ -706,3 +706,112 @@ Until then, only structural evidence is available. This is **non-blocking** per 
 
 **Reviewer Sign-Off:** This project is ready for external demo and distribution. The sample demonstrates meaningful distributed behavior (state, workflow, pub/sub). The validation story is clear and executable. The Radius-first claim is defended and verifiable. The gap is honest and managed. All Phase 7 exit criteria are satisfied except for the environment-dependent live validation, which has a clear path to closure.
 
+---
+
+### 2026-03-24: Framework Choice — React + Vite + TypeScript
+**By:** Camila (Frontend Dev)  
+**Status:** Recommendation Ready for Team Review  
+
+**Decision:**
+- **Primary choice:** React + Vite + TypeScript  
+- **Runner-up:** Vue 3 + Vite  
+- **Out of scope:** Blazor, Next.js, SvelteKit
+
+**Rationale:**
+1. **Industry-standard ecosystem** — 70%+ frontend job market; easiest to hire for if demo becomes product
+2. **Type safety** — TypeScript catches errors; essential for a teachable reference sample
+3. **Component clarity** — Breaks monolithic `app.js` into SubmitForm, ExpenseHistory, DetailPanel, WorkflowTelemetry components
+4. **Same-origin hosting** — Build to `wwwroot/app/dist/` and let ASP.NET serve; no separate Node deployment
+5. **Vite's DX** — HMR in ~100ms; no legacy Webpack pain
+6. **Non-breaking migration** — Existing vanilla UI stays in place until React is ready; API contracts don't change
+7. **Scalability** — Ecosystem (React Router, TanStack Query, shadcn/ui, Zustand) is mature and battle-tested
+
+**Why NOT others:**
+- **Next.js:** Requires separate Node.js deployment (serverless or sidecar). Adds a third runtime (Dapr, Radius, Node.js). Overkill for a .NET backend API.
+- **SvelteKit:** Smallest ecosystem; hard to extend; hard to hire for. Great for MVPs, but reference samples benefit from React's job market.
+- **Blazor (WASM/Server):** WASM has slow initial load; Blazor Server requires persistent WebSocket, defeats lightweight/portable narrative.
+- **Vanilla JS (current):** Right demo-first call; exposes limits (no type safety, monolithic state, manual polling).
+
+**Implementation Notes:**
+- Create `src/expense-api/client/` as a Vite + React + TypeScript project
+- Build output → `src/expense-api/wwwroot/app/dist/`
+- No API changes; React calls the same `/expenses` endpoints
+- No deployment changes; still one .NET binary
+- Can migrate vanilla components incrementally or all at once
+
+**Tech stack for migration:**
+- Vite, React 19, TypeScript, Zustand, React Router v6, TanStack Query, shadcn/ui + Tailwind, Vitest + React Testing Library
+
+**Team Input Needed:**
+- Does the team agree with React as the primary choice?
+- Is the same-origin hosting approach (wwwroot) acceptable, or prefer a separate Node deployment?
+- Timeline: Is migration worth doing before or after other Phase 7 tasks?
+
+---
+
+### 2026-03-24: Framework Fit Analysis — Keep Vanilla UI
+**By:** Daisy (Lead)  
+**Status:** DECISION  
+
+**Question:**
+> "The webapp seems very basic. Should it not use any good frontend framework? Do research for the best framework for UI enabled development"
+
+**Decision: KEEP VANILLA. No framework change is justified at this time.**
+
+**Reasoning:**
+
+1. **Purpose Mismatch**
+   - RadiusClaim is a *reference sample for Dapr + Radius portability*, not a product UI showcase
+   - The webapp is the **demo surface**, not the core output
+   - A framework adds pedagogical friction without advancing the platform story
+
+2. **Portability Claims**
+   - Current UI is hosted from `expense-api` at `/app` — same-origin, no CORS, no separate deployment
+   - A framework build step introduces Node.js tooling that some Kubernetes targets may not have
+   - **Vanilla JS runs anywhere .NET runs.** Framework-compiled output still runs anywhere, but the development and CI/CD path becomes environment-dependent
+
+3. **Operational Simplicity**
+   - No `npm install`, no build pipeline, no transpilation
+   - Developers can edit UI directly and reload; demos work from a checkout with just `dotnet run`
+   - Current code (567 lines) is **readable, traceable, and modifiable without framework knowledge**
+
+4. **The UI Is Already Polished**
+   - Semantic HTML + ARIA landmarks (accessible)
+   - CSS custom properties (themeable, maintainable)
+   - Live polling, error recovery, form validation
+   - Trace ID surfaces (Expense ID, Correlation ID)
+   - Workflow telemetry inline (state, decision source, runtime status)
+   - Demo-optimized flow (preset buttons, live stat cards, timeline visualization)
+   - **This is not basic.** It's *minimal* — intentionally small — but it's a grown-up demo surface.
+
+5. **Team Context**
+   - The UI is one of many deliverables (three backend services, Dapr bindings, Radius models, CI/CD, docs)
+   - No team member has specialized in frontend development; vanilla JS keeps skills portable
+   - Adding framework maintenance would dilute focus from the core Dapr and Radius story
+
+**Cost/Benefit Trade-Off:**
+
+| Benefit of Framework | Cost | Justification |
+|---|---|---|
+| Component reuse | UI is one page; no reuse needed | Not applicable |
+| Type safety | Some frameworks offer it; current code is small enough to verify by inspection | Not justified |
+| Smaller bundle | Frameworks are 12–25 KB; vanilla is 3 KB | Backward |
+| Build optimization | No benefit if not needed | Not applicable |
+| Dev ergonomics | Framework abstracts polling; vanilla is explicit, easier to teach | Trade-off favors vanilla for educational demo |
+
+**When to Reconsider:**
+
+Move to a framework **if and only if**:
+1. The UI becomes the **product** (not just the demo surface), and polish/features demand it
+2. Multiple page routes, complex navigation, or large component libraries are required
+3. The team wants to **decouple the UI into a separate SPA** with independent CI/CD, CORS, and deployment
+4. A new team member with strong framework experience joins and the codebase is ready to level up
+
+**None of these conditions are true today.**
+
+**Recommendation to Team:**
+- ✅ **Status quo:** Keep vanilla JS + CSS hosted from `expense-api`
+- ✅ **Continuous improvement:** Refactor for readability, add accessibility features, optimize polling as needed
+- ❌ **Framework migration:** Not justified; would add setup complexity without advancing the demo story
+- 🔄 **Revisit:** In Phase 8+ (if UI expands into product surface) or when team composition changes
+

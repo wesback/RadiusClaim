@@ -401,3 +401,10 @@ The current vanilla UI is already polished—semantic HTML, ARIA landmarks, CSS 
 **Decision File:** `.squad/decisions/inbox/daisy-framework-fit.md`
 
 **Key Learning:** Reference samples fail when they sprawl. The UI is not "basic"—it's *intentionally minimal*. Minimal + polished beats bloated + elaborate every time for teaching. Add a framework only when the UI genuinely demands it, not because it *might* become useful someday.
+
+## Team Input (2026-03-24)
+
+- **Camila (Frontend Dev)** conducted detailed framework research: React + Vite + TypeScript is the best long-term choice if the UI becomes a richer product surface
+- Rationale: Industry standard (70% job market), type safety, mature ecosystem, same-origin hosting possible, non-breaking migration path
+- **Implication for vanilla decision:** React path is now documented for future reference. Vanilla JS remains the correct choice for Phase 7 because the UI is the demo surface, not the product
+- **Status:** Framework analysis complete; both paths (vanilla now, React in future) are documented and approved
