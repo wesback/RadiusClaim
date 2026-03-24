@@ -309,6 +309,24 @@ The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys to Ku
 3. Add variables under the **Variables** tab
 4. Start with the [end-to-end setup walkthrough](./docs/end-to-end-setup-walkthrough.md) for the full operator flow, then use the [Kubernetes + Radius validation checklist](./docs/radius-validation-checklist.md) for preflight checks and troubleshooting
 
+**Create the service principal (one-time):**
+
+Scope it to the target resource group instead of the whole subscription.
+
+```bash
+export AZURE_RESOURCE_GROUP="radiusclaim-rg"
+export AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+
+az ad sp create-for-rbac \
+  --name "radiusclaim-github-actions" \
+  --role Contributor \
+  --scopes "/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP" \
+  --query '{clientId:appId,clientSecret:password,tenantId:tenant}' \
+  -o jsonc
+```
+
+Store the returned `clientId`, `clientSecret`, and `tenantId` as GitHub secrets named `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID`, and store `AZURE_SUBSCRIPTION_ID` as a GitHub secret too.
+
 ### Deployment Path: Kubernetes + Radius
 
 - Builds service images and pushes to GHCR (GitHub Container Registry)

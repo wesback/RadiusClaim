@@ -85,6 +85,26 @@ To verify in GitHub:
 3. Verify `RADIUS_KUBERNETES_CONTEXT` (optional) or leave unset to use current context
 4. Verify `RADIUS_KUBERNETES_NAMESPACE` (optional, defaults to `radiusclaim-azure`)
 
+If you have not created the workflow service principal yet, create a least-privilege one scoped to the target resource group:
+
+```bash
+export AZURE_RESOURCE_GROUP="radiusclaim-rg"
+export AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+
+az ad sp create-for-rbac \
+  --name "radiusclaim-github-actions" \
+  --role Contributor \
+  --scopes "/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP" \
+  --query '{clientId:appId,clientSecret:password,tenantId:tenant}' \
+  -o jsonc
+```
+
+Map the response to GitHub secrets as follows:
+- `clientId` → `AZURE_CLIENT_ID`
+- `clientSecret` → `AZURE_CLIENT_SECRET`
+- `tenantId` → `AZURE_TENANT_ID`
+- current subscription ID → `AZURE_SUBSCRIPTION_ID`
+
 ---
 
 ## Bicep Validation

@@ -397,7 +397,29 @@ The environment definition wires Dapr components to Azure backing services.
    - `RADIUS_KUBERNETES_CONTEXT` — kubectl context name (if not using current context)
    - `RADIUS_KUBERNETES_NAMESPACE` — Kubernetes namespace (default: `radiusclaim-azure`)
 
-2. **Trigger the Workflow:**
+2. **Create a Service Principal for the Workflow (one-time):**
+
+   Scope it to the target resource group so the workflow has least-privilege access for the Azure backing services it provisions.
+
+   ```bash
+   export AZURE_RESOURCE_GROUP="radiusclaim-rg"
+   export AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+
+   az ad sp create-for-rbac \
+     --name "radiusclaim-github-actions" \
+     --role Contributor \
+     --scopes "/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP" \
+     --query '{clientId:appId,clientSecret:password,tenantId:tenant}' \
+     -o jsonc
+   ```
+
+   Copy the returned values into these GitHub secrets:
+   - `AZURE_CLIENT_ID` ← `clientId`
+   - `AZURE_CLIENT_SECRET` ← `clientSecret`
+   - `AZURE_TENANT_ID` ← `tenantId`
+   - `AZURE_SUBSCRIPTION_ID` ← your Azure subscription ID
+
+3. **Trigger the Workflow:**
 
    ```bash
    # Push code to main branch OR manually trigger via GitHub UI
@@ -413,7 +435,7 @@ The environment definition wires Dapr components to Azure backing services.
    - Deploy the application model (`app.bicep`)
    - Validate the deployment
 
-3. **Check the Workflow Output:**
+4. **Check the Workflow Output:**
 
    The workflow logs will show:
    ```
