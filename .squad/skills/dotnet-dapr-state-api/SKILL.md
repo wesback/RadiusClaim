@@ -13,7 +13,7 @@ Use this when a Dapr-backed service needs a concrete CRUD-lite slice before work
 ## Patterns
 
 ### Shared key constants
-- Put component names and state key conventions in `CloudExpense.Contracts` (or the shared contracts assembly), not in service-local string literals.
+- Put component names and state key conventions in `RadiusClaim.Contracts` (or the shared contracts assembly), not in service-local string literals.
 - Use one prefix-based key for records (for example `expense:{expenseId}`) and one explicit index key for list views (for example `expense-index`).
 
 ### Record shape

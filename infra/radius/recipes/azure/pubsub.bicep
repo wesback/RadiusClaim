@@ -7,7 +7,7 @@ param context object
 param location string = resourceGroup().location
 
 @description('Service Bus namespace name for the Azure-backed Dapr pub/sub component.')
-param namespaceName string = 'cloudexpense-${take(uniqueString(context.resource.id, 'servicebus'), 18)}'
+param namespaceName string = 'radiusclaim-${take(uniqueString(context.resource.id, 'servicebus'), 18)}'
 
 @description('Topic used by the RadiusClaim notification flow.')
 param topicName string = 'expense-notifications'

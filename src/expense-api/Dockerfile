@@ -2,12 +2,12 @@ FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
 
-COPY CloudExpenseLite.slnx ./
+COPY RadiusClaim.slnx ./
 COPY global.json ./
 COPY src/expense-api/ExpenseApi.csproj src/expense-api/
 COPY src/workflow-engine/WorkflowEngine.csproj src/workflow-engine/
 COPY src/notification-svc/NotificationSvc.csproj src/notification-svc/
-COPY src/shared/CloudExpense.Contracts/CloudExpense.Contracts.csproj src/shared/CloudExpense.Contracts/
+COPY src/shared/RadiusClaim.Contracts/RadiusClaim.Contracts.csproj src/shared/RadiusClaim.Contracts/
 RUN dotnet restore src/expense-api/ExpenseApi.csproj --nologo
 
 COPY src ./src

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "11348716417502446987"
+      "templateHash": "14515608207457510191"
     }
   },
   "parameters": {
@@ -13,7 +13,7 @@
       "type": "string",
       "defaultValue": "azure",
       "metadata": {
-        "description": "Logical label for the ACA fallback bootstrap slice."
+        "description": "Logical label for the legacy ACA reference slice."
       }
     },
     "location": {
@@ -25,21 +25,21 @@
     },
     "containerAppsEnvironmentName": {
       "type": "string",
-      "defaultValue": "[format('cae-cloudexpense-{0}', parameters('environmentName'))]",
+      "defaultValue": "[format('cae-radiusclaim-{0}', parameters('environmentName'))]",
       "metadata": {
         "description": "Azure Container Apps managed environment name."
       }
     },
     "managedIdentityName": {
       "type": "string",
-      "defaultValue": "[format('id-cloudexpense-{0}', parameters('environmentName'))]",
+      "defaultValue": "[format('id-radiusclaim-{0}', parameters('environmentName'))]",
       "metadata": {
         "description": "User-assigned managed identity shared by the three Container Apps and Azure-backed Dapr components."
       }
     },
     "logAnalyticsWorkspaceName": {
       "type": "string",
-      "defaultValue": "[format('log-cloudexpense-{0}', parameters('environmentName'))]",
+      "defaultValue": "[format('log-radiusclaim-{0}', parameters('environmentName'))]",
       "metadata": {
         "description": "Log Analytics workspace name for ACA logs."
       }
@@ -448,7 +448,7 @@
     },
     "containerRegistryRepositoryPrefix": {
       "type": "string",
-      "value": "[format('{0}/cloudexpense-lite', reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), '2023-07-01').loginServer)]"
+      "value": "[format('{0}/radiusclaim', reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('acrName')), '2023-07-01').loginServer)]"
     },
     "containerAppsEnvironmentId": {
       "type": "string",
@@ -501,7 +501,7 @@
     "deploymentContract": {
       "type": "object",
       "value": {
-        "deploymentMode": "aca-fallback",
+        "deploymentMode": "legacy-aca-reference",
         "environmentName": "[parameters('environmentName')]",
         "externalIngressApp": "expense-api",
         "services": "[variables('serviceNames')]",
@@ -517,7 +517,8 @@
           "topic": "[parameters('notificationTopicName')]",
           "keyVault": "[parameters('keyVaultName')]"
         },
-        "validationGoal": "aca-fallback-e2e"
+        "portabilityNote": "Use azure-radius.bicep for the Kubernetes-first Radius path; this template remains Azure-specific because it provisions Azure Container Apps directly.",
+        "validationGoal": "manual-aca-reference"
       }
     }
   }

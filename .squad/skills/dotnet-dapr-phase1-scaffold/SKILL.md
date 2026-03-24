@@ -15,7 +15,7 @@ Use this when a repo needs the first backend slice of a Dapr-based sample withou
 ### Solution layout
 - Create one repo-level solution and pin the SDK with `global.json`.
 - Put runnable services in descriptive folders such as `src/expense-api`, `src/workflow-engine`, and `src/notification-svc`.
-- Put shared payloads in a separate class library such as `src/shared/CloudExpense.Contracts`.
+- Put shared payloads in a separate class library such as `src/shared/RadiusClaim.Contracts`.
 
 ### Dapr setup
 - Add `Dapr.AspNetCore` to web hosts that will participate in invocation or pub/sub.

@@ -1,22 +1,23 @@
-// Secondary Azure Container Apps fallback.
-// Radius does not currently expose ACA as a supported compute kind, so this file stays
-// limited to the Azure-specific bootstrap and direct ACA deployment path.
+// Legacy Azure Container Apps bootstrap retained as an Azure-specific reference.
+// Kubernetes-first deployments should use azure-radius.bicep against AKS, Arc-enabled
+// Kubernetes / Azure Local, or self-managed clusters. This template provisions ACA
+// directly and is not part of the primary portability story.
 targetScope = 'resourceGroup'
 
-@description('Logical label for the ACA fallback bootstrap slice.')
+@description('Logical label for the legacy ACA reference slice.')
 param environmentName string = 'azure'
 
 @description('Azure region for the Container Apps environment and backing resources.')
 param location string = resourceGroup().location
 
 @description('Azure Container Apps managed environment name.')
-param containerAppsEnvironmentName string = 'cae-cloudexpense-${environmentName}'
+param containerAppsEnvironmentName string = 'cae-radiusclaim-${environmentName}'
 
 @description('User-assigned managed identity shared by the three Container Apps and Azure-backed Dapr components.')
-param managedIdentityName string = 'id-cloudexpense-${environmentName}'
+param managedIdentityName string = 'id-radiusclaim-${environmentName}'
 
 @description('Log Analytics workspace name for ACA logs.')
-param logAnalyticsWorkspaceName string = 'log-cloudexpense-${environmentName}'
+param logAnalyticsWorkspaceName string = 'log-radiusclaim-${environmentName}'
 
 @description('Azure Container Registry name used for the service images.')
 param acrName string = toLower('ce${take(uniqueString(subscription().subscriptionId, resourceGroup().id, environmentName, 'acr'), 20)}')
@@ -328,7 +329,7 @@ resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04
 
 output containerRegistryId string = containerRegistry.id
 output containerRegistryLoginServer string = containerRegistry.properties.loginServer
-output containerRegistryRepositoryPrefix string = '${containerRegistry.properties.loginServer}/cloudexpense-lite'
+output containerRegistryRepositoryPrefix string = '${containerRegistry.properties.loginServer}/radiusclaim'
 output containerAppsEnvironmentId string = containerAppsEnvironment.id
 output containerAppsEnvironmentResourceName string = containerAppsEnvironment.name
 output workloadIdentityResourceId string = workloadIdentity.id
@@ -342,7 +343,7 @@ output notificationTopicResourceName string = notificationTopic.name
 output keyVaultId string = keyVault.id
 output keyVaultResourceName string = keyVault.name
 output deploymentContract object = {
-  deploymentMode: 'aca-fallback'
+  deploymentMode: 'legacy-aca-reference'
   environmentName: environmentName
   externalIngressApp: 'expense-api'
   services: serviceNames
@@ -358,5 +359,6 @@ output deploymentContract object = {
     topic: notificationTopic.name
     keyVault: keyVault.name
   }
-  validationGoal: 'aca-fallback-e2e'
+  portabilityNote: 'Use azure-radius.bicep for the Kubernetes-first Radius path; this template remains Azure-specific because it provisions Azure Container Apps directly.'
+  validationGoal: 'manual-aca-reference'
 }

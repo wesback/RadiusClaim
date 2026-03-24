@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RadiusClaim — Expense Flow Console</title>
+    <meta
+        name="description"
+        content="A polished RadiusClaim web UI for submitting expenses, tracking workflow status, and demoing Dapr plus Radius outcomes." />
+    <link rel="stylesheet" href="/app/styles.css">
+</head>
+<body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+    <div class="shell">
+        <header class="hero">
+            <div class="hero__copy">
+                <p class="eyebrow">RadiusClaim / web console</p>
+                <h1>Make the portability story feel inevitable.</h1>
+                <p class="hero__lede">
+                    Submit a new expense, watch the workflow decide, and keep the whole journey legible from one clean surface.
+                </p>
+                <div class="hero__actions">
+                    <a class="button button--primary" href="#submit-expense">Submit an expense</a>
+                    <button class="button button--ghost" type="button" data-refresh>Refresh live data</button>
+                </div>
+                <dl class="hero__facts" aria-label="Product facts">
+                    <div>
+                        <dt>Fast path</dt>
+                        <dd>Expenses under $100 auto-approve.</dd>
+                    </div>
+                    <div>
+                        <dt>Visible hold</dt>
+                        <dd>$100 and above stay human-readable as manual review.</dd>
+                    </div>
+                    <div>
+                        <dt>Trace chain</dt>
+                        <dd>Expense ID and correlation ID stay visible across the UI.</dd>
+                    </div>
+                </dl>
+            </div>
+
+            <aside class="hero__panel glass">
+                <p class="hero__panel-label">Demo rhythm</p>
+                <ol class="flow-list">
+                    <li>Submit a $50 claim and watch it move toward reimbursement.</li>
+                    <li>Submit a $150 claim and watch the workflow hold for manual review.</li>
+                    <li>Use the activity board to explain what Dapr and Radius are making possible.</li>
+                </ol>
+                <div class="status-pulse" id="connection-state" role="status" aria-live="polite">
+                    Checking the API surface…
+                </div>
+            </aside>
+        </header>
+
+        <main id="main-content" class="layout">
+            <section class="panel glass" id="submit-expense" aria-labelledby="submit-heading">
+                <div class="panel__header">
+                    <div>
+                        <p class="section-label">Submit expense</p>
+                        <h2 id="submit-heading">Launch a fresh workflow</h2>
+                    </div>
+                    <div class="chip-row" aria-label="Demo presets">
+                        <button class="chip" type="button" data-preset="auto">Preset $50</button>
+                        <button class="chip" type="button" data-preset="manual">Preset $150</button>
+                    </div>
+                </div>
+
+                <form id="expense-form" class="expense-form" novalidate>
+                    <div class="field-grid">
+                        <label class="field">
+                            <span>Employee ID</span>
+                            <input id="employee-id" name="employeeId" autocomplete="off" maxlength="64" placeholder="emp-demo-001" required>
+                        </label>
+                        <label class="field">
+                            <span>Amount</span>
+                            <input id="amount" name="amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="50.00" required>
+                        </label>
+                        <label class="field">
+                            <span>Currency</span>
+                            <input id="currency" name="currency" autocomplete="off" maxlength="3" placeholder="USD" value="USD" required>
+                        </label>
+                        <label class="field">
+                            <span>Description</span>
+                            <input id="description" name="description" autocomplete="off" maxlength="200" placeholder="Office supplies" required>
+                        </label>
+                    </div>
+
+                    <div class="form-meta">
+                        <p class="hint">Tip: keep the employee ID distinct during demos so the list reads like a narrative.</p>
+                        <button class="button button--primary" type="submit" id="submit-button">Submit expense</button>
+                    </div>
+                    <div id="form-feedback" class="feedback" role="status" aria-live="polite"></div>
+                </form>
+            </section>
+
+            <section class="panel panel--summary" aria-labelledby="summary-heading">
+                <div class="panel__header">
+                    <div>
+                        <p class="section-label">Live board</p>
+                        <h2 id="summary-heading">Workflow outcomes at a glance</h2>
+                    </div>
+                </div>
+                <div class="stat-grid" id="stat-grid" aria-live="polite"></div>
+            </section>
+
+            <section class="panel glass activity-panel" aria-labelledby="history-heading">
+                <div class="panel__header">
+                    <div>
+                        <p class="section-label">History</p>
+                        <h2 id="history-heading">Recent expense activity</h2>
+                    </div>
+                    <button class="button button--ghost" type="button" data-refresh>Refresh list</button>
+                </div>
+                <div id="expense-history" class="history-list" aria-live="polite"></div>
+            </section>
+
+            <section class="detail-column">
+                <article class="panel glass detail-panel" aria-labelledby="detail-heading">
+                    <div class="panel__header">
+                        <div>
+                            <p class="section-label">Selected expense</p>
+                            <h2 id="detail-heading">Detail & traceability</h2>
+                        </div>
+                    </div>
+                    <div id="expense-detail" class="detail-card" aria-live="polite"></div>
+                </article>
+
+                <article class="panel glass detail-panel" aria-labelledby="workflow-heading">
+                    <div class="panel__header">
+                        <div>
+                            <p class="section-label">Workflow telemetry</p>
+                            <h2 id="workflow-heading">What the orchestration is doing</h2>
+                        </div>
+                    </div>
+                    <div id="workflow-detail" class="workflow-card" aria-live="polite"></div>
+                </article>
+            </section>
+        </main>
+    </div>
+
+    <noscript>
+        <div class="noscript">RadiusClaim’s web UI needs JavaScript enabled.</div>
+    </noscript>
+    <script type="module" src="/app/app.js"></script>
+</body>
+</html>

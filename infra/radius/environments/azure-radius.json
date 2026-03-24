@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "108307180162498294"
+      "templateHash": "3769207197916501222"
     }
   },
   "parameters": {
@@ -14,14 +14,14 @@
       "type": "string",
       "defaultValue": "azure",
       "metadata": {
-        "description": "Radius environment name for the Azure-backed deployment slice."
+        "description": "Radius environment name for the Azure-backed Kubernetes deployment slice."
       }
     },
     "kubernetesNamespace": {
       "type": "string",
-      "defaultValue": "cloudexpense-lite-azure",
+      "defaultValue": "radiusclaim-azure",
       "metadata": {
-        "description": "Kubernetes namespace used by the Radius-managed Azure slice."
+        "description": "Kubernetes namespace used by the Radius-managed Azure slice across AKS, Arc-enabled / Azure Local, or self-managed clusters."
       }
     },
     "azureProviderScope": {
@@ -106,8 +106,13 @@
           "pubsub": "azure-servicebus-pubsub",
           "secretStore": "azure-keyvault-secrets"
         },
-        "portabilityNote": "Radius remains the service wiring authority; Azure-specific work stays in recipes and provider scope.",
-        "acaGap": "Radius does not currently expose Azure Container Apps as a compute kind, so ACA stays on the fallback path."
+        "portabilityNote": "Radius remains the service wiring authority across AKS, Arc-enabled Kubernetes / Azure Local, and self-managed Kubernetes clusters; Azure-specific work stays in recipes and provider scope.",
+        "kubernetesTargets": [
+          "aks",
+          "arc-enabled",
+          "self-managed"
+        ],
+        "azureSpecificityNote": "Backing services in this environment still come from Azure Blob Storage, Service Bus, and Key Vault recipes."
       }
     }
   }

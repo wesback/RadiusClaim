@@ -226,3 +226,46 @@ Phase 2: Extend README with "Local Development" section (setup commands, local e
 
 Team communication moving forward should reference the sample as "RadiusClaim" in all public-facing materials (demos, talks, blogs, external sharing).
 
+
+## 2026-03-24: Deployment Narrative Pivot — Kubernetes-First with Honest Azure Backing Services
+
+### Delivered
+
+**Reframed all deployment-related documentation from ACA-fallback narrative to Kubernetes-first, with honest backing-service scoping:**
+
+1. **README.md Updates (Deployment sections)**
+   - Changed opening tagline from "deployed on Azure Container Apps" to "deployed on Kubernetes with Azure backing services"
+   - Rewrote "Deployment Story" section to lead with Kubernetes + Radius as primary, with AKS as concrete example
+   - Removed ACA fallback path references entirely
+   - Clarified portability scope: app code is portable, deployment model is portable, backing services are tied to recipes (Azure recipes = Azure services)
+   - Listed supported targets: AKS, Arc-enabled Kubernetes, self-managed Kubernetes
+   - Updated deployment secrets/variables table to reflect Kubernetes-only configuration
+   - Updated footer status to reflect "Kubernetes-first deployment via Radius; Azure backing services"
+
+2. **ADR-0001 Complete Reframe (Kubernetes-First Deployment Strategy)**
+   - Renamed from "Azure CLI Fallback Path" to "Kubernetes-First Deployment Strategy with Azure Backing Services"
+   - Rewrote Problem section to explain portability enabled by (1) Dapr abstractions, (2) Radius recipes, (3) environment definitions
+   - Removed ACA fallback path documentation entirely
+   - Rewrote Roadmap to focus on enabling other clouds via Radius recipes (AWS, GCP)
+   - Updated Application Code Impact to emphasize environment agnosticism
+
+3. **Demo Walkthrough, Phase 7 Validation, Radius Validation, Scripts README**
+   - Updated all references from ACA logs to Kubernetes logs (kubectl)
+   - Added port-forward examples for local access
+   - Simplified single-path deployment narrative
+
+### Key Messaging Shifts
+
+**Old:** "Radius-first (default) vs. ACA fallback"  
+**New:** "Kubernetes-first with Radius; AKS is the primary example; recipes enable other clouds"
+
+**Portability clarity:**
+- ✅ App code, deployment model, compute (any K8s + Radius)
+- ⚠️ Backing services tied to recipes (currently Azure; future: AWS/GCP recipes)
+
+### Pattern Captures
+
+**Backing-service honesty:** Don't claim full portability if recipes are cloud-specific. Separate compute portability from service portability.
+
+**Recipes as the portability lever:** Instead of dual deployment paths, frame recipes as the future mechanism for multi-cloud support.
+

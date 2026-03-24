@@ -1,6 +1,8 @@
 using RadiusClaim.Contracts;
 using Dapr.Client;
 using System.Net.Http;
+using System.Net;
+using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,6 +15,7 @@ builder.Services.AddDaprClient();
 
 var app = builder.Build();
 
+app.UseStaticFiles();
 app.UseCloudEvents();
 
 var expenses = app.MapGroup("/expenses");
@@ -94,6 +97,36 @@ expenses.MapPost("/", async (ExpenseSubmission submission, DaprClient daprClient
     };
 });
 
+expenses.MapGet("/{id}/workflow", async (
+    string id,
+    DaprClient daprClient,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(id))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["id"] = ["Expense id is required."]
+        });
+    }
+
+    var normalizedId = id.Trim();
+    var record = await daprClient.GetStateAsync<ExpenseRecord>(
+        RadiusClaimDapr.Components.StateStore,
+        RadiusClaimDapr.StateKeys.Expense(normalizedId),
+        consistencyMode: ConsistencyMode.Strong,
+        cancellationToken: cancellationToken);
+
+    if (record is null)
+    {
+        return Results.NotFound();
+    }
+
+    var workflowSnapshot = await GetExpenseWorkflowSnapshotAsync(record, logger, cancellationToken);
+    return Results.Ok(workflowSnapshot);
+});
+
 expenses.MapGet("/{id}", async (string id, DaprClient daprClient, CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(id))
@@ -133,6 +166,7 @@ expenses.MapGet("/", async (DaprClient daprClient, CancellationToken cancellatio
     return Results.Ok(records.Where(record => record is not null).ToArray());
 });
 
+app.MapGet("/app", () => Results.Redirect("/app/index.html"));
 app.MapGet("/", () => TypedResults.Ok(new ServiceDescriptor(
     RadiusClaimDapr.AppIds.ExpenseApi,
     "phase-3",
@@ -356,6 +390,111 @@ static async Task TryStartExpenseWorkflowAsync(
     }
 }
 
+static async Task<ExpenseWorkflowSnapshot> GetExpenseWorkflowSnapshotAsync(
+    ExpenseRecord record,
+    ILogger logger,
+    CancellationToken cancellationToken)
+{
+    try
+    {
+        using var workflowClient = DaprClient.CreateInvokeHttpClient(RadiusClaimDapr.AppIds.WorkflowEngine);
+        var workflowStatus = await workflowClient.GetFromJsonAsync<ExpenseWorkflowStatus>(
+            $"workflows/{Uri.EscapeDataString(record.CorrelationId)}",
+            cancellationToken);
+
+        return workflowStatus is null
+            ? CreatePendingWorkflowSnapshot(record)
+            : ToExpenseWorkflowSnapshot(record, workflowStatus);
+    }
+    catch (HttpRequestException ex) when (!cancellationToken.IsCancellationRequested && ex.StatusCode == HttpStatusCode.NotFound)
+    {
+        return CreatePendingWorkflowSnapshot(record);
+    }
+    catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+    {
+        logger.LogWarning(
+            ex,
+            "Workflow details for expense '{ExpenseId}' are temporarily unavailable.",
+            record.ExpenseId);
+
+        return CreateUnavailableWorkflowSnapshot(record);
+    }
+}
+
+static ExpenseWorkflowSnapshot ToExpenseWorkflowSnapshot(
+    ExpenseRecord record,
+    ExpenseWorkflowStatus workflowStatus)
+{
+    var finalStatus = workflowStatus.Output?.FinalStatus;
+    var summary = finalStatus switch
+    {
+        ExpenseStatus.Reimbursed => "Reimbursement completed and the workflow is closed.",
+        ExpenseStatus.ManualReviewRequested => "The amount crossed the threshold and is waiting on a human decision.",
+        ExpenseStatus.Approved => "The expense is approved and moving toward reimbursement.",
+        ExpenseStatus.Rejected => "The workflow completed with a rejection outcome.",
+        _ when workflowStatus.IsRunning => "The workflow is actively moving this expense through validation and decisioning.",
+        _ when string.Equals(workflowStatus.RuntimeStatus, "Pending", StringComparison.OrdinalIgnoreCase) => "The workflow has been scheduled and is waiting to run.",
+        _ => "Workflow telemetry is available for this expense."
+    };
+
+    return new ExpenseWorkflowSnapshot(
+        record.ExpenseId,
+        record.CorrelationId,
+        workflowStatus.InstanceId,
+        workflowStatus.IsCompleted ? "Completed" : workflowStatus.IsRunning ? "Running" : workflowStatus.RuntimeStatus,
+        summary,
+        workflowStatus.RuntimeStatus,
+        workflowStatus.Progress?.Step,
+        workflowStatus.Output?.DecisionSource,
+        finalStatus,
+        workflowStatus.Output?.NotificationEventType,
+        workflowStatus.IsCompleted,
+        workflowStatus.IsRunning,
+        workflowStatus.CreatedAtUtc,
+        workflowStatus.LastUpdatedAtUtc,
+        workflowStatus.FailureDetails);
+}
+
+static ExpenseWorkflowSnapshot CreatePendingWorkflowSnapshot(ExpenseRecord record)
+{
+    return new ExpenseWorkflowSnapshot(
+        record.ExpenseId,
+        record.CorrelationId,
+        record.CorrelationId,
+        "Pending",
+        "The workflow is still spinning up. Refresh again in a moment.",
+        "Pending",
+        "Queued",
+        null,
+        null,
+        null,
+        false,
+        false,
+        null,
+        null,
+        null);
+}
+
+static ExpenseWorkflowSnapshot CreateUnavailableWorkflowSnapshot(ExpenseRecord record)
+{
+    return new ExpenseWorkflowSnapshot(
+        record.ExpenseId,
+        record.CorrelationId,
+        record.CorrelationId,
+        "Unavailable",
+        "Workflow telemetry is temporarily unavailable, but the expense record is still accessible.",
+        null,
+        null,
+        null,
+        null,
+        null,
+        false,
+        false,
+        null,
+        null,
+        null);
+}
+
 internal sealed record ServiceDescriptor(
     string Service,
     string Phase,
@@ -381,5 +520,50 @@ internal enum ExpenseCreateResult
     AlreadyExists,
     NotPersisted
 }
+
+internal sealed record ExpenseWorkflowStatus(
+    string InstanceId,
+    string Workflow,
+    string? ExpenseId,
+    string CorrelationId,
+    string RuntimeStatus,
+    bool IsRunning,
+    bool IsCompleted,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset LastUpdatedAtUtc,
+    ExpenseWorkflowProgress? Progress,
+    ExpenseWorkflowResult? Output,
+    ExpenseSubmission? Input,
+    string? FailureDetails);
+
+internal sealed record ExpenseWorkflowProgress(
+    string ExpenseId,
+    string CorrelationId,
+    ExpenseStatus Status,
+    string Step);
+
+internal sealed record ExpenseWorkflowResult(
+    string ExpenseId,
+    string CorrelationId,
+    ExpenseStatus FinalStatus,
+    NotificationEventType NotificationEventType,
+    string DecisionSource);
+
+internal sealed record ExpenseWorkflowSnapshot(
+    string ExpenseId,
+    string CorrelationId,
+    string InstanceId,
+    string State,
+    string Summary,
+    string? RuntimeStatus,
+    string? CurrentStep,
+    string? DecisionSource,
+    ExpenseStatus? FinalStatus,
+    NotificationEventType? NotificationEventType,
+    bool IsCompleted,
+    bool IsRunning,
+    DateTimeOffset? CreatedAtUtc,
+    DateTimeOffset? LastUpdatedAtUtc,
+    string? FailureDetails);
 
 public partial class Program;

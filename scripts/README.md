@@ -8,7 +8,7 @@ This directory contains operational and validation scripts for RadiusClaim.
 
 ### `validate-deployment.sh`
 
-**Purpose:** End-to-end validation script for deployed RadiusClaim instances.
+**Purpose:** End-to-end validation script for deployed RadiusClaim instances on Kubernetes.
 
 **What it validates:**
 - API health endpoint accessibility
@@ -22,15 +22,24 @@ This directory contains operational and validation scripts for RadiusClaim.
 ./scripts/validate-deployment.sh <expense-api-base-url>
 ```
 
-**Example:**
+**Example (local port-forward for Kubernetes):**
 ```bash
-./scripts/validate-deployment.sh https://expense-api--my-rg.azurecontainerapps.io
+# Set up port-forward to expense-api
+kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
+
+# Run validation against the forwarded port
+./scripts/validate-deployment.sh http://127.0.0.1:8080
+```
+
+**Example (if expense-api has external ingress):**
+```bash
+./scripts/validate-deployment.sh https://expense-api.example.com
 ```
 
 **Prerequisites:**
 - `jq` installed (JSON processing)
 - `curl` installed (HTTP requests)
-- RadiusClaim deployed and accessible
+- RadiusClaim deployed to Kubernetes and accessible (either via port-forward or external ingress)
 
 **Output:**
 - Colored pass/fail indicators for each check
@@ -85,8 +94,9 @@ When adding scripts to this directory:
 
 The `validate-deployment.sh` script logic is integrated into `.github/workflows/deploy-azure.yml`:
 - Run automatically after every deployment
-- Reuses the same flow validation for both Radius-first and ACA fallback paths
-- Uses platform-specific evidence collection after the shared script (`kubectl port-forward` + `kubectl logs` for Radius, ACA ingress + `az containerapp logs` for fallback)
+- Reuses the same flow validation for the Kubernetes-first Radius path
+- Uses `kubectl port-forward` plus `kubectl logs` after the shared script so the workflow stays valid across AKS, Arc-enabled / Azure Local, and self-managed Kubernetes clusters that meet Radius prerequisites
+- Keeps the portability story honest: compute is Kubernetes-portable, but the current backing-service recipes remain Azure-specific
 - Fails the workflow if validation does not pass
 
 ### Phase Gates
@@ -102,8 +112,8 @@ Validation scripts support phase gate approvals:
 
 ### Script hangs during status polling
 
-**Cause:** Workflow may be slow to start or services not running  
-**Solution:** Check service health with `az containerapp list`, increase wait timeout if needed
+**Cause:** Service may be slow to start or networking issue  
+**Solution:** Check workload health with `kubectl get deploy,pods -n <namespace>` and increase wait timeout if needed
 
 ### jq not found
 
@@ -116,15 +126,15 @@ Validation scripts support phase gate approvals:
 ### curl: Failed to connect
 
 **Cause:** Incorrect URL or service not accessible  
-**Solution:** Verify the expense-api FQDN, check firewall rules, confirm service is running
+**Solution:** Verify the expense-api URL or `kubectl port-forward` session, check cluster networking rules, and confirm the service is running
 
 ### All checks fail with "Failed to reach health endpoint"
 
 **Cause:** Service not deployed or networking issue  
 **Solution:** 
-1. Verify deployment completed: `az containerapp show --name expense-api --resource-group <rg>`
-2. Check ingress configuration: Ensure expense-api has external ingress enabled
-3. Test health endpoint manually: `curl https://<fqdn>/healthz`
+1. Verify deployment completed: `kubectl get deployment expense-api -n <namespace>`
+2. Check service exposure: `kubectl get svc expense-api -n <namespace>` and port-forward if needed
+3. Test health endpoint manually: `curl http://127.0.0.1:8080/healthz` (or your cluster-specific URL)
 
 ---
 

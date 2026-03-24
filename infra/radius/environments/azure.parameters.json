@@ -9,13 +9,13 @@
       "value": "eastus"
     },
     "containerAppsEnvironmentName": {
-      "value": "cae-cloudexpense-azure"
+      "value": "cae-radiusclaim-azure"
     },
     "managedIdentityName": {
-      "value": "id-cloudexpense-azure"
+      "value": "id-radiusclaim-azure"
     },
     "logAnalyticsWorkspaceName": {
-      "value": "log-cloudexpense-azure"
+      "value": "log-radiusclaim-azure"
     }
   }
 }

@@ -1,7 +1,7 @@
-# Radius Deployment Validation Checklist
+# Kubernetes + Radius Deployment Validation Checklist
 
-> **Purpose:** Pre-deployment validation and troubleshooting guide for the Radius-first path  
-> **Audience:** Platform engineers deploying via `rad deploy`  
+> **Purpose:** Pre-deployment validation and troubleshooting guide for Kubernetes + Radius deployment  
+> **Audience:** Platform engineers deploying via `rad deploy` to Kubernetes (AKS or any K8s with Dapr and Radius)  
 > **Scope:** Phase 7 validation requirements
 
 ---
@@ -59,14 +59,13 @@ For CI/CD deployment, verify these are configured:
 **Required Secrets:**
 ```bash
 # AZURE_SUBSCRIPTION_ID (also a variable for clarity)
-# RADIUS_KUBECONFIG (base64-encoded kubeconfig file)
+# RADIUS_KUBECONFIG (raw kubeconfig content for the Kubernetes cluster with Radius)
 ```
 
 **Required Variables:**
 ```bash
-# AZURE_LOCATION (e.g., eastus, westus2)
-# AZURE_RESOURCE_GROUP (e.g., radiusclaim-rg)
-# AZURE_DEPLOYMENT_MODE (default: radius-first)
+# AZURE_LOCATION (e.g., eastus, westus2) — for Azure backing services
+# AZURE_RESOURCE_GROUP (e.g., radiusclaim-rg) — for Azure backing services
 ```
 
 **Optional Variables:**
@@ -78,7 +77,8 @@ For CI/CD deployment, verify these are configured:
 To verify in GitHub:
 1. Navigate to repository **Settings** → **Secrets and variables** → **Actions**
 2. Check that all required secrets and variables are present
-3. Verify `AZURE_DEPLOYMENT_MODE` is set to `radius-first` (or left unset to use the default)
+3. Verify `RADIUS_KUBERNETES_CONTEXT` (optional) or leave unset to use current context
+4. Verify `RADIUS_KUBERNETES_NAMESPACE` (optional, defaults to `radiusclaim-azure`)
 
 ---
 
@@ -150,8 +150,8 @@ rad workspace create kubernetes <workspace-name> --context <kubectl-context>
 rad workspace switch <workspace-name>
 
 # Create Radius group if needed
-rad group create cloudexpense -w <workspace-name>
-rad group switch cloudexpense -w <workspace-name>
+rad group create radiusclaim -w <workspace-name>
+rad group switch radiusclaim -w <workspace-name>
 ```
 
 ---
@@ -417,7 +417,7 @@ Phase 7 Radius validation is **complete** when:
 - ✅ Kubernetes pods reach Running state
 - ✅ Dapr components are registered in the namespace
 - ✅ Azure backing resources exist in the target resource group
-- ✅ `deploy-radius` CI job reuses `scripts/validate-deployment.sh` via `kubectl port-forward` and checks `notification-svc` logs with `kubectl`
+- ✅ `deploy-kubernetes` CI job reuses `scripts/validate-deployment.sh` via `kubectl port-forward` and checks `notification-svc` logs with `kubectl`
 - ✅ Either:
   - **Option A:** End-to-end demo validation completes ($50 auto-approve, $150 manual-review)
   - **Option B:** Live environment unavailable → validation checklist documented with clear gap explanation

@@ -1,10 +1,10 @@
 extension radius
 
-@description('Radius environment name for the Azure-backed deployment slice.')
+@description('Radius environment name for the Azure-backed Kubernetes deployment slice.')
 param environmentName string = 'azure'
 
-@description('Kubernetes namespace used by the Radius-managed Azure slice.')
-param kubernetesNamespace string = 'cloudexpense-lite-azure'
+@description('Kubernetes namespace used by the Radius-managed Azure slice across AKS, Arc-enabled / Azure Local, or self-managed clusters.')
+param kubernetesNamespace string = 'radiusclaim-azure'
 
 @description('Azure resource group scope used by the Radius Azure provider and recipes.')
 param azureProviderScope string
@@ -67,6 +67,11 @@ output environmentModel object = {
     pubsub: 'azure-servicebus-pubsub'
     secretStore: 'azure-keyvault-secrets'
   }
-  portabilityNote: 'Radius remains the service wiring authority; Azure-specific work stays in recipes and provider scope.'
-  acaGap: 'Radius does not currently expose Azure Container Apps as a compute kind, so ACA stays on the fallback path.'
+  portabilityNote: 'Radius remains the service wiring authority across AKS, Arc-enabled Kubernetes / Azure Local, and self-managed Kubernetes clusters; Azure-specific work stays in recipes and provider scope.'
+  kubernetesTargets: [
+    'aks'
+    'arc-enabled'
+    'self-managed'
+  ]
+  azureSpecificityNote: 'Backing services in this environment still come from Azure Blob Storage, Service Bus, and Key Vault recipes.'
 }

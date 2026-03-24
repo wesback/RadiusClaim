@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "15919046346474345429"
+      "templateHash": "15061394944901731255"
     }
   },
   "parameters": {
@@ -73,7 +73,7 @@
     "servicePort": 8080,
     "stateStoreAccountName": "[toLower(format('ce{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'statestore'), 20)))]",
     "stateStoreContainerName": "expense-state",
-    "pubsubNamespaceName": "[format('cloudexpense-{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'pubsub'), 18))]",
+    "pubsubNamespaceName": "[format('radiusclaim-{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'pubsub'), 18))]",
     "notificationTopicName": "expense-notifications",
     "secretVaultName": "[format('ce-{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'platform-secrets'), 20))]",
     "stateStoreBacking": "[parameters('daprBackings').stateStore]",

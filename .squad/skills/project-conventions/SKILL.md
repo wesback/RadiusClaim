@@ -8,7 +8,7 @@ source: "graham-phase1"
 
 ## Context
 
-CloudExpense Lite is a small reference sample that demonstrates Dapr portability and Radius platform wiring with Azure Container Apps as the first deployment target.
+RadiusClaim is a small reference sample that demonstrates Dapr portability and Radius platform wiring with Kubernetes-first deployment, using AKS as the managed Azure example.
 
 ## Patterns
 
@@ -28,10 +28,11 @@ CloudExpense Lite is a small reference sample that demonstrates Dapr portability
 
 ### Azure Targeting
 
-- Treat Azure Container Apps as the intended runtime target in parameters and deployment conventions.
+- Treat Radius-managed Kubernetes as the intended runtime target in parameters and deployment conventions.
+- Use AKS as the managed Azure example, while keeping Arc-enabled Kubernetes / Azure Local and self-managed clusters in frame when Radius prerequisites are met.
 - Keep application code cloud-agnostic by wiring state, pub/sub, and secrets through Dapr component connections instead of direct Azure SDK dependencies.
-- Defer Azure-specific backing resource implementation into recipes rather than embedding it in the app model.
-- Keep Dapr component names consistent between `CloudExpenseDapr` constants, Radius resources, and local overlays (`statestore`, `pubsub`) so environment changes do not leak into app code.
+- Defer Azure-specific backing resource implementation into recipes rather than embedding it in the app model, and say so plainly instead of implying full cloud agnosticism.
+- Keep Dapr component names consistent between `RadiusClaimDapr` constants, Radius resources, and local overlays (`statestore`, `pubsub`) so environment changes do not leak into app code.
 
 ### Validation
 

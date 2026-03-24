@@ -19,8 +19,8 @@ Before running Phase 7 validation, ensure:
 - [ ] All Phases 1–6 are complete and approved
 - [ ] Application code builds without errors or warnings
 - [ ] Radius models parse cleanly (`az bicep build` passes)
-- [ ] Deployment is live (either Radius-first or ACA fallback)
-- [ ] expense-api is accessible via public endpoint or local `kubectl port-forward`
+- [ ] Deployment is live on Kubernetes (AKS or any K8s with Dapr and Radius)
+- [ ] expense-api is accessible via port-forward or external ingress
 
 ---
 
@@ -41,11 +41,12 @@ Phase 7 supports **three validation levels**:
 
 **How to run:**
 ```bash
-# Public endpoint
-./scripts/validate-deployment.sh https://<expense-api-fqdn>
-
-# Or via a local port-forward for Radius-first deployments
+# Via local port-forward (if no external ingress)
+kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
 ./scripts/validate-deployment.sh http://127.0.0.1:8080
+
+# Or with external ingress
+./scripts/validate-deployment.sh https://expense-api.example.com
 ```
 
 **Expected result:**
@@ -67,7 +68,7 @@ Phase 7 supports **three validation levels**:
 **What it validates:**
 - Same checks as the standalone script
 - Integrated into deployment pipeline
-- Validates both Radius-first and ACA fallback paths
+- Validates Kubernetes + Radius deployment path
 - Checks notification-svc logs for pub/sub evidence
 
 **Trigger:** Runs automatically on every deployment
@@ -91,7 +92,7 @@ Phase 7 supports **three validation levels**:
 - Follow the step-by-step guide
 - Submit $50 and $150 expenses manually via curl
 - Poll for status transitions
-- Check Azure Container Apps logs for notification events
+- Check Kubernetes logs for notification events with `kubectl logs -n radiusclaim-azure -l app=notification-svc`
 
 **Expected result:**
 - Both flows complete as documented
@@ -162,7 +163,7 @@ The following are **out of scope** for Phase 7 and do not block approval:
 - **Notification log delay:** Logs may take 10–20 seconds to appear (this is normal for pub/sub propagation)
 - **No real notification delivery:** Sample logs notifications instead of sending email/Slack/Teams (by design)
 - **No automated integration test suite:** Script-based validation is sufficient for this phase
-- **No multi-cloud validation:** Sample targets Azure only (Dapr code is portable, but only Azure deployment is tested)
+- **No multi-cloud validation:** Sample targets Azure backing services; Dapr code is portable and can run anywhere Kubernetes + Radius + recipes are available
 
 ---
 

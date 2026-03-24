@@ -3,7 +3,7 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "containerRegistry": {
-      "value": "ghcr.io/sovereignapp/cloudexpense-lite"
+      "value": "ghcr.io/sovereignapp/radiusclaim"
     },
     "imageTag": {
       "value": "dev"

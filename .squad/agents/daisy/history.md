@@ -324,3 +324,39 @@ Conducted comprehensive final review of all Phase 7 deliverables:
 **Commit:** be860d1 — "Rename app from CloudExpense to RadiusClaim: update C# namespaces, projects, and Bicep descriptions"
 
 **Key Learning:** Renaming in a growing codebase requires clear boundaries between "branding/identity" (safe to rename for clarity) and "contracts/stability" (preserve to protect ecosystem). Dapr component names are contracts; C# namespaces are identity. Kept them separate.
+
+### 2026-03-24: Architectural Review—AKS vs ACA Portability
+
+**Query:** "Would using AKS instead of ACA make the portability story easier or better?"
+
+**Analysis:** The Radius-first path already uses Kubernetes. Portability is delivered by Dapr (app) + Radius (infrastructure), not by compute choice. Switching to AKS would not improve portability and would significantly harm accessibility (K8s setup burden, operational complexity, 10-minute demo target).
+
+**Key Insights:**
+- Portability is orthogonal to compute: whether it's ACA, AKS, local, or anything else, the app uses Dapr abstractions
+- ACA is actually *stronger* for demonstrating portability—it proves the app runs on a managed platform without Kubernetes expertise
+- The current design teaches three lessons cleanly: (1) Dapr makes apps portable, (2) Radius makes wiring portable, (3) platform choice is a decision, not a constraint
+- AKS would paradoxically *undermine* portability narrative by tying it to Kubernetes—the very infrastructure teams adopt platforms to avoid
+
+**Recommendation:** **Keep ACA fallback. Do not switch to AKS.** The fallback widens audience access, supports the 10-minute demo goal, and keeps the teaching story intact. Accessibility is a feature, not a limitation.
+
+**Decision File:** `.squad/decisions/inbox/daisy-aks-portability.md`
+
+**Key Learning:** Portability and accessibility are distinct concerns. A truly portable sample should be *accessible* to teams without Kubernetes infrastructure. ACA achieves both; AKS would sacrifice accessibility for perceived "completeness" that doesn't actually improve portability. Lead's role: protect scope and narrative clarity against scope creep that harms the teaching story.
+
+### 2026-03-24: Kubernetes-First Framing Approved (Overrides Previous ACA Assessment)
+
+- **Decision file:** `.squad/decisions/inbox/daisy-k8s-portability-framing.md`
+- **Supersedes:** `daisy-aks-portability.md` and `graham-aks-portability-analysis.md`
+- Wesley explicitly prioritized portability over accessibility, requesting ACA demotion and K8s-first narrative.
+- The Radius-first path already targets Kubernetes (`compute.kind: 'kubernetes'`); the shift is narrative/framing, not new infrastructure.
+- **Arc-enabled AKS / Azure Local benefit most:** They are K8s clusters with Azure connectivity, so Radius + Azure recipes work unchanged. Reframing makes the repo discoverable to those teams.
+- **Self-managed K8s caveat:** Azure recipes still need Azure connectivity; non-Azure recipes (Redis, RabbitMQ) are not yet shipped. The portability claim is honest for Azure-connected K8s but aspirational for disconnected clusters.
+- **ACA fallback survives** but is demoted from "the Azure story" to "managed alternative."
+- **Follow-up required:** README, ADR-0001, demo walkthrough, validation checklist, and Bicep outputs all need updated framing. Uncommitted workflow edits (rename + deployment_mode propagation) must be preserved exactly.
+- **Key learning:** When the user explicitly reweights a tradeoff (portability > accessibility), the lead should reassess rather than defend the prior recommendation. Previous analysis was correct in its context but not under the new priority.
+
+### 2026-03-24: Final leftover wording cleanup after Kubernetes-first rewrite
+
+- Verified the known target files in current state before editing instead of trusting earlier summaries; several suspected leftovers had already been fixed by Graham and were left untouched.
+- Cleaned the remaining active-repo `cloudexpense` residue in local Docker, Radius dev defaults, GHCR parameter files, and Service Bus namespace defaults without broad platform rewrites.
+- Aligned the docs with the current workflow by removing the stale `deployment_mode=radius-first` reference, renaming the CI job mention to `deploy-kubernetes`, and documenting `RADIUS_KUBECONFIG` as raw kubeconfig content because the workflow writes it directly to the kubeconfig file.

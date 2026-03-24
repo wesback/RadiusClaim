@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "7822043181257348770"
+      "templateHash": "18164425618400435802"
     }
   },
   "parameters": {
@@ -19,7 +19,7 @@
     },
     "kubernetesNamespace": {
       "type": "string",
-      "defaultValue": "cloudexpense-lite-dev",
+      "defaultValue": "radiusclaim-dev",
       "metadata": {
         "description": "Kubernetes namespace used for the local Radius development slice."
       }

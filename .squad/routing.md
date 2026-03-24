@@ -7,6 +7,7 @@ How to decide who handles what.
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
 | Architecture, scope, reviewer gates | Daisy | Service boundaries, trade-offs, design review, sequencing |
+| Frontend UX and web UI | Camila | UI architecture, design systems, pages, component polish, accessibility |
 | Dapr application code | Billy | Minimal APIs, workflows, service invocation, state, pub/sub |
 | Backend consistency and API reliability | Rory | Concurrency fixes, state consistency, failure-path cleanup |
 | Backend transactions and compensation | Simone | Failure-path compensation, atomicity fixes, truthful write semantics |
@@ -26,6 +27,7 @@ How to decide who handles what.
 |-------|--------|-----|
 | `squad` | Triage the issue, evaluate @copilot fit, assign `squad:{member}` label | Daisy |
 | `squad:daisy` | Own architecture, sequencing, or review-heavy issue work | Daisy |
+| `squad:camila` | Own frontend UI, interaction design, and browser experience work | Camila |
 | `squad:billy` | Implement service logic and Dapr-facing application code | Billy |
 | `squad:rory` | Handle backend reliability fixes, consistency bugs, and safe API revisions | Rory |
 | `squad:simone` | Handle transaction, compensation, and truthful failure-path revisions | Simone |

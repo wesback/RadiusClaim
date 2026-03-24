@@ -4,7 +4,7 @@ extension radius
 param environmentName string = 'dev'
 
 @description('Kubernetes namespace used for the local Radius development slice.')
-param kubernetesNamespace string = 'cloudexpense-lite-dev'
+param kubernetesNamespace string = 'radiusclaim-dev'
 
 @description('Azure provider scope used by recipe-backed resources.')
 param azureProviderScope string = resourceGroup().id

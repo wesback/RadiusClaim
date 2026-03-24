@@ -1,6 +1,6 @@
 ---
 name: "radius-first-aca-fallback"
-description: "Pattern for making Radius the primary deployment contract while keeping an honest ACA fallback"
+description: "Historical pattern for making Radius primary while keeping an honest ACA fallback"
 domain: "platform"
 confidence: "high"
 source: "graham-earned"
@@ -8,7 +8,7 @@ source: "graham-earned"
 
 ## Context
 
-Use this when a repo wants a credible Radius-first deployment story on Azure, but Radius does not yet support the desired Azure compute target directly.
+Use this only when a repo still needs an explicit Azure Container Apps escape hatch because Radius cannot express the required compute target directly. RadiusClaim has since moved to a Kubernetes-first path; prefer the Kubernetes portability skill for current work.
 
 ## Patterns
 
@@ -34,8 +34,8 @@ Use this when a repo wants a credible Radius-first deployment story on Azure, bu
 
 - `az bicep build --file infra/radius/app.bicep`
 - `az bicep build --file infra/radius/environments/azure-radius.bicep`
-- `dotnet build CloudExpenseLite.slnx --nologo`
-- `dotnet test CloudExpenseLite.slnx --nologo --no-build`
+- `dotnet build RadiusClaim.slnx --nologo`
+- `dotnet test RadiusClaim.slnx --nologo --no-build`
 
 ## Anti-Patterns
 

@@ -1,5 +1,5 @@
 ---
-last_updated: 2026-03-23T17:50:00Z
+last_updated: 2026-03-24T10:02:50Z
 ---
 
 # Graham History
@@ -141,6 +141,27 @@ Kept the Radius-first story intact while making validation requirements explicit
 - Validation checklists become more valuable when they include troubleshooting steps and known gaps — they tell the next team what's normal vs. what's broken.
 - The "Additional Documentation" section in README acts as a navigation hub for deeper content without bloating the main README — keeps the ten-minute story accessible while making validation/ADR discoverable.
 
+## AKS vs. ACA Portability Analysis (2026-03-24)
+
+### Decision
+Recommended: **Stay on Radius-first + ACA fallback. Do not add AKS as a dual-path option or replace ACA with AKS.**
+
+### Rationale
+- **Portability is already strong.** Dapr (app layer) is cloud-agnostic; Radius (platform layer) is environment-agnostic. Adding AKS would not improve portability — it would fragment the deployment narrative.
+- **Radius already targets Kubernetes.** An AKS fallback would be redundant with the Radius-first path (both target Kubernetes).
+- **ACA is a legitimate Azure option.** Teams with "cloud = Azure" and "no Kubernetes ops" constraints need the ACA path. Removing it would deny them a valid deployment model.
+- **Maintenance cost is real.** Three deployment paths require three infrastructure templates, three CI/CD jobs, and three validation tracks. The gain is zero (app code unchanged, portability unchanged).
+- **The narrative matters.** Current story is clear: "Dapr keeps app portable, Radius keeps platform portable, ACA fallback is explicit because Radius lacks ACA support." Adding AKS would make teams ask "which path should I use?" instead of understanding the design.
+
+### Key Insight
+Portability is achieved through **layers** (Dapr + Radius + recipes), not through **options** (Radius vs. AKS vs. ACA). The app doesn't care which path deploys it because both paths wire the same Dapr components with the same names. Adding a third path doesn't strengthen that; it weakens the narrative by suggesting portability is about having choices, when it's actually about having **abstraction layers that survive platform changes**.
+
+### Learnings
+- **Portability through abstraction beats portability through options.** The strength of this repo is that app code + Dapr component names are stable across **all** paths — not because you can choose paths, but because the layers below services are abstracted.
+- **Maintain path parity, not path options.** If you have multiple deployment targets, the criterion for adding another path should be "solves a real gap" (ACA gap = Radius missing ACA), not "another cloud we want to support" (AKS = Kubernetes we already have).
+- **Document why each fallback exists.** The ACA fallback is strong because ADR-0001 explicitly states why it exists. If paths multiply without clear justification, teams won't know which one to use.
+- **Watch the Radius roadmap, not the Kubernetes roadmap.** Clean migration happens when Radius adds ACA support (fallback disappears). Adding AKS would bet on Kubernetes being the right decision, but Radius is already betting on Kubernetes; the bet to watch is whether Radius will cover ACA.
+
 ## Initial Publish to GitHub (2026-03-24)
 
 ### Work Completed
@@ -261,3 +282,85 @@ Accidental Copilot CLI artifacts get a narrowly scoped ignore rule rather than b
 - When an artifact gets tracked unintentionally in the initial publish, follow up with a clean, well-documented commit that explains the context — it's better than leaving the debt or rewriting history.
 - `.gitignore` rules should be specific enough to communicate intent (e.g., "Copilot CLI artifacts") but focused enough to avoid silencing real signal about unexpected files.
 - Even internal cleanup commits benefit from clear commit messages that explain why the artifact existed and why the fix is deliberate — it tells the next team that the state wasn't an oversight.
+
+## Workflow Parser Error Fixes (2026-03-24)
+
+### Issue
+
+GitHub Actions parser rejected `.github/workflows/deploy-azure.yml`:
+- **Line 65:** `if: ${{ env.DEPLOYMENT_MODE == 'radius-first' }}` — GitHub Actions disallows `env.*` in conditional expressions
+- **Line 261:** `if: ${{ env.DEPLOYMENT_MODE == 'aca-fallback' }}` — Same issue
+- **Stale references:** CloudExpenseLite.slnx and cloudexpense-lite image prefix from old project naming
+
+### Solution
+
+**Workflow structure fix:**
+1. Added `deployment_mode` as a job output from the `validate` job
+2. Updated `deploy-radius` job conditional to use `needs.validate.outputs.deployment_mode == 'radius-first'`
+3. Updated `deploy-aca-fallback` job conditional to use `needs.validate.outputs.deployment_mode == 'aca-fallback'`
+
+**Project rename cleanup:**
+1. Updated watch paths: `CloudExpenseLite.slnx` → `RadiusClaim.slnx` (line 20)
+2. Updated dotnet commands: all three refs to CloudExpenseLite.slnx → RadiusClaim.slnx (lines 52-54)
+3. Updated container image prefix: `cloudexpense-lite` → `radiusclaim` (line 59)
+4. Updated default Kubernetes namespace: `cloudexpense-lite-azure` → `radiusclaim-azure` (line 78)
+
+### Validation
+
+- ✅ YAML syntax valid (Python yaml.safe_load)
+- ✅ All job conditionals use valid `needs.*` expressions (no bare `env.*`)
+- ✅ validate job has `deployment_mode` output
+- ✅ Both deploy jobs reference the output correctly
+- ✅ Squad workflows (squad-heartbeat.yml, squad-issue-assign.yml, squad-triage.yml, sync-squad-labels.yml) are clean and valid
+- ✅ No remaining CloudExpenseLite references in any workflow file
+
+### Parser Error Resolution
+
+The two GitHub parser errors are resolved:
+- Line ~65: Parser now accepts valid job-output reference instead of rejecting `env.*`
+- Line ~261: Parser now accepts valid job-output reference instead of rejecting `env.*`
+
+### Side Effects
+
+None. The changes are:
+- Safe: job outputs are the intended way to pass values between jobs in GitHub Actions
+- Scoped: only the deploy-azure.yml and the specific conditional lines
+- Compatible: the DEPLOYMENT_MODE env variable is still computed in the validate job and passed to the output; existing logic unchanged
+- Non-breaking: squad workflows unaffected
+
+### Learnings
+
+- GitHub Actions job conditionals can reference `needs.<job>.<output>` but not `env.*` directly. For multi-job workflows where a step computes a decision value, expose it as a job output and reference it from downstream jobs.
+- When a project rename occurs, watch paths in CI/CD are a common source of drift; sweep workflows for both the old solution name and any image/namespace prefixes built from it.
+
+## Kubernetes-First Workflow Finish (2026-03-24)
+
+### Work Completed
+
+- Finalized `.github/workflows/deploy-azure.yml` as a single Kubernetes-first deployment path and added early validation for supported `kubernetes_target` values (`aks`, `arc-enabled`, `self-managed`).
+- Kept `infra/radius/environments/azure-radius.bicep` and `infra/radius/environments/azure-radius.json` as the authoritative Radius environment contract for Azure-backed Kubernetes deployments.
+- Preserved `infra/radius/environments/azure.bicep` and `infra/radius/environments/azure.json` only as clearly labeled legacy ACA reference artifacts so the Azure-specific escape hatch does not masquerade as the primary story.
+- Validated the workflow and environment models with YAML parsing, `az bicep build`, `dotnet build`, and `dotnet test`.
+
+## Learnings
+
+- When the platform story is truly Kubernetes-first, the remaining workflow switch should select the Kubernetes target profile, not revive a second deployment mode.
+- Be explicit about the split between portable compute and cloud-specific backings: this sample now treats Kubernetes as the runtime contract while honestly naming Azure Blob Storage, Service Bus, and Key Vault as the current Dapr backing services.
+- Preserve in-progress workflow edits and tighten them incrementally; for platform work, finishing the narrative cleanly is usually safer than restarting the workflow from scratch.
+- Key files for this pattern: `.github/workflows/deploy-azure.yml`, `infra/radius/environments/azure-radius.bicep`, `infra/radius/environments/azure-radius.json`, `infra/radius/environments/azure.bicep`, and `infra/radius/environments/azure.json`.
+
+## Kubernetes-first Portability Pivot (2026-03-24)
+
+### Work Completed
+- Removed ACA fallback branching from `.github/workflows/deploy-azure.yml`; the workflow now deploys RadiusClaim to Kubernetes only.
+- Reframed the workflow and Radius environment model around AKS as the managed Azure example, while explicitly calling out Arc-enabled Kubernetes / Azure Local and self-managed clusters.
+- Updated `infra/radius/environments/azure-radius.bicep` and `infra/radius/environments/azure-radius.parameters.json` to use `radiusclaim-azure` defaults and an honest portability note.
+- Demoted `infra/radius/environments/azure.bicep` to a legacy ACA reference template instead of an active deployment path.
+- Updated `scripts/README.md` and squad skills so the portability story stays teachable and explicit about Azure-specific backing services.
+
+### Learnings
+- When portability becomes the priority, removing a secondary runtime branch is cleaner than renaming it; the workflow should tell one Kubernetes-first story and let differences live in environment prerequisites, not CI branching.
+- AKS works as the managed Azure example, but the architecture claim should stay at the Kubernetes layer: Arc-enabled Kubernetes / Azure Local and self-managed clusters are valid where Radius can reach the cluster.
+- Compute portability and backing-service portability are separate promises; call out Blob Storage, Service Bus, and Key Vault as Azure-specific even when compute stays portable.
+- User preference: prefer Kubernetes-first framing over ACA fallback framing, even when the older ACA path still functions.
+- Key files for this pivot: `.github/workflows/deploy-azure.yml`, `infra/radius/environments/azure-radius.bicep`, `infra/radius/environments/azure-radius.parameters.json`, `infra/radius/environments/azure.bicep`, and `scripts/README.md`.

@@ -8,9 +8,17 @@
 
 ## Prerequisites
 
-- RadiusClaim is deployed to Azure Container Apps (either via Radius-first or ACA fallback)
-- `expense-api` is accessible via its public FQDN
-- `notification-svc` is running and logging to Azure Container Apps console
+- RadiusClaim is deployed to a Kubernetes cluster (AKS as the primary example, or any K8s with Dapr and Radius)
+- `expense-api` is accessible via port-forward or ingress endpoint
+- `notification-svc` is running and logging to Kubernetes logs (visible via `kubectl logs`)
+
+### Optional visual path
+
+If you want to run the same demo in a browser, open `https://<expense-api-fqdn>/app`.
+
+- The hosted UI submits the same `POST /expenses` requests as the curl examples below
+- It also shows recent expense history, correlation IDs, and workflow telemetry in one place
+- This is useful for live demos where you want the RadiusClaim story to feel more product-like without changing the backend flow
 
 ---
 
@@ -72,13 +80,20 @@ Each status change happens asynchronously as the workflow progresses through act
 
 ### Step 3: Observe the notification
 
-Check the `notification-svc` logs in Azure Container Apps:
+Check the `notification-svc` logs in Kubernetes:
 
 ```bash
-az containerapp logs show \
-  --name notification-svc \
-  --resource-group <your-resource-group> \
-  --tail 100
+kubectl logs -n radiusclaim-azure -l app=notification-svc --tail=100
+```
+
+Or if using a port-forward to the service:
+
+```bash
+# In another terminal, set up port-forward if needed
+kubectl port-forward -n radiusclaim-azure svc/notification-svc 8081:80 &
+
+# Then observe logs
+kubectl logs -n radiusclaim-azure -l app=notification-svc --tail=100
 ```
 
 **Expected log output (contains):**
@@ -146,10 +161,7 @@ curl https://<expense-api-fqdn>/expenses/exp-<uuid2>
 Check the `notification-svc` logs:
 
 ```bash
-az containerapp logs show \
-  --name notification-svc \
-  --resource-group <your-resource-group> \
-  --tail 100
+kubectl logs -n radiusclaim-azure -l app=notification-svc --tail=100
 ```
 
 **Expected log output (contains):**

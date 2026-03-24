@@ -7,6 +7,42 @@
 **What:** The app has been renamed to `RadiusClaim`. Use `RadiusClaim` as the project/app name going forward.
 **Why:** User request — captured for team memory.
 
+### 2026-03-24: Namespace and Project Renaming (CloudExpense → RadiusClaim)
+**By:** Daisy (Lead)
+**Status:** APPROVED — implemented
+**What:** Renamed all user-facing references to RadiusClaim: C# namespaces (`RadiusClaim.Contracts`, `RadiusClaimDapr`), solution file (`RadiusClaim.slnx`), Bicep descriptions, and documentation.
+**What Was Preserved:** Dapr component names (`statestore`, `pubsub`), app IDs (`expense-api`, `workflow-engine`, `notification-svc`), workflow IDs, and squad history — all preserved for portability and transparency.
+**Why:** C# namespaces are user-facing in examples and IDE navigation. Renaming them improves discoverability while keeping Dapr components stable across deployment paths (local K8s, Radius, Azure Container Apps). Squad history remains to document the CloudExpense Lite origin and decision journey.
+**Validation:** Build passing, Dapr constants intact, all three deployment paths reference identical component names, zero breaking changes to runtime behavior.
+
+### 2026-03-24: User-Facing Documentation and Example Rename Sweep
+**By:** Eddie (Backend Dev)
+**Status:** COMPLETE
+**What:** Updated 8 user-facing files (README.md, docs/*.md, scripts/*.sh, infra/*.json) to reference RadiusClaim instead of CloudExpense Lite.
+**Why:** Repository is branded RadiusClaim; documentation and examples must be consistent to avoid confusion in demos, talks, and external sharing.
+**Evidence:** Zero remaining CloudExpense references in user-visible materials; all validation checklist examples, script descriptions, and prerequisites narratives now reference RadiusClaim.
+
+### 2026-03-24: .gitignore Housekeeping — Standard .NET and IDE Exclusions
+**By:** Graham (Platform Dev)
+**Status:** Applied
+**What:** Updated `.gitignore` to exclude conventional .NET build outputs (bin/, obj/, *.exe, *.dll, *.pdb), IDE files (.vs/, .vscode/, *.user, .idea/), NuGet artifacts, test coverage, and OS files.
+**Why:** Keeps `git status` clean and prevents accidental commits of per-machine settings and build-time outputs. Aligns with .NET ecosystem best practices while preserving all `.squad/` rules.
+**Impact:** Cleaner working tree, reduced PR noise, consistent team experience across IDEs (VS Code, Visual Studio, Rider).
+
+### 2026-03-24: Initial RadiusClaim GitHub Publish Strategy
+**By:** Graham (Platform Dev)
+**Status:** Documented and executed
+**What:** Established `git@github.com:wesback/RadiusClaim.git` with a narrative-driven initial commit (e342a4c) that captures platform intent from phases 2–7, includes 45+ tracked build artifact cleanup, and configures SSH origin with upstream tracking.
+**Why:** Platform story (Radius application model, Dapr deterministic wiring, local dev setup, Azure recipes) required multiple phases. Initial commit message preserves that intent for incoming teams. Artifact cleanup signals that .gitignore now enforces clean status. SSH origin aligns with team workflow.
+**Implications:** Incoming developers see deliberate architecture in the initial commit message. .gitignore cleanup is baked in; PRs won't accumulate build noise. Radius-first deployment is the authoritative story in CI/CD.
+
+### 2026-03-24: Repository Hygiene — Accidental Artifact Cleanup Protocol
+**By:** Graham (Platform Dev)
+**Status:** Decided and implemented
+**What:** Remove accidentally tracked `.commit-msg` (Copilot CLI artifact) via normal follow-up commit (0635795), not history rewrite. Add precision `.commit-msg` rule to `.gitignore` to prevent recurrence.
+**Why:** Preserves audit trail (normal commits document deliberate cleanup better than rewriting history). Prevents recurrence with a focused rule, not a broad wildcard. Commit message explains both artifact origin and deliberate prevention for future teams.
+**Learnings:** When accidental artifacts reach the initial publish, a clean, documented follow-up commit is stronger than pretending it doesn't exist. Name the `.gitignore` rule after the artifact category (e.g., "Copilot CLI artifacts") so intent is clear.
+
 ### 2026-03-23: CloudExpense Lite is the reference sample
 **By:** Wesley Backelant (captured by Squad)
 **What:** Build `CloudExpense Lite`, a small, reference-quality expense filing sample that demonstrates Dapr and Radius together through an employee submit → validate → approve/deny → reimburse → notify flow.

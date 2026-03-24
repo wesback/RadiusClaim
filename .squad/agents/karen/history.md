@@ -247,3 +247,11 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - Captures honest assessment: kubeconfig unreachable, DNS resolution fails, no discoverable resources
 - Establishes closure standard: need working kubeconfig + deployed Radius environment OR live expense-api HTTPS URL
 - Committed as reference for future environment setup requirements
+
+### 2026-03-24: Kubernetes-first portability update review
+
+- Re-ran fresh structural evidence instead of trusting the story: workflow YAML parses, `dotnet restore/build/test` passes, `bash -n scripts/validate-deployment.sh` passes, and the Radius Bicep files still build.
+- The update is **not ready for commit/push yet** because docs and workflow drift in ways users will feel: README still mentions `deployment_mode=radius-first`, the validation checklist still says `deploy-radius` and `cloudexpense`, the demo walkthrough troubleshooting still uses `az containerapp`, and the ADR still says “both paths exist.”
+- `RADIUS_KUBECONFIG` is documented as base64-encoded, but the workflow writes it straight to the kubeconfig file without decoding. Either the docs or the workflow must change before anyone can trust the setup instructions.
+- Live Kubernetes execution is still unproven from this environment; the remaining honest closure step is a real workflow run (or equivalent manual run) against a reachable Radius-enabled cluster.
+- Generated `bin/`, `obj/`, and Bicep-emitted `.json` changes from validation were side effects only and were reverted after the checks.

@@ -27,6 +27,13 @@
       "selected_at": "2026-03-23T14:47:13.578Z",
       "repository": "sovereignapp",
       "notes": "Added Warren as a backend write-path specialist after user-approved escalation for the Phase 2 deadlock."
+    },
+    {
+      "assignment_id": "radiusclaim-20260324-camila",
+      "universe": "Daisy Jones & The Six",
+      "selected_at": "2026-03-24T10:03:48.053Z",
+      "repository": "RadiusClaim",
+      "notes": "Added Camila as the frontend specialist to design and build a modern web UI for RadiusClaim."
     }
   ],
   "assignment_cast_snapshots": {
@@ -37,6 +44,10 @@
         {
           "name": "Daisy",
           "role": "Lead"
+        },
+        {
+          "name": "Camila",
+          "role": "Frontend Dev"
         },
         {
           "name": "Billy",

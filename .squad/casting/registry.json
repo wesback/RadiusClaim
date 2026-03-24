@@ -8,6 +8,14 @@
       "status": "active",
       "role": "Lead"
     },
+    "camila": {
+      "persistent_name": "Camila",
+      "universe": "Daisy Jones & The Six",
+      "created_at": "2026-03-24T10:03:48.053Z",
+      "legacy_named": false,
+      "status": "active",
+      "role": "Frontend Dev"
+    },
     "billy": {
       "persistent_name": "Billy",
       "universe": "Daisy Jones & The Six",

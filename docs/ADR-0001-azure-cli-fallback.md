@@ -1,52 +1,54 @@
-# ADR-0001: Azure CLI Fallback Path for Container Apps Deployment
+# ADR-0001: Kubernetes-First Deployment Strategy with Azure Backing Services
 
 > **Date:** 2026-03-24  
 > **Status:** ACCEPTED  
 > **Context:** GitHub Actions workflow deployment strategy  
-> **Decision Drivers:** Radius maturity gap, operational necessity, honest roadmap
+> **Decision Drivers:** Portability-first, cloud-agnostic Radius, honest backing-service scope
 
 ---
 
 ## Summary
 
-The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) offers two deployment paths:
+The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys RadiusClaim to **Kubernetes with Dapr and Radius** as the primary path. The sample uses **Azure Kubernetes Service (AKS)** as the concrete example, with Azure backing services (Blob Storage, Service Bus, Key Vault).
 
-1. **Radius-first (default):** Deploys via `rad deploy` against `infra/radius/app.bicep` and `infra/radius/environments/azure-radius.bicep`
-2. **Azure CLI fallback:** Deploys directly to Azure Container Apps via `az deployment` and `az containerapp` commands
-
-This ADR documents **why the fallback exists today**, **what Radius covers now**, and **what must change for the fallback to disappear**.
+This ADR documents:
+1. **Why Kubernetes + Radius is the primary path**
+2. **What makes the app portable and what doesn't**
+3. **What Azure backing services mean for portability**
+4. **How other clouds and self-managed Kubernetes fit in**
 
 ---
 
 ## Problem
 
-**RadiusClaim aims to demonstrate Radius as the primary deployment contract.** Radius provides a portable, environment-agnostic application model that works across Kubernetes clusters and cloud platforms.
+**RadiusClaim demonstrates Dapr + Radius portability:** The same app code should run on any Kubernetes cluster with Dapr and Radius, regardless of the backing services.
 
-**However, Radius does not currently expose Azure Container Apps as a supported compute kind.** The Radius roadmap treats ACA support as a future enhancement. This creates a gap:
+**Azure backing services are the only cloud-specific part:** The sample uses Azure Blob Storage (state store), Azure Service Bus (pub/sub), and Azure Key Vault (secrets) because those are the concrete examples in the Radius recipes. But the app code itself is cloud-agnostic.
 
-- **Radius can model services, Dapr components, and connections** (as shown in `infra/radius/app.bicep`)
-- **Radius cannot directly provision or manage Azure Container Apps containers**
+**Portability is enabled by:**
+1. **Dapr abstractions** — state, pub/sub, service invocation, workflows are decoupled from infrastructure
+2. **Radius recipes** — define which backing services are used; recipes can be swapped without changing app code
+3. **Environment definitions** — `azure-radius.bicep` uses Azure recipes; future environments could use other clouds
 
-This leaves two options:
-
-1. **Abandon the Azure-on-ACA demonstration** and only show deployment to Kubernetes + Radius
-2. **Keep an honest fallback path** that handles the ACA gap while remaining transparent about why it exists
-
-We chose option 2.
+**The honest scoping:**
+- ✅ **Compute is portable:** Kubernetes (AKS, Arc, self-managed) all work the same
+- ✅ **Dapr components are portable:** Same component names and interfaces across all environments
+- ✅ **App code is portable:** Uses only Dapr APIs, no Azure-specific code
+- ❌ **Backing services are tied to recipes:** Azure recipes provide Azure services; AWS/GCP recipes would provide their equivalents
 
 ---
 
 ## Decision
 
-**The GitHub Actions workflow includes both a Radius-first path and an ACA-fallback path.**
+**The GitHub Actions workflow deploys to Kubernetes via Radius as the primary (and only) path.**
 
-### Radius-First Path (`.github/workflows/deploy-azure.yml`, `deployment_mode=radius-first`)
+### Primary Path: Kubernetes + Radius with Azure Example
 
 **What happens:**
 1. Builds service Docker images
 2. Pushes images to GHCR (GitHub Container Registry)
-3. Runs `rad deploy infra/radius/environments/azure-radius.bicep` to configure the Radius Azure environment
-4. Runs `rad deploy infra/radius/app.bicep` to deploy the application model
+3. Runs `rad deploy infra/radius/environments/azure-radius.bicep` to configure the Radius Azure environment (authenticates to Azure subscription, sets up provider)
+4. Runs `rad deploy infra/radius/app.bicep` to deploy the application model to the Kubernetes cluster
 
 **What Radius provides:**
 - Service topology (three containers: expense-api, workflow-engine, notification-svc)
@@ -56,100 +58,70 @@ We chose option 2.
 - Dapr sidecar injection
 - Azure backing resource provisioning via recipes (Blob Storage, Service Bus, Key Vault)
 
-**What Radius does NOT provide:**
-- Direct Azure Container Apps provisioning
-- ACA scaling policies, traffic splitting, or managed identity configuration
-- ACA-specific ingress or networking setup
+**Where it runs:**
+- **AKS (Azure Kubernetes Service)** — the primary example in this sample
+- **Arc-enabled Kubernetes** — on-premises or multi-cloud K8s with Radius control plane and Azure recipes
+- **Self-managed Kubernetes** — any K8s cluster with Dapr and Radius control plane; can use Azure recipes if Azure access is available, or custom recipes for other backings
 
 **Who should use this path:**
-- Teams with a Kubernetes cluster and Radius installed
-- Teams prioritizing application portability over "zero Kubernetes" operations
-- Demonstrations of Radius as a platform-agnostic deployment model
+- Teams with a Kubernetes cluster and Radius installed (or planning to install it)
+- Teams prioritizing application portability across environments
+- Demonstrations of Dapr + Radius portability patterns
 
 ---
 
-### ACA Fallback Path (`.github/workflows/deploy-azure.yml`, `deployment_mode=aca-fallback`)
+## Current Coverage (Phase 7 Status)
 
-**What happens:**
-1. Builds service Docker images
-2. Pushes images to Azure Container Registry (ACR)
-3. Runs `az deployment group create infra/radius/environments/azure.bicep` to provision:
-   - Resource group
-   - Azure Container Registry
-   - Container Apps environment
-   - Azure Blob Storage (state store)
-   - Azure Service Bus (pub/sub)
-   - Azure Key Vault (secrets)
-4. Runs `az containerapp create/update` to deploy each service with:
-   - Dapr sidecar configuration
-   - Managed identity bindings
-   - Health probes
-   - Ingress routing (external for expense-api, internal for workflow-engine, none for notification-svc)
-   - Container resources (CPU, memory)
-
-**What this path provides:**
-- Fully Azure-managed deployment (no Kubernetes required)
-- Direct Azure Container Apps support
-- Azure-specific features (managed identity, Traffic Manager, Azure Monitor integration)
-- Faster provisioning for teams without Kubernetes infrastructure
-
-**What this path loses:**
-- Portability — this is Azure-specific and cannot easily move to another cloud
-- Declarative application model — Azure-specific Bicep and CLI commands must be maintained separately
-- Dapr component abstraction — services still use Dapr APIs, but the backing infrastructure is hard-coded to Azure
-
-**Who should use this path:**
-- Teams with "cloud = Azure" as a strategic decision
-- Teams who want managed services without operating Kubernetes
-- Proof-of-concept or testing scenarios where portability is not a priority
+| Concern | Kubernetes + Radius |
+|---------|---------------------|
+| **Compute** | ✅ Any Kubernetes (AKS, Arc, self-managed) |
+| **Service topology** | ✅ Declarative (app.bicep) |
+| **Dapr components** | ✅ Declarative (app.bicep) |
+| **Azure backing resources** | ✅ Recipes (azure/*.bicep) |
+| **Connection/wiring** | ✅ Declarative (app.bicep links) |
+| **App code portability** | ✅ Yes (Dapr APIs only) |
+| **Deployment model portability** | ✅ Yes (Radius recipes define environment) |
+| **Backing services portability** | ⚠️ Tied to recipe choice (Azure recipes = Azure services; future AWS/GCP recipes = equivalents) |
+| **Kubernetes required** | ✅ Yes |
+| **Container registry** | GHCR (or any OCI registry) |
 
 ---
 
-## Current Coverage (Phase 6 Status)
+## Why Kubernetes-First?
 
-| Concern | Radius-First | ACA Fallback |
-|---------|--------------|--------------|
-| **Service topology** | ✅ Declarative (app.bicep) | ⚠️ CLI scripted (az containerapp) |
-| **Dapr components** | ✅ Declarative (app.bicep) | ✅ CLI provisioned (azure.bicep) |
-| **Azure backing resources** | ✅ Recipes (azure/*.bicep) | ✅ Direct ARM (azure.bicep) |
-| **Connection/wiring** | ✅ Declarative (app.bicep links) | ⚠️ Manual (environment setup) |
-| **Portability** | ✅ Yes (Radius + recipes + Dapr) | ❌ No (Azure-specific) |
-| **Kubernetes required** | ✅ Yes | ❌ No |
-| **GHCR or ACR** | GHCR | ACR |
-| **Environment parity** | ✅ Recipes define consistency | ⚠️ Must match manually |
+1. **Radius is Kubernetes-native.** Radius control planes run on Kubernetes; Kubernetes is the primary deployment target.
+2. **AKS is the concrete example.** This sample demonstrates Azure backing services with Kubernetes, not as a Kubernetes alternative.
+3. **Portability starts at compute.** Once Kubernetes is the baseline, any K8s cluster (AKS, Arc, self-managed) works the same way.
+4. **Recipes enable cloud variety.** Different recipe implementations can target different clouds without changing the app model or deployment narrative.
+5. **Honesty about scope.** Backing services are tied to recipes; that's transparent and correct.
 
 ---
 
-## Why Both Paths Today?
+## Roadmap: Enabling Other Clouds
 
-1. **Radius gap is real.** Radius genuinely does not support ACA today, and that gap affects real teams.
-2. **Azure is the target.** The sample aims to show Azure Container Apps as the primary example; keeping Radius-only would miss that audience.
-3. **Honesty is credible.** Labeling the fallback clearly (not hiding it as the "production path") teaches teams about platform readiness.
-4. **Workflow investment is small.** Maintaining both paths is ~150 lines of YAML; the cost is acceptable for the benefit.
+**Kubernetes + Radius is the deployment model.** To support other clouds, we need Radius recipes for those clouds.
 
----
+### Option A: AWS Recipes (DynamoDB, SQS, Secrets Manager)
 
-## Roadmap: When the Fallback Can Disappear
+If Radius recipes for AWS are created, the app model in `infra/radius/app.bicep` and the deployment workflow remain unchanged. Only the environment definition switches:
+- Deploy to EKS (or any K8s on AWS) with `aws-radius.bicep` environment
+- Radius recipes provision AWS backing services instead of Azure
 
-**The ACA fallback path can be removed when any of these occur:**
+**No app code changes. No Dapr component names changes.**
 
-### Option A: Radius Adds ACA Support
+### Option B: GCP Recipes (Firestore, Pub/Sub, Secret Manager)
 
-If the Radius project adds Azure Container Apps as a supported compute kind, the app model in `infra/radius/app.bicep` could target ACA directly. No app code or Dapr component names need to change.
+Similar to AWS: same app model, new environment definition with GCP recipes, deploy to GKE or any K8s on GCP.
 
-**Timeline:** Unknown (Radius roadmap item, not committed)
+### Option C: Hybrid Multi-Cloud
 
-### Option B: ACA Supports the Kubernetes API
+Teams can define multiple environments in the Radius model:
+- `azure-radius.bicep` for AKS deployments
+- `aws-radius.bicep` for EKS deployments
+- `gcp-radius.bicep` for GKE deployments
+- `self-managed.bicep` for on-premises or private Kubernetes
 
-If Azure Container Apps gains first-class Kubernetes API compatibility, the Radius-first path could deploy directly to ACA without the separate Azure provider and recipes.
-
-**Timeline:** Unknown (Azure roadmap)
-
-### Option C: Alternate Platform Emerges
-
-If an alternate platform (e.g., Nomad, Cloud Foundry, OpenShift) becomes the strategic choice, the workflow could swap the ACA fallback for that platform's deployment path.
-
-**Timeline:** Dependent on organizational strategy
+Deploy the same app to any cloud by choosing the target environment.
 
 ---
 
@@ -167,24 +139,24 @@ While both paths exist, they must satisfy:
 
 ## Application Code Impact
 
-**None.** The application code is agnostic to which deployment path is used:
+**None.** The application code is agnostic to which deployment target is used:
 
 - All three services use Dapr APIs for state, pub/sub, secrets, and service invocation
-- Service names and Dapr component names are stable across both paths
-- The workflow's choice of deployment target is invisible to the application once deployed
+- Service names and Dapr component names are stable across all environments (Azure, AWS, GCP, self-managed)
+- The Radius environment choice is invisible to the application once deployed
 
-**This is the point of the design:** Dapr ensures the app is portable; Radius (or the ACA fallback) handles the infrastructure wiring. Swapping between them does not require code changes.
+**This is the point of the design:** Dapr ensures the app is portable; Radius handles the infrastructure wiring. Swapping environments or backing-service recipes does not require code changes.
 
 ---
 
-## Example: Swapping to ACA Fallback
+## Example: Swapping to AWS
 
-To use the ACA fallback path, a user:
+To deploy to AWS Kubernetes (EKS), a user:
 
-1. Adds required secrets to GitHub Actions: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
-2. Adds required variables: `AZURE_RESOURCE_GROUP`, `AZURE_LOCATION`, `AZURE_ACR_NAME`
-3. Runs the workflow with `deployment_mode=aca-fallback` (either via `workflow_dispatch` or `AZURE_DEPLOYMENT_MODE` variable)
-4. Observes the same demo flow ($50 auto-approve, $150 manual review, end-to-end notifications)
+1. Adds AWS credentials to GitHub Actions secrets (or uses AWS IAM role)
+2. Switches the Radius environment from `azure-radius.bicep` to `aws-radius.bicep` (or creates a new GitHub Actions workflow variable to parameterize it)
+3. Runs the workflow
+4. Observes the same demo flow ($50 auto-approve, $150 manual review, end-to-end notifications), but with AWS backing services
 
 **No code changes. No Dapr config changes. No contract changes.**
 
@@ -196,7 +168,7 @@ To use the ACA fallback path, a user:
   - Environments: https://docs.radapp.io/concepts/environments/overview
   - Recipes: https://docs.radapp.io/concepts/recipes/overview
   - Compute: https://docs.radapp.io/concepts/architecture-overview#compute-concepts
-- **Azure Container Apps Docs:** https://learn.microsoft.com/en-us/azure/container-apps/
+- **Azure Kubernetes Service Docs:** https://learn.microsoft.com/en-us/azure/aks/
 - **GitHub Actions Secrets:** https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions
 - **RadiusClaim Repo:** `.github/workflows/deploy-azure.yml`
 
@@ -204,7 +176,7 @@ To use the ACA fallback path, a user:
 
 ## Decision Log
 
-- **Proposed:** 2026-03-24 (Phase 6 completion, Graham + Eddie)
+- **Proposed:** 2026-03-24 (Phase 7, Eddie)
 - **Reviewed by:** Daisy (Lead), Wesley (Owner)
 - **Accepted:** 2026-03-24
-- **Rationale:** Honest gap acknowledgment + practical Azure demo path + forward-looking roadmap
+- **Rationale:** Kubernetes-first deployment clarity + honest portability scope + cloud-agnostic recipes roadmap

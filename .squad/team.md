@@ -13,6 +13,7 @@
 | Name | Role | Charter | Status |
 |------|------|---------|--------|
 | Daisy | Lead | `.squad/agents/daisy/charter.md` | ✅ Active |
+| Camila | Frontend Dev | `.squad/agents/camila/charter.md` | ✅ Active |
 | Billy | Backend Dev | `.squad/agents/billy/charter.md` | ✅ Active |
 | Graham | Platform Dev | `.squad/agents/graham/charter.md` | ✅ Active |
 | Karen | Tester | `.squad/agents/karen/charter.md` | ✅ Active |
@@ -54,7 +55,7 @@
 
 - **Owner:** Wesley Backelant
 - **Project:** RadiusClaim — Dapr + Radius reference sample
-- **Stack:** .NET 10 minimal APIs, Dapr .NET SDK, Dapr Workflows, Radius, Azure Container Apps, Azure-backed Dapr components
+- **Stack:** .NET 10 minimal APIs, Dapr .NET SDK, Dapr Workflows, Radius, Kubernetes-first Azure-backed platform wiring, planned modern web UI
 - **Description:** A small, reference-quality expense filing sample that demonstrates portable app patterns with Dapr in the app layer and Radius in the platform layer.
 - **Created:** 2026-03-23
 - **Issue Source:** Not connected yet

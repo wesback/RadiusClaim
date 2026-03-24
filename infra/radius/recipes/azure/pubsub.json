@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "11493327975580029817"
+      "templateHash": "2135653486359978832"
     }
   },
   "parameters": {
@@ -24,7 +24,7 @@
     },
     "namespaceName": {
       "type": "string",
-      "defaultValue": "[format('cloudexpense-{0}', take(uniqueString(parameters('context').resource.id, 'servicebus'), 18))]",
+      "defaultValue": "[format('radiusclaim-{0}', take(uniqueString(parameters('context').resource.id, 'servicebus'), 18))]",
       "metadata": {
         "description": "Service Bus namespace name for the Azure-backed Dapr pub/sub component."
       }

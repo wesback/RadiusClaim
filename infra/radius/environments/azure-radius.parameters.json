@@ -6,7 +6,7 @@
       "value": "azure"
     },
     "kubernetesNamespace": {
-      "value": "cloudexpense-lite-azure"
+      "value": "radiusclaim-azure"
     }
   }
 }
