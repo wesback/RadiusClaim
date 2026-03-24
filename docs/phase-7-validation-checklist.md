@@ -20,7 +20,7 @@ Before running Phase 7 validation, ensure:
 - [ ] Application code builds without errors or warnings
 - [ ] Radius models parse cleanly (`az bicep build` passes)
 - [ ] Deployment is live on Kubernetes (AKS or any K8s with Dapr and Radius)
-- [ ] expense-api is accessible via port-forward or external ingress
+- [ ] expense-api is accessible via the public Radius gateway (preferred) or port-forward fallback
 
 ---
 
@@ -41,12 +41,12 @@ Phase 7 supports **three validation levels**:
 
 **How to run:**
 ```bash
-# Via local port-forward (if no external ingress)
+# Preferred: public Radius gateway URL printed by rad deploy
+./scripts/validate-deployment.sh https://<expense-api-base-url>
+
+# Fallback: local port-forward if the public endpoint is unavailable
 kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
 ./scripts/validate-deployment.sh http://127.0.0.1:8080
-
-# Or with external ingress
-./scripts/validate-deployment.sh https://expense-api.example.com
 ```
 
 **Expected result:**
@@ -69,6 +69,7 @@ kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
 - Same checks as the standalone script
 - Integrated into deployment pipeline
 - Validates Kubernetes + Radius deployment path
+- Confirms the model includes a public gateway for `expense-api` while the worker services remain internal
 - Checks notification-svc logs for pub/sub evidence
 
 **Trigger:** Runs automatically on every deployment
@@ -123,7 +124,7 @@ Phase 7 is **APPROVED** when all of the following are true:
 ### Distributed System Validation (CI/CD)
 
 - [ ] GitHub Actions workflow completes successfully
-- [ ] Deployment provisions all three services
+- [ ] Deployment provisions all three services and a public Radius gateway for `expense-api`
 - [ ] End-to-end validation step passes in workflow logs
 - [ ] Notification logs show both ExpenseApproved and ManualReviewRequested events
 

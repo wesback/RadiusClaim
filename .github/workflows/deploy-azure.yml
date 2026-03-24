@@ -66,6 +66,7 @@ jobs:
               ;;
           esac
 
+          az bicep build --file infra/radius/app.bicep >/dev/null
           az bicep build --file infra/radius/environments/azure-radius.bicep >/dev/null
           az bicep build --file infra/radius/environments/azure.bicep >/dev/null
 
@@ -170,7 +171,7 @@ jobs:
             --parameters location="$AZURE_LOCATION"
           ./rad env switch "$RADIUS_ENVIRONMENT_NAME"
 
-      - name: Deploy application through Radius to Kubernetes
+      - name: Deploy application through Radius to Kubernetes with public expense-api gateway
         run: |
           export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
           ./rad deploy infra/radius/app.bicep \
@@ -234,13 +235,16 @@ jobs:
           echo "Timed out waiting for Dapr components to become available in '$RADIUS_KUBERNETES_NAMESPACE'."
           exit 1
 
-      - name: Run end-to-end validation against Kubernetes deployment
+      - name: Run end-to-end validation against Kubernetes deployment (CI uses port-forward fallback)
         run: |
           export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
           set -euo pipefail
 
           validation_output="$RUNNER_TEMP/radius-validation.json"
           port_forward_log="$RUNNER_TEMP/radius-expense-api-port-forward.log"
+
+          echo "Radius deploy now emits a public gateway for expense-api."
+          echo "This CI job still validates through kubectl port-forward to avoid waiting on external DNS/load-balancer propagation."
 
           kubectl port-forward -n "$RADIUS_KUBERNETES_NAMESPACE" svc/expense-api 18080:8080 >"$port_forward_log" 2>&1 &
           port_forward_pid=$!

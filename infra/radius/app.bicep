@@ -15,6 +15,12 @@ param imageTag string = 'phase1'
 @description('Deployment target label kept aligned to the active Radius environment.')
 param deploymentTarget string = 'local'
 
+@description('DNS prefix Radius should use when generating the public expense-api gateway hostname.')
+param publicGatewayPrefix string = 'expense'
+
+@description('Optional fully qualified hostname for the public expense-api gateway. Leave empty to let Radius generate a hostname.')
+param publicGatewayHostname string = ''
+
 @description('Logical Dapr backing definitions. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets.')
 param daprBackings object = {
   stateStore: {
@@ -44,6 +50,13 @@ var secretVaultName = 'ce-${take(uniqueString(applicationName, environment, 'pla
 var stateStoreBacking = daprBackings.stateStore
 var pubsubBacking = daprBackings.pubsub
 var secretStoreBacking = daprBackings.secretStore
+var publicGatewayHost = empty(publicGatewayHostname)
+  ? {
+      prefix: publicGatewayPrefix
+    }
+  : {
+      fullyQualifiedHostname: publicGatewayHostname
+    }
 
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: applicationName
@@ -217,6 +230,24 @@ module notificationService './modules/container-service.bicep' = {
   }
 }
 
+resource expenseApiGateway 'Applications.Core/gateways@2023-10-01-preview' = {
+  name: 'expense-api-gateway'
+  location: radiusLocation
+  properties: {
+    application: app.id
+    hostname: publicGatewayHost
+    routes: [
+      {
+        path: '/'
+        destination: 'http://expense-api:${servicePort}'
+      }
+    ]
+  }
+  dependsOn: [
+    expenseApi
+  ]
+}
+
 output deploymentModel object = {
   application: {
     name: app.name
@@ -243,6 +274,21 @@ output deploymentModel object = {
     pubsubNamespaceName: pubsubNamespaceName
     secretVaultName: secretVaultName
     notificationTopicName: notificationTopicName
+  }
+  exposure: {
+    publicService: 'expense-api'
+    internalServices: [
+      'workflow-engine'
+      'notification-svc'
+    ]
+    gateway: {
+      name: expenseApiGateway.name
+      route: '/'
+      hostnameMode: empty(publicGatewayHostname) ? 'radius-generated' : 'custom-fqdn'
+      hostnamePrefix: empty(publicGatewayHostname) ? publicGatewayPrefix : null
+      configuredHostname: empty(publicGatewayHostname) ? null : publicGatewayHostname
+      note: 'rad deploy prints the resolved public endpoint after deployment.'
+    }
   }
   recipeStatus: 'phase5-recipes-wired'
 }

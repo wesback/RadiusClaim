@@ -9,12 +9,23 @@
 ## Prerequisites
 
 - RadiusClaim is deployed to a Kubernetes cluster (AKS as the primary example, or any K8s with Dapr and Radius)
-- `expense-api` is accessible via port-forward or ingress endpoint
+- `expense-api` is reachable at a public Radius gateway URL printed by `rad deploy` (preferred) or via `kubectl port-forward` fallback
 - `notification-svc` is running and logging to Kubernetes logs (visible via `kubectl logs`)
+
+Set a base URL before the demo:
+
+```bash
+# Preferred: the public endpoint printed by rad deploy
+export EXPENSE_API_BASE_URL="https://<expense-api-base-url>"
+
+# Fallback if the public address is not yet reachable from your machine:
+# kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
+# export EXPENSE_API_BASE_URL="http://127.0.0.1:8080"
+```
 
 ### Optional visual path
 
-If you want to run the same demo in a browser, open `https://<expense-api-fqdn>/app`.
+If you want to run the same demo in a browser, open `${EXPENSE_API_BASE_URL}/app`.
 
 - The hosted UI submits the same `POST /expenses` requests as the curl examples below
 - It also shows recent expense history, correlation IDs, and workflow telemetry in one place
@@ -36,7 +47,7 @@ This demo proves two distinct expense workflows:
 ### Step 1: Submit a small expense
 
 ```bash
-curl -X POST https://<expense-api-fqdn>/expenses \
+curl -X POST "${EXPENSE_API_BASE_URL}/expenses" \
   -H 'Content-Type: application/json' \
   -d '{
     "employeeId": "emp-demo-001",
@@ -68,7 +79,7 @@ curl -X POST https://<expense-api-fqdn>/expenses \
 ### Step 2: Poll for status
 
 ```bash
-curl https://<expense-api-fqdn>/expenses/exp-<uuid>
+curl "${EXPENSE_API_BASE_URL}/expenses/exp-<uuid>"
 ```
 
 **Expected progression (each poll):**
@@ -83,16 +94,6 @@ Each status change happens asynchronously as the workflow progresses through act
 Check the `notification-svc` logs in Kubernetes:
 
 ```bash
-kubectl logs -n radiusclaim-azure -l app=notification-svc --tail=100
-```
-
-Or if using a port-forward to the service:
-
-```bash
-# In another terminal, set up port-forward if needed
-kubectl port-forward -n radiusclaim-azure svc/notification-svc 8081:80 &
-
-# Then observe logs
 kubectl logs -n radiusclaim-azure -l app=notification-svc --tail=100
 ```
 
@@ -121,7 +122,7 @@ OccurredAtUtc: 2026-03-24T14:30:15Z
 ### Step 1: Submit a large expense
 
 ```bash
-curl -X POST https://<expense-api-fqdn>/expenses \
+curl -X POST "${EXPENSE_API_BASE_URL}/expenses" \
   -H 'Content-Type: application/json' \
   -d '{
     "employeeId": "emp-demo-002",
@@ -148,7 +149,7 @@ curl -X POST https://<expense-api-fqdn>/expenses \
 ### Step 2: Poll for status
 
 ```bash
-curl https://<expense-api-fqdn>/expenses/exp-<uuid2>
+curl "${EXPENSE_API_BASE_URL}/expenses/exp-<uuid2>"
 ```
 
 **Expected progression:**
@@ -226,30 +227,27 @@ OccurredAtUtc: 2026-03-24T14:35:10Z
 
 ### Submissions timeout or fail with 500
 
-Check that all three services are running:
+Check that the public entry service and internal workers are healthy:
 ```bash
-az containerapp list --resource-group <your-resource-group> --query '[].name' --output tsv
+kubectl get deployment,svc -n radiusclaim-azure
 ```
 
-Expect: `expense-api`, `workflow-engine`, `notification-svc`
+Expect: `expense-api`, `workflow-engine`, `notification-svc`, plus the `expense-api` service.
+
+If the public gateway URL from `rad deploy` is not yet reachable, use the documented `kubectl port-forward` fallback and continue the demo from `http://127.0.0.1:8080`.
 
 ### Status remains `Submitted` and doesn't advance
 
 The workflow may be slow to start. Wait 10–20 seconds between polls, or check workflow-engine logs:
 ```bash
-az containerapp logs show \
-  --name workflow-engine \
-  --resource-group <your-resource-group> \
-  --tail 100
+kubectl logs -n radiusclaim-azure deployment/workflow-engine -c workflow-engine --tail=100
 ```
 
 ### Notifications don't appear in logs
 
 Check that the pub/sub component is active:
 ```bash
-az containerapp env dapr-component list \
-  --name <environment-name> \
-  --resource-group <your-resource-group>
+kubectl get components -n radiusclaim-azure
 ```
 
 Expect to see `pubsub` listed.

@@ -221,7 +221,11 @@ Resources:
   expense-api-service     Applications.Core/containers
   workflow-engine-service Applications.Core/containers
   notification-service    Applications.Core/containers
+
+Public endpoint http://expense.radiusclaim.<platform-address>.nip.io/
 ```
+
+The `Public endpoint ...` line is the preferred base URL for the hosted `/app` UI and the `expense-api` HTTP endpoints. Radius keeps `workflow-engine` and `notification-svc` internal; they should still be observed through Kubernetes logs, not exposed directly.
 
 **Validation:**
 ```bash
@@ -284,12 +288,17 @@ az keyvault list --resource-group <your-resource-group> --query "[].{name:name,l
 
 ### ✅ Service Connectivity
 
+Preferred path: use the public Radius gateway emitted by `rad deploy`.
+
 ```bash
-# Port-forward to expense-api
+# Test the public endpoint printed by rad deploy
+curl https://<expense-api-base-url>/healthz
+# Expected: {"status":"ok"}
+
+# Fallback if the cluster does not yet have a public address:
 kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
 FORWARD_PID=$!
 
-# Test health endpoint
 curl http://localhost:8080/healthz
 # Expected: {"status":"ok"}
 
@@ -301,18 +310,20 @@ kill $FORWARD_PID
 
 ## End-to-End Validation
 
-**IMPORTANT:** This requires a live Radius environment with deployed services. The Radius-first path does **not** depend on ACA ingress commands; use `kubectl port-forward` when the service is cluster-internal.
+**IMPORTANT:** This requires a live Radius environment with deployed services. The preferred path is the public Radius gateway for `expense-api`; use `kubectl port-forward` only as a fallback when the public endpoint is not yet reachable from your workstation.
 
-If a live environment is available, run the shared validation script against a port-forwarded `expense-api` service:
+If a live environment is available, run the shared validation script against the public `expense-api` base URL:
 
 ```bash
+./scripts/validate-deployment.sh https://<expense-api-base-url>
+
+# Fallback when the gateway address is unavailable or still propagating:
 kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
 FORWARD_PID=$!
-
 ./scripts/validate-deployment.sh http://127.0.0.1:8080
+kill $FORWARD_PID
 
 kubectl logs -n radiusclaim-azure deployment/notification-svc -c notification-svc --tail=200
-kill $FORWARD_PID
 ```
 
 Then confirm the same observable outcomes described in the [Phase 7 Demo Walkthrough](./phase-7-demo-walkthrough.md):
@@ -401,7 +412,7 @@ kubectl get pod <pod-name> -n radiusclaim-azure -o jsonpath='{.spec.containers[*
 
 The following gaps are documented and **not considered blocking** for Phase 7 completion:
 
-1. **Live end-to-end validation:** Requires a deployed Radius environment with reachable `expense-api` access (ingress or local `kubectl port-forward`). If unavailable, structural validation (Bicep parse, pod health, Azure resources) is sufficient.
+1. **Live end-to-end validation:** Requires a deployed Radius environment with reachable `expense-api` access (public Radius gateway preferred, local `kubectl port-forward` fallback). If unavailable, structural validation (Bicep parse, pod health, Azure resources) is sufficient.
 
 2. **Automated integration tests:** Not implemented in Phase 7. Manual validation using the demo walkthrough is the current acceptance criterion.
 
@@ -417,7 +428,7 @@ Phase 7 Radius validation is **complete** when:
 - ✅ Kubernetes pods reach Running state
 - ✅ Dapr components are registered in the namespace
 - ✅ Azure backing resources exist in the target resource group
-- ✅ `deploy-kubernetes` CI job reuses `scripts/validate-deployment.sh` via `kubectl port-forward` and checks `notification-svc` logs with `kubectl`
+- ✅ `deploy-kubernetes` CI job provisions a public Radius gateway for `expense-api`, reuses `scripts/validate-deployment.sh`, and checks `notification-svc` logs with `kubectl`
 - ✅ Either:
   - **Option A:** End-to-end demo validation completes ($50 auto-approve, $150 manual-review)
   - **Option B:** Live environment unavailable → validation checklist documented with clear gap explanation

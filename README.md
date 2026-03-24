@@ -55,6 +55,7 @@ The sample now includes a lightweight web UI hosted by `expense-api` at **`/app`
 - Submit expenses without leaving the browser
 - Watch recent expense history update live
 - Inspect workflow telemetry and correlation IDs without adding a separate frontend deployment surface
+- Reach it through the Radius-managed public gateway on the Kubernetes deployment path
 
 This keeps the demo teachable: no extra Node-based toolchain, no CORS setup, and no new platform story to explain before the core Radius + Dapr narrative lands.
 
@@ -92,6 +93,8 @@ Radius generates the Kubernetes manifests and Dapr component specs — no hand-w
 - Builds and publishes images, then runs `rad deploy` against `infra/radius/environments/azure-radius.bicep` and `infra/radius/app.bicep`
 - Keeps service topology, Dapr component names, and resource wiring in Radius
 - Deploys to a Kubernetes cluster (AKS in the Azure example, or any K8s cluster with Radius control plane)
+- Exposes only `expense-api` publicly through a Radius `Applications.Core/gateways` resource; `workflow-engine` and `notification-svc` stay internal
+- Lets Radius print the public endpoint at deploy time, so humans can open `/app` without falling back to port-forward unless the cluster lacks an external address
 - Azure-specific backing services (Blob Storage, Service Bus, Key Vault) are provisioned by Radius recipes for the Azure environment
 
 **Supported deployment targets**:
@@ -115,6 +118,7 @@ The old ACA fallback path has been removed from the GitHub Actions workflow. `in
 ```mermaid
 graph LR
     Client["Employee / Client"]
+    Gateway["Radius Gateway<br/>(public endpoint)"]
     API["expense-api<br/>(Minimal API)"]
     WF["workflow-engine<br/>(Dapr Workflow)"]
     NOTIF["notification-svc<br/>(Pub/Sub Subscriber)"]
@@ -123,7 +127,8 @@ graph LR
     PubSub["Pub/Sub<br/>(Azure Service Bus)"]
     Secrets["Secrets<br/>(Azure Key Vault)"]
     
-    Client -->|POST /expenses| API
+    Client -->|HTTPS / and /app| Gateway
+    Gateway -->|route to expense-api| API
     API -->|read/write| State
     API -->|invoke workflow| WF
     
@@ -300,7 +305,8 @@ The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys to Ku
 - Deploys the Radius environment (`azure-radius.bicep`) to the Kubernetes cluster
 - Deploys the application model (`app.bicep`) through Radius
 - Azure backing resources (Blob Storage, Service Bus, Key Vault) are created by Radius recipes
-- Runs the shared end-to-end validation script through a Kubernetes port-forward and checks `notification-svc` logs with `kubectl`
+- Publishes `expense-api` through a Radius-managed public gateway while keeping the worker services internal
+- Uses the shared end-to-end validation script; CI still uses a Kubernetes port-forward as deterministic fallback while the public endpoint propagates
 - **Requires:** `RADIUS_KUBECONFIG` secret, Kubernetes cluster with Dapr and Radius control plane
 
 **Supported targets:**

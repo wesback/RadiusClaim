@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "15061394944901731255"
+      "templateHash": "10845260619380442465"
     }
   },
   "parameters": {
@@ -44,6 +44,20 @@
         "description": "Deployment target label kept aligned to the active Radius environment."
       }
     },
+    "publicGatewayPrefix": {
+      "type": "string",
+      "defaultValue": "expense",
+      "metadata": {
+        "description": "DNS prefix Radius should use when generating the public expense-api gateway hostname."
+      }
+    },
+    "publicGatewayHostname": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional fully qualified hostname for the public expense-api gateway. Leave empty to let Radius generate a hostname."
+      }
+    },
     "daprBackings": {
       "type": "object",
       "defaultValue": {
@@ -78,7 +92,8 @@
     "secretVaultName": "[format('ce-{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'platform-secrets'), 20))]",
     "stateStoreBacking": "[parameters('daprBackings').stateStore]",
     "pubsubBacking": "[parameters('daprBackings').pubsub]",
-    "secretStoreBacking": "[parameters('daprBackings').secretStore]"
+    "secretStoreBacking": "[parameters('daprBackings').secretStore]",
+    "publicGatewayHost": "[if(empty(parameters('publicGatewayHostname')), createObject('prefix', parameters('publicGatewayPrefix')), createObject('fullyQualifiedHostname', parameters('publicGatewayHostname')))]"
   },
   "imports": {
     "radius": {
@@ -194,6 +209,28 @@
       },
       "dependsOn": [
         "app"
+      ]
+    },
+    "expenseApiGateway": {
+      "import": "radius",
+      "type": "Applications.Core/gateways@2023-10-01-preview",
+      "properties": {
+        "name": "expense-api-gateway",
+        "location": "[variables('radiusLocation')]",
+        "properties": {
+          "application": "[reference('app').id]",
+          "hostname": "[variables('publicGatewayHost')]",
+          "routes": [
+            {
+              "path": "/",
+              "destination": "[format('http://expense-api:{0}', variables('servicePort'))]"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "app",
+        "expenseApi"
       ]
     },
     "expenseApi": {
@@ -737,6 +774,21 @@
           "pubsubNamespaceName": "[variables('pubsubNamespaceName')]",
           "secretVaultName": "[variables('secretVaultName')]",
           "notificationTopicName": "[variables('notificationTopicName')]"
+        },
+        "exposure": {
+          "publicService": "expense-api",
+          "internalServices": [
+            "workflow-engine",
+            "notification-svc"
+          ],
+          "gateway": {
+            "name": "[reference('expenseApiGateway').name]",
+            "route": "/",
+            "hostnameMode": "[if(empty(parameters('publicGatewayHostname')), 'radius-generated', 'custom-fqdn')]",
+            "hostnamePrefix": "[if(empty(parameters('publicGatewayHostname')), parameters('publicGatewayPrefix'), null())]",
+            "configuredHostname": "[if(empty(parameters('publicGatewayHostname')), null(), parameters('publicGatewayHostname'))]",
+            "note": "rad deploy prints the resolved public endpoint after deployment."
+          }
         },
         "recipeStatus": "phase5-recipes-wired"
       }
