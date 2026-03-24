@@ -980,3 +980,63 @@ Move to a framework **if and only if**:
 - `.github/workflows/deploy-azure.yml` publishes recipe artifacts and passes registry/tag into environment deploy  
 **Validation:** `rad deploy infra/radius/app.bicep` no longer fails on Dapr contract violations; `az bicep build`, `bash -n`, `dotnet build`, `dotnet test` all passing.
 
+### 2026-03-24: Key Vault recipe keeps purge protection enabled
+**By:** Graham (Platform Dev)
+**Status:** IMPLEMENTED
+**What:** The Radius Azure secret-store recipe now provisions Key Vault with `enablePurgeProtection: true` instead of `false`.
+**Why:** Azure rejects deployments that explicitly set `enablePurgeProtection` to `false`, and once purge protection is enabled the setting is irreversible. Keeping `true` as the recipe default makes new deployments and redeployments behave the same way instead of failing during `platform-secrets` provisioning.
+**Repo touchpoints:**
+- `infra/radius/recipes/azure/secrets.bicep`
+- `infra/radius/recipes/azure/secrets.json`
+- `docs/radius-validation-checklist.md`
+- `README.md`
+
+### 2026-03-24: Keep the Key Vault fix small in the shared sample
+**By:** Daisy (Lead)
+**Status:** APPROVED
+**Verdict:** Approved removing the explicit `enablePurgeProtection: false` from the shared Azure secret-store recipe. Rejected both enforcing `enablePurgeProtection: true` and adding conditional logic for existing Key Vaults.
+**Why:**
+- The actual deployment bug is the explicit `false`; that is the smallest thing to stop doing.
+- Defaulting to `true` adds an irreversible Key Vault lifecycle opinion and cleanup friction that the sample does not need to teach.
+- Existing-vault branching is extra ownership complexity for a sample that currently provisions its own vault through a recipe.
+**Rule for RadiusClaim:**
+- **Do not set** `enablePurgeProtection: false`
+- **Do omit** the property in the shared sample recipe
+- **Do not add** an existing-vault branch unless the sample intentionally supports reusing a pre-created vault
+
+If a platform team wants purge protection enforced by default, use Azure Policy or a hardened environment-specific recipe, not the smallest shared demo path.
+**Repo touchpoints:**
+- `infra/radius/recipes/azure/secrets.bicep`
+- `infra/radius/recipes/azure/secrets.json`
+- `docs/radius-validation-checklist.md`
+
+### 2026-03-24: Radius namespace migration — mixed namespace interim state
+**By:** Graham (Platform Dev)
+**Status:** IMPLEMENTED
+**Decision:** Adopt `Radius.Core/*` and `Radius.Compute/*` for the application, environment, recipe-pack, container, and route resources now, while intentionally leaving Dapr component resources on `Applications.Dapr/*` until the shipped Radius catalog exposes equivalent `Radius.*` Dapr types.
+**Why:**
+- Radius 0.55 lists `Radius.Core/applications`, `Radius.Core/environments`, `Radius.Core/recipePacks`, `Radius.Compute/containers`, and `Radius.Compute/routes` as available resource types.
+- The same toolchain still exposes Dapr building blocks only as `Applications.Dapr/*`, so forcing a full namespace rewrite would invent unsupported types.
+- The current `az bicep build` path compiles the migrated files but still emits `BCP081` warnings for `Radius.Compute/*`; that is acceptable for now and must be documented, not hidden.
+**Team Impact:**
+- Platform engineers should expect mixed namespaces in the near term: `Radius.*` for core app/compute/environment primitives, `Applications.Dapr/*` for the Dapr backing components.
+- New environment models should use `Radius.Core/recipePacks` instead of the deprecated inline environment `recipes` map.
+- Reviewers should not reject the build solely because of `BCP081` warnings on `Radius.Compute/*` as long as the command exits successfully and JSON artifacts are regenerated.
+
+### 2026-03-24: Approve the namespace migration only as a straight rename
+**By:** Daisy (Lead)
+**Status:** APPROVED
+**Verdict:** Approved Graham's namespace migration direction.
+**Why:**
+- The change stays small: `radiusclaim-dev` and `radiusclaim-azure` are explicit environment defaults, not a new abstraction layer.
+- The sample story stays intact: Dapr remains the app portability layer, Radius remains the service-wiring and environment layer, and the namespace stays a Kubernetes deployment concern.
+- The direction avoids unstable compatibility hacks: no namespace aliasing, no dual-path runtime logic, and no back-compat branches were added to soften the rename.
+**Guardrails:**
+- Keep namespace changes as direct string/default updates across environment Bicep, parameter files, workflow inputs, and operator docs.
+- Do not add compatibility code that supports both old and new namespaces inside the shared sample.
+- If teams need migration help in their own estates, handle that in rollout docs or environment-specific overlays, not in the core sample.
+**Acceptable to Leave for Later:**
+- Historical squad records that intentionally preserve old naming
+- Further cleanup of non-runtime examples, as long as active deployment docs and workflow defaults already point to `radiusclaim-azure`
+- Broader parameterization beyond the current explicit `RADIUS_KUBERNETES_NAMESPACE` override
+

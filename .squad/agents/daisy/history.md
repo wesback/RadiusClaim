@@ -435,6 +435,14 @@ The current vanilla UI is already polished—semantic HTML, ARIA landmarks, CSS 
 
 **Key Learning:** Reference samples fail when they sprawl. The UI is not "basic"—it's *intentionally minimal*. Minimal + polished beats bloated + elaborate every time for teaching. Add a framework only when the UI genuinely demands it, not because it *might* become useful someday.
 
+### 2026-03-24: Namespace Migration Direction Review
+
+- Reviewed Graham's namespace migration direction across `infra/radius/environments/dev.bicep`, `infra/radius/environments/azure-radius.bicep`, `.github/workflows/deploy-azure.yml`, `README.md`, and `docs/radius-validation-checklist.md`.
+- Verdict: **APPROVED** because the move to `radiusclaim-dev` / `radiusclaim-azure` is a straight environment-boundary rename, not a new platform feature.
+- Architecture rule reinforced: keep namespaces as explicit environment defaults and workflow parameters; do not add aliasing, dual-namespace compatibility branches, or runtime fallback logic just to cushion a rename.
+- Acceptable to leave for later: historical squad artifacts and non-runtime legacy references that do not affect the live sample path.
+- Key file paths: `infra/radius/environments/dev.bicep`, `infra/radius/environments/azure-radius.bicep`, `infra/radius/environments/azure-radius.parameters.json`, `.github/workflows/deploy-azure.yml`, `README.md`, `docs/radius-validation-checklist.md`.
+
 ## Team Input (2026-03-24)
 
 - **Camila (Frontend Dev)** conducted detailed framework research: React + Vite + TypeScript is the best long-term choice if the UI becomes a richer product surface
@@ -519,3 +527,46 @@ Graham completed the implementation: fixed `infra/radius/app.bicep`, regenerated
 **Result:** `rad deploy infra/radius/app.bicep` now passes original Dapr contract rejection.
 
 **Platform Rule Established:** Recipe `templatePath` in Radius environments must resolve to OCI artifacts, not local Bicep paths.
+
+### 2026-03-24: Key Vault Purge Protection Scope Review
+
+- **Inputs reviewed:** `infra/radius/recipes/azure/secrets.bicep`, `infra/radius/app.bicep`, `infra/radius/environments/dev.bicep`, `infra/radius/environments/azure-radius.bicep`, `README.md`, `docs/radius-validation-checklist.md`
+- **Failure judged:** The deployment break is caused by explicitly sending `enablePurgeProtection: false` in the shared Key Vault recipe.
+- **Lead decision:** Base sample omits the purge-protection property instead of defaulting it to `true`.
+- **Why:** This removes the Azure deployment conflict without adding existing-vault complexity or turning the shared demo path into an irreversible Key Vault lifecycle lesson.
+- **Boundary:** If a platform team requires purge protection by default, enforce it with Azure Policy or a hardened recipe variant rather than widening the baseline sample.
+- **Key file path:** `infra/radius/recipes/azure/secrets.bicep`
+
+### 2026-03-24: Radius Namespace Migration Approval
+
+**Review Context**
+
+Graham proposed migrating supported Radius resource types to `Radius.Core/*` and `Radius.Compute/*`, while leaving `Applications.Dapr/*` in place pending official Dapr types. The team would accept mixed namespaces and documented `BCP081` warnings.
+
+**Lead Decision: APPROVED**
+
+The namespace strategy keeps the sample's story intact:
+- Change is a straight rename, not a new abstraction layer
+- Dapr remains the app portability layer
+- Radius remains the service-wiring and environment layer
+- Kubernetes namespace remains a deployment concern
+
+**Team Guardrails Established**
+
+- Keep namespace changes as direct string/default updates across environment Bicep, parameter files, workflow inputs, and operator docs
+- Do not add compatibility code supporting both old and new namespaces in the shared sample
+- If teams need migration help in their own estates, handle that in rollout docs or environment-specific overlays, not in the core sample
+
+**Acceptable to Defer**
+
+- Historical squad records that intentionally preserve old naming
+- Further cleanup of non-runtime examples, as long as active deployment docs and workflow defaults already point to `radiusclaim-azure`
+- Broader parameterization beyond the current explicit `RADIUS_KUBERNETES_NAMESPACE` override
+
+**Validation**
+
+Graham confirmed `az bicep build` succeeds on all files; JSON artifacts regenerated; no app code changes required. Mixed namespaces with documented `BCP081` warnings are acceptable for production use provided the build exits successfully and outputs deployable JSON.
+
+**Cross-Agent Update from Graham**
+
+Namespace migration complete: migrated five core resource types, regenerated all JSON artifacts, updated validation checklist and README to document mixed-namespace interim state. Dapr components remain on `Applications.Dapr/*` as a known deferral. All build/test validations pass.

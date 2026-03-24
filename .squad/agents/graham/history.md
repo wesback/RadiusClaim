@@ -469,6 +469,8 @@ Radius `Applications.Core/gateways` is the cleanest fit for publishing Kubernete
 - Radius Dapr resources are either recipe-driven or manual. If `resourceProvisioning` is `recipe`, keep `type`, `version`, and `metadata` in the recipe output contract and do not repeat them on the `Applications.Dapr/*` resource.
 - Recipe authoring files can live in the repo, but Radius environment `templatePath` values must point at OCI artifacts the control plane can pull. Relative Bicep file paths are authoring conveniences, not deployable recipe addresses.
 - A tiny publish script is worth it here: platform engineers and CI both need the same three `rad bicep publish` calls, and hiding them in tribal knowledge would make the Radius story look accidental again.
+- Azure Key Vault recipes must treat purge protection as a one-way safety control: `enablePurgeProtection: false` is not a valid deployment setting, so Radius-backed secret-store recipes should default it to `true` for both first deploys and replays.
+- The exact failure signature for this class of issue is `Applications.Dapr/secretStores` → `RecipeDeploymentFailed` → Key Vault `BadRequest` mentioning `enablePurgeProtection`; fix the recipe in `infra/radius/recipes/azure/secrets.bicep` and republish `infra/radius/recipes/azure/secrets.json`.
 
 ## Cross-Agent Update (2026-03-24)
 
@@ -480,3 +482,90 @@ Radius `Applications.Core/gateways` is the cleanest fit for publishing Kubernete
 - Workflow integration complete with `scripts/publish-radius-recipes.sh`
 - Validations: all Bicep files build, .NET tests pass, Radius contract violation resolved
 - Platform rule documented: Radius recipe `templatePath` values must resolve to OCI artifacts during `rad deploy`
+
+## Radius Namespace Migration (2026-03-24)
+
+### Delivered
+
+- Migrated `infra/radius/app.bicep` application ownership to `Radius.Core/applications@2025-08-01-preview` and moved service ingress from `Applications.Core/gateways` to `Radius.Compute/routes`.
+- Migrated `infra/radius/modules/container-service.bicep` service resources from `Applications.Core/containers` to `Radius.Compute/containers`, preserving Dapr sidecar wiring and existing connection semantics.
+- Migrated `infra/radius/environments/dev.bicep` and `infra/radius/environments/azure-radius.bicep` from inline `Applications.Core/environments` recipes to `Radius.Core/environments` plus `Radius.Core/recipePacks`, while keeping Azure recipe locations and Daisy's Key Vault recipe intact.
+- Regenerated `infra/radius/app.json`, `infra/radius/environments/dev.json`, and `infra/radius/environments/azure-radius.json` so checked-in JSON matches the newer Radius namespaces.
+- Updated `README.md` and `docs/radius-validation-checklist.md` so operators see the mixed-state reality clearly: core app/compute moved to `Radius.*`, Dapr resources remain on `Applications.Dapr/*`, and the current `az bicep build` path still emits non-blocking `BCP081` warnings for `Radius.Compute/*`.
+
+### Validation
+
+- ✅ `dotnet restore RadiusClaim.slnx --nologo`
+- ✅ `dotnet build RadiusClaim.slnx --configuration Release --no-restore --nologo`
+- ✅ `dotnet test RadiusClaim.slnx --configuration Release --no-build --nologo`
+- ✅ `az bicep build --file infra/radius/app.bicep --outfile infra/radius/app.json`
+- ✅ `az bicep build --file infra/radius/environments/azure-radius.bicep --outfile infra/radius/environments/azure-radius.json`
+- ✅ `az bicep build --file infra/radius/environments/dev.bicep --outfile infra/radius/environments/dev.json`
+- ✅ `az bicep build --file infra/radius/recipes/azure/state-store.bicep`
+- ✅ `az bicep build --file infra/radius/recipes/azure/pubsub.bicep`
+- ✅ `az bicep build --file infra/radius/recipes/azure/secrets.bicep`
+- ⚠️ `az bicep build` currently emits `BCP081` warnings for `Radius.Compute/containers@2025-08-01-preview` and `Radius.Compute/routes@2025-08-01-preview`; compilation still succeeds and produces deployable JSON artifacts.
+
+## Learnings
+
+- Radius 0.55 safely supports a mixed migration state: `Radius.Core/applications`, `Radius.Core/environments`, and `Radius.Core/recipePacks` work alongside legacy `Applications.Dapr/*` resources when the Dapr catalog has not yet moved to `Radius.*` namespaces.
+- Migrating `Applications.Core/environments` to `Radius.Core/environments` requires introducing a `Radius.Core/recipePacks` resource; the old inline `recipes` map becomes a linked recipe pack, and Azure provider scope must be decomposed into `subscriptionId` plus `resourceGroupName`.
+- `Applications.Core/containers` maps cleanly to `Radius.Compute/containers`, but the shape changes from a single `container` object to a `containers` map keyed by logical container name; Dapr moves under `extensions.daprSidecar` instead of the old extensions array.
+- `Applications.Core/gateways` can be advanced to `Radius.Compute/routes`, but the current route model defers generated hostname choice to the active recipe. Keep custom FQDN support, but treat old prefix hints as compatibility metadata, not enforceable routing input.
+- Key file paths for this migration are `infra/radius/app.bicep`, `infra/radius/modules/container-service.bicep`, `infra/radius/environments/dev.bicep`, `infra/radius/environments/azure-radius.bicep`, `README.md`, and `docs/radius-validation-checklist.md`.
+
+## Key Vault Recipe Remediation (2026-03-24)
+
+### Delivered
+
+**Azure Key Vault Secret-Store Recipe Fix**
+- Removed explicit `enablePurgeProtection: false` from `infra/radius/recipes/azure/secrets.bicep` and `secrets.json`
+- Updated `docs/radius-validation-checklist.md` with deployment failure diagnosis and remediation guidance
+- Validated existing build/test/Bicep commands pass after change
+- Diagnosis: Azure Key Vault rejects explicit `false` on purge protection; once enabled, it is irreversible
+
+### Decision Rationale
+
+Daisy approved the minimal fix: omit the property entirely rather than force-default to `true` or add branching for existing vaults. This keeps the shared recipe simple and preserves the principle that samples should not impose irreversible infrastructure opinions.
+
+### Validation
+
+- ✅ `dotnet build RadiusClaim.slnx` passes
+- ✅ `az bicep build infra/radius/recipes/azure/secrets.bicep` succeeds
+- ✅ No changes to app code or other recipes
+
+## Radius Namespace Migration — Mixed Interim State (2026-03-24)
+
+### Delivered
+
+**Namespace Strategy Implementation**
+- Migrated supported Radius resource types to `Radius.Core/*` and `Radius.Compute/*` namespaces:
+  - `Applications.Core/applications` → `Radius.Core/applications`
+  - `Applications.Core/environments` → `Radius.Core/environments`
+  - `Applications.Core/recipePacks` → `Radius.Core/recipePacks`
+  - `Applications.Core/containers` → `Radius.Compute/containers`
+  - `Applications.Core/gateways` → `Radius.Compute/routes`
+- Intentionally left Dapr component resources on `Applications.Dapr/*` pending official `Radius.*` Dapr types in the shipped catalog
+- Regenerated all JSON artifacts with `az bicep build`
+- Updated `docs/radius-validation-checklist.md` and `README.md` to document mixed-namespace interim state
+
+### Design Decision
+
+Daisy approved the straight rename approach: no namespace aliasing, no dual-path runtime logic, no back-compat branches. The sample remains portable while the team waits for Radius to ship Dapr types. Mixed namespaces are acceptable and must be documented so reviewers don't reject builds solely on `BCP081` warnings.
+
+### Validation
+
+- ✅ `az bicep build infra/radius/app.bicep` compiles; emits `BCP081` on `Radius.Compute/*` but produces deployable JSON
+- ✅ `az bicep build infra/radius/environments/dev.bicep` succeeds
+- ✅ `az bicep build infra/radius/environments/azure-radius.bicep` succeeds
+- ✅ `az bicep build infra/radius/recipes/azure/*.bicep` all succeed
+- ✅ JSON artifacts regenerated and ready for deployment
+- ✅ No app code changes required
+- ⚠️ `BCP081` warnings on `Radius.Compute/*` are expected and acceptable
+
+### Team Guardrails
+
+- Keep namespace changes as direct string/default updates, not new abstraction layers
+- Do not add compatibility code supporting both old and new namespaces in the shared sample
+- Migration help for teams' own estates belongs in rollout docs, not core sample
+- Acceptable to defer: historical records preserving old naming, further non-runtime cleanup, broader parameterization

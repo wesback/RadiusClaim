@@ -17,6 +17,7 @@ Use this when Radius is the primary deployment contract, Kubernetes is the compu
 - Keep a single deployment job for the Radius-managed Kubernetes path.
 - If the workflow needs a switch, make it a cluster profile selector such as `kubernetes_target` (`aks`, `arc-enabled`, `self-managed`), not a runtime-mode toggle.
 - Validate the selector early so repository variables cannot silently drift into unsupported values.
+- Treat namespace migrations as direct environment-default updates (`radiusclaim-dev`, `radiusclaim-azure`), not as a reason to add dual-namespace compatibility branches or alias logic in the shared sample.
 
 ### Keep Azure specifics explicit but secondary
 
@@ -25,6 +26,7 @@ Use this when Radius is the primary deployment contract, Kubernetes is the compu
 - Make the environment outputs say both truths: compute is Kubernetes-portable, backing services are still Azure Blob Storage, Service Bus, and Key Vault.
 - When a Dapr resource uses `resourceProvisioning: 'recipe'`, keep `type`, `version`, and `metadata` in the recipe output object, not on the application resource itself; Radius rejects mixed manual+recipe declarations.
 - Register recipe `templatePath` values as OCI artifacts (for example GHCR), not local relative files, or `rad deploy` will fail when the control plane tries to download the recipe.
+- For Azure Key Vault recipes, never set `enablePurgeProtection: false`; Azure treats purge protection as a one-way control and that value causes deployment failures. In the base sample, omit the property instead of forcing `true`, so the sample stays small and avoids turning a deployment walkthrough into an irreversible Key Vault lifecycle lesson.
 
 ### Keep generated platform artifacts in sync
 
