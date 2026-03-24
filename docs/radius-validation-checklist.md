@@ -171,14 +171,16 @@ rad group switch radiusclaim -w <workspace-name>
 
 ## Deployment Steps
 
-### Step 1: Bootstrap Radius Environment
+### Step 1: Create Target Environment (Idempotent)
 
-Create a temporary bootstrap environment (required by Radius before deploying the actual environment Bicep):
+Create or switch to the target environment name directly:
 
 ```bash
-rad env create bootstrap-test
-rad env switch bootstrap-test
+rad env create azure || true
+rad env switch azure
 ```
+
+**Note:** `rad deploy` on an environment Bicep will update the environment configuration. No temporary bootstrap environment is needed.
 
 ### Step 2: Publish Radius Recipe Artifacts
 
@@ -375,14 +377,17 @@ Document the following in the deployment report:
 
 ### Issue: `rad deploy` fails with "environment not found"
 
-**Cause:** Radius requires an existing environment before deploying environment Bicep.
+**Cause:** Environment needs to exist before deploying (addressed by idempotent pattern).
 
 **Solution:**
 ```bash
-rad env create bootstrap-temp
-rad env switch bootstrap-temp
-# Then retry environment deployment
+# Create environment if it doesn't exist (idempotent)
+rad env create azure || true
+rad env switch azure
+# Then retry deployment
 ```
+
+**Note:** GitHub Actions workflow now handles this automatically.
 
 ### Issue: Pods remain in `Pending` state
 

@@ -355,9 +355,9 @@ export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"
 export RECIPE_REGISTRY="ghcr.io/<your-org>/radiusclaim/recipes"
 export RECIPE_TAG="latest"
 
-# Create the bootstrap environment (required by Radius)
-rad env create bootstrap-env
-rad env switch bootstrap-env
+# Create or switch to the target environment (idempotent)
+rad env create "$RADIUS_ENVIRONMENT_NAME" || true
+rad env switch "$RADIUS_ENVIRONMENT_NAME"
 
 # Deploy the Azure-backed Radius environment
 rad deploy infra/radius/environments/azure-radius.bicep \
@@ -367,9 +367,6 @@ rad deploy infra/radius/environments/azure-radius.bicep \
   --parameters location="$AZURE_LOCATION" \
   --parameters recipeRegistry="$RECIPE_REGISTRY" \
   --parameters recipeTag="$RECIPE_TAG"
-
-# Switch to the newly created environment
-rad env switch "$RADIUS_ENVIRONMENT_NAME"
 
 # Verify the environment
 rad env list

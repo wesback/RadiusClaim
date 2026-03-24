@@ -90,7 +90,6 @@ jobs:
       IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
       KUBERNETES_TARGET: ${{ needs.validate.outputs.kubernetes_target }}
       RADIUS_ENVIRONMENT_NAME: azure
-      RADIUS_BOOTSTRAP_ENVIRONMENT: bootstrap-${{ github.run_id }}
       RADIUS_GROUP: radiusclaim
       RADIUS_KUBECONFIG_SECRET: ${{ secrets.RADIUS_KUBECONFIG }}
       RADIUS_KUBERNETES_CONTEXT: ${{ vars.RADIUS_KUBERNETES_CONTEXT }}
@@ -160,11 +159,11 @@ jobs:
           ./rad workspace switch "$RADIUS_WORKSPACE"
           ./rad group switch "$RADIUS_GROUP" -w "$RADIUS_WORKSPACE"
 
-          # Radius currently requires an environment to exist before an environment Bicep can be deployed.
-          ./rad env create "$RADIUS_BOOTSTRAP_ENVIRONMENT"
-          ./rad env switch "$RADIUS_BOOTSTRAP_ENVIRONMENT"
+          # Create or switch to the target environment (idempotent)
+          ./rad env create "$RADIUS_ENVIRONMENT_NAME" || true
+          ./rad env switch "$RADIUS_ENVIRONMENT_NAME"
 
-      - name: Deploy Azure-backed Radius environment for Kubernetes
+      - name: Deploy Azure-backed Radius environment for Kubernetes (idempotent)
         run: |
           export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
           ./rad deploy infra/radius/environments/azure-radius.bicep \
@@ -175,7 +174,6 @@ jobs:
             --parameters location="$AZURE_LOCATION" \
             --parameters recipeRegistry="$GHCR_PREFIX/recipes" \
             --parameters recipeTag="$IMAGE_TAG"
-          ./rad env switch "$RADIUS_ENVIRONMENT_NAME"
 
       - name: Deploy application through Radius to Kubernetes with public expense-api gateway
         run: |
