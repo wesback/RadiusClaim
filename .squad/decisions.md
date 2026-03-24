@@ -1357,3 +1357,56 @@ export GITHUB_USERNAME="your-github-username"
 **By:** Wesley Backelant (via Copilot)
 **What:** When doing `docker build`, keep architecture independence in mind and account for Mac ARM hosts. Do not assume x86-only builds or guidance.
 **Why:** User request — captured for team memory. RadiusClaim must be buildable and deployable across different architectures without silent failures.
+
+### 2026-03-24T09:30:00Z: Azure Deployment Error — Root Cause & Fix Sequence
+**By:** Daisy (Lead)
+**Domain:** phase-7-azure-deployment
+**Status:** RECOMMENDED
+**Owner:** Graham (Platform Dev)
+
+**Summary:** Phase 7 Azure validation failed with three nested errors. Root causes separated into two independent buckets:
+
+1. **Credential Setup (trivial fix):** `rad credential register azure` not executed — affects platform-secrets only.
+2. **Recipe Template Delivery (diagnostic needed):** OCI recipe artifacts either unpublished, inaccessible, or parameter-incompatible — affects statestore and pubsub.
+
+**Decision:** Run credential registration immediately (Phase 1). If errors persist, follow documented Phase 2–5 debugging sequence (smallest scope first). No app code changes required if Phase 1–2 diagnostics succeed.
+
+**Scope Preservation:**
+- Does not change app code (no Billy work)
+- Does not alter Radius/Dapr architecture
+- Localized to environment setup and recipe health
+- Restorative (returns to Phase 5 baseline)
+
+**Handoff:** Graham owns Phase 1 fix execution; Daisy gates Phase 7 re-validation. Expected completion: same day.
+
+[See detailed analysis in orchestration log: `.squad/orchestration-log/20260324T170937Z-daisy.md`]
+
+### 2026-03-24T10:05:00Z: Radius Azure Recipe Failure — Credential Bootstrap & Output Contract
+**By:** Graham (Platform Dev)
+**Domain:** radius-platform
+**Status:** RECOMMENDED
+**Owner:** Graham
+
+**Summary:** Diagnosed concrete root causes in Radius recipes and environment wiring:
+
+**Bucket A: Credential Bootstrap Gap**
+- `.github/workflows/deploy-azure.yml` never runs `rad credential register azure`
+- Explains `platform-secrets` failure seeking Kubernetes secret `azure-azurecloud-default`
+- Matches error pattern
+
+**Bucket B: Recipe Output Contract Drift**
+- `state-store.bicep`, `pubsub.bicep`, `secrets.bicep` manually emit Azure resource IDs in `output result.resources`
+- Radius docs state Bicep recipes auto-populate Azure/AWS backing resources; manual `resources` entries are for Kubernetes/UCP only
+- Failing resource IDs (`storageAccounts/...`, `namespaces/...`) line up with manual entries
+- Explains statestore and pubsub failures: ARM template cannot locate manually-emitted resources
+
+**Recommended Fix Order**
+1. Register Azure credentials (`rad credential register azure`)
+2. Remove manual Azure resource IDs from recipe `result.resources` blocks
+3. Regenerate checked-in `.json` files
+4. Republish OCI recipes
+5. Redeploy environment and app
+
+**Architecture Impact:** Radius + Dapr recipe boundary remains sound. Failures are infrastructure maturity, not design flaws.
+
+[See detailed analysis in orchestration log: `.squad/orchestration-log/20260324T170937Z-graham.md`]

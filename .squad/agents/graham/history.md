@@ -315,6 +315,9 @@ None. The changes are:
 - When Radius emits a public endpoint during `rad deploy`, the operator workflow should explicitly treat that line as deploy output worth capturing; CI can still use port-forward as a deterministic fallback while external DNS/load-balancer propagation settles.
 - User preference: make the primary Kubernetes-first deployment path publicly accessible for demos instead of implying port-forward is the only credible path.
 - Key files for this pattern: `infra/radius/app.bicep`, `infra/radius/app.json`, `.github/workflows/deploy-azure.yml`, `README.md`, `docs/radius-validation-checklist.md`, `docs/phase-7-validation-checklist.md`, and `docs/phase-7-demo-walkthrough.md`.
+- Radius Azure provider credentials are a separate bootstrap concern from the Radius environment model: if `.github/workflows/deploy-azure.yml` creates the workspace and deploys `infra/radius/environments/azure-radius.bicep` without first running `rad credential register azure ...`, recipe execution fails looking for the control-plane secret `azure-azurecloud-default`.
+- For Azure/AWS Bicep recipes, do not manually list Azure resource IDs in `output result.resources`; Radius auto-populates those backing resources. Reserve manual `resources` entries for Kubernetes/UCP IDs only. In this repo, the risky pattern appears in `infra/radius/recipes/azure/state-store.bicep`, `infra/radius/recipes/azure/pubsub.bicep`, and `infra/radius/recipes/azure/secrets.bicep` (plus their generated `.json` mirrors).
+- The `pubsub` recipe is doubly fragile because it emits `RootManageSharedAccessKey`-derived data while also manually surfacing Azure resource IDs; if the Azure provider bootstrap is fixed first, the next platform repair should be tightening the recipe output contract before republishing OCI artifacts.
 
 ## Phase 7 Work (2026-03-24)
 
@@ -650,3 +653,40 @@ rad deploy infra/radius/app.bicep ...
 Known gap: Live idempotency test (second `rad deploy` execution) blocked by Kubernetes environment unavailability. Structural evidence and pattern analysis strongly suggest fix will work correctly.
 
 Closure criteria: Execute `rad deploy` twice against same environment, verify second succeeds without errors.
+
+### Radius Azure Recipe Failure Diagnostics
+
+**Assignment:** Diagnose concrete root causes in Radius recipes and environment wiring (follow-up to Daisy's root cause classification).
+
+**Work Completed:**
+
+#### Bucket A: Credential Bootstrap Gap (Confirmed)
+- Analyzed `.github/workflows/deploy-azure.yml` deployment sequence
+- Confirmed workflow provisions workspace, publishes recipes, deploys environment, deploys app
+- **Critical finding:** Workflow never executes `rad credential register azure`
+- This explains `platform-secrets` failure: Radius seeks Kubernetes secret `azure-azurecloud-default`
+
+#### Bucket B: Recipe Output Contract Drift (Identified)
+- Analyzed three Azure recipes: `state-store.bicep`, `pubsub.bicep`, `secrets.bicep`
+- **Key finding:** All three manually emit Azure resource IDs in `output result.resources`
+- Consulted Radius documentation: Bicep recipes auto-populate backing resources; manual `resources` entries are for Kubernetes/UCP only
+- Failing resource IDs (`storageAccounts/...`, `namespaces/...`) match manual entries
+- Root cause identified: ARM template cannot locate manually-emitted Azure resources
+
+**Recommended Fix Sequence:**
+1. Immediate: `rad credential register azure` (Phase 1)
+2. Remove manual Azure resource IDs from recipe `result.resources` blocks (Phase 2)
+3. Regenerate `.json` files from updated Bicep (Phase 3)
+4. Republish OCI recipes (Phase 4)
+5. Redeploy environment and app (Phase 5)
+
+**Decision Note Generated:** `.squad/decisions.md` (merged from inbox) — focused diagnostic and repair sequence.
+
+**Architecture Assessment:** Radius + Dapr recipe boundary remains sound. Failures are platform setup and recipe contract alignment, not design flaws. Recipe pattern established in Phases 5–6 is correct; implementation has maturity gaps.
+
+**Handoff:** 
+- Daisy approved Phase 1 execution (credential registration)
+- Graham continues Phase 2–5 as needed based on Phase 1 results
+- Expected next checkpoint: after Phase 1 credential registration and Phase 7 re-validation
+
+---

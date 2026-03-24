@@ -635,3 +635,111 @@ Coordinated final decision documentation for Dapr namespace research and migrati
 - Documentation updates are part of the fix—implementation is incomplete without teaching the pattern
 - Squad orchestration successfully decoupled approval from final commit staging, allowing cleanroom review
 
+
+### 2026-03-24: Azure Deployment Error Review — Root Cause Analysis Complete
+
+**Error Context:** Phase 7 end-to-end Azure validation failed with three nested errors:
+1. **platform-secrets (secretStores):** Kubernetes secret `azure-azurecloud-default` not found.
+2. **statestore (stateStores):** ARM template error — storage account resource not defined in template.
+3. **pubsub (pubSubBrokers):** ARM template error — Service Bus namespace resource not defined in template.
+
+**Root Cause Buckets Identified:**
+
+**BUCKET A — Credential Setup (platform-secrets failure)**
+- Missing `rad credential register azure` command execution.
+- Kubernetes secret `azure-azurecloud-default` not created in cluster.
+- No Azure credential context available to Radius Azure provider.
+- **Severity:** Blocking, but trivial one-liner fix.
+- **Isolation:** Only affects secretStores; orthogonal to statestore/pubsub failures.
+- **Repair:** Run `rad credential register azure` before re-deploying.
+
+**BUCKET B — Recipe Template Delivery (statestore + pubsub failures)**
+- Both resource definitions missing from ARM template context.
+- Both failures follow same pattern: "resource X not defined in template" → suggests recipe template not loaded or incompatible.
+- **Root likely cause:** Recipe OCI artifacts at `ghcr.io/wesback/radiusclaim/recipes` either:
+  1. Not published or out of sync with `app.bicep` expectations.
+  2. Corrupted or inaccessible from cluster.
+  3. Parameter mismatch between `app.bicep` parameter names and recipe template signatures.
+- **Severity:** Blocks both Dapr components (state + pub/sub); breaks entire deployment flow.
+- **Investigation needed:** 
+  - Verify recipe images exist and are reachable from cluster.
+  - Confirm parameter passing matches recipe bicep signatures.
+  - Check `azure-radius.parameters.json` includes required `azureProviderScope` and `location`.
+  - Validate recipe Bicep artifacts compile locally without errors.
+
+**Key Alignment Insights:**
+- `app.bicep` parameterizes `daprBackings` object — allows recipe swapping without app code changes.
+- All three recipes accept `location` via environment-level recipe parameters in `azure-radius.json`.
+- Named parameters flow correctly in bicep syntax; issue appears to be recipe delivery or template resolution.
+
+**Architectural Pattern Confirmed:**
+- Radius recipe pattern (OCI-based, parameterized, output-driven) is correct.
+- Failure mode is infrastructure maturity, not design flaw.
+- Same recipes work locally (Phase 5 validation passed); Azure path variant may have diverged.
+
+**Recommended Debugging Sequence (smallest → largest scope):**
+1. **Immediate:** Run `rad credential register azure` and retry deployment.
+2. **Phase 1:** Verify recipe OCI artifacts are published and accessible.
+3. **Phase 2:** Validate `azure-radius.parameters.json` includes all required environment parameters.
+4. **Phase 3:** Test recipe bicep artifacts locally (`az bicep build infra/radius/recipes/azure/state-store.bicep`).
+5. **Phase 4:** Inspect `app.bicep` parameter passing against recipe template signatures.
+6. **Phase 5 (if needed):** Rebuild and republish recipe OCI images.
+
+**Scope Rationale:**
+- Phases 1–2 are one-time CLI/config work. If they fix all three errors, no code changes needed.
+- Phases 3–4 are diagnostic; only escalate to Phase 5 if recipes are locally broken or incompatible.
+- This sequence keeps changes minimal and preserves reference-sample integrity.
+
+**Decision:** Graham (Platform Dev) owns repair sequence. Daisy to review fix plan before Phase 7 gate reopens.
+
+---
+
+## Learnings
+
+### Architecture & Scope
+- **Radius + Dapr boundary:** Radius environment definitions + Azure recipes are the platform layer; app code never touches Azure SDK.
+- **Recipe parameterization critical:** `daprBackings` object in `app.bicep` is the right lever for ingredient swapping. Deterministic naming and parameter alignment must be preserved.
+- **Composition risk:** OCI recipe images introduce dependency chain. Local validation (Phase 5) does not guarantee Azure path variant. CI/CD should include recipe artifact health check.
+
+### Implementation Patterns
+- **Deterministic naming:** `stateStoreAccountName`, `pubsubNamespaceName`, `secretVaultName` computed from context in `app.bicep` — enables reproducible deployments and avoids resource churn.
+- **Component naming alignment:** Dapr component names (`statestore`, `pubsub`, `platform-secrets`) stable across all environment paths. App code never references cloud-specific IDs.
+- **Recipe output shape:** All three recipes follow same output contract: `{ resources: [...], values: { ... }, secrets: { ... } }`. Consistency aids troubleshooting.
+
+### Risk & Governance
+- **Phase 5 (local validation) < Phase 7 (Azure validation):** Local Radius deployment proves local recipe resolution works, but does not validate Azure path. Recipe OCI artifact issues can hide until Azure deployment attempt.
+- **Multi-path CI/CD creates debt:** Azure CLI path (Phase 6 CI/CD) bypasses Radius; recipes may drift from Radius-first intent. Recipe health is invisible until Phase 7.
+- **Parameter mismatch latency:** If `app.bicep` and recipes disagree on parameter names, error surface late (at ARM template resolution), not at recipe invocation.
+
+### Team Handoff
+- **Graham owns recipe repair.** Daisy reviews fix plan and gates Phase 7 re-validation.
+- **Billy and Karen remain unblocked** if credential setup fixes all three errors.
+- **Eddie defers Phase 7 integration test writing** until deployment stabilizes.
+
+
+## Phase 7 Work (2026-03-24, continued)
+
+### Azure Deployment Failure Review & Root Cause Classification
+
+**Assignment:** Separate Radius deployment error into setup vs template/recipe failure classes.
+
+**Work Completed:**
+- Analyzed Phase 7 Azure deployment failures across Dapr components (platform-secrets, statestore, pubsub)
+- Classified failures into two independent root cause buckets:
+  1. **Credential Setup (Bucket A):** Missing `rad credential register azure` execution → trivial one-liner fix
+  2. **Recipe Template Delivery (Bucket B):** OCI artifacts unpublished, inaccessible, or parameter-incompatible → requires diagnostics
+- Documented six-phase debugging sequence (smallest scope first) for Graham to execute
+- Confirmed Radius + Dapr recipe boundary remains architecturally sound; failure is infrastructure maturity, not design
+- Preserved scope: no app code changes required; fix is localized to environment setup and recipe health
+
+**Decision Note Generated:** `.squad/decisions.md` (merged from inbox) — comprehensive root cause analysis and fix sequence.
+
+**Handoff to Graham:**
+- Owner: Graham (Platform Dev)
+- Gate: Daisy approves fix plan before Phase 7 re-validation
+- Blocking: Phase 7 integration tests, Eddie's documentation finalization
+- Expected completion: same day
+
+**Leadership Decision:** Approved Graham's Phase 1 fix (credential registration) and Phase 2–5 diagnostic sequence without requiring all fixes in parallel. Maintains teaching moment for operators: credential registration is explicit bootstrap, recipe output contracts are real constraints, trial-and-error is expensive. Small, scripted debugging path > guessing.
+
+---
