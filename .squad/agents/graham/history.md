@@ -141,6 +141,38 @@ Kept the Radius-first story intact while making validation requirements explicit
 - Validation checklists become more valuable when they include troubleshooting steps and known gaps — they tell the next team what's normal vs. what's broken.
 - The "Additional Documentation" section in README acts as a navigation hub for deeper content without bloating the main README — keeps the ten-minute story accessible while making validation/ADR discoverable.
 
+## Initial Publish to GitHub (2026-03-24)
+
+### Work Completed
+
+**Initial commit to `git@github.com:wesback/RadiusClaim.git`**
+- Added `origin` remote configured for SSH
+- Staged all working-tree changes including .gitignore update
+- Committed removal of 45+ tracked build artifacts (bin/, obj/ directories)
+- Included comprehensive commit message describing Radius-first platform baseline
+- Pushed to `main` with upstream tracking (`-u origin main`)
+- Commit SHA: `e342a4c`
+
+### Commit Message Structure
+
+Subject line captures the headline: "Initial RadiusClaim publish: Radius-first Azure platform with Dapr, multi-environment validation, and local dev setup"
+
+Body organizes the baseline story into sections:
+1. **Platform:** Radius application model + deterministic Dapr wiring
+2. **Infrastructure:** Radius-first Azure deployment path with ACA fallback
+3. **Local Development:** Docker Compose + validation checklist
+4. **Documentation:** README with platform overview + ADR
+5. **Validation:** Structural checks completed; live validation noted as future requirement
+
+Trailer includes Copilot co-author metadata per project convention.
+
+### Learnings (Initial Publish)
+
+- Initial commit message should mirror the platform narrative that took multiple phases to construct — it tells incoming teams the intentional story, not a minimal diff.
+- When removing tracked build artifacts in the initial commit, calling out the scale and rationale (e.g., "45+ tracked build artifacts removed; .gitignore now enforces clean status") signals that the cleanup is deliberate, not accidental.
+- SSH-based origin remote matches the team's git workflow; verify no existing `origin` config before adding to avoid silent overwrites.
+- Setting upstream with `-u` during the first push eliminates setup steps for future clones and keeps the branch tracking clear without requiring post-hoc git config.
+
 ### 2026-03-24: Phase 7 Platform Validation Lane Complete
 
 **Deliverables:**
