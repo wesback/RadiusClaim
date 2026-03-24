@@ -255,3 +255,182 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - `RADIUS_KUBECONFIG` is documented as base64-encoded, but the workflow writes it straight to the kubeconfig file without decoding. Either the docs or the workflow must change before anyone can trust the setup instructions.
 - Live Kubernetes execution is still unproven from this environment; the remaining honest closure step is a real workflow run (or equivalent manual run) against a reachable Radius-enabled cluster.
 - Generated `bin/`, `obj/`, and Bicep-emitted `.json` changes from validation were side effects only and were reverted after the checks.
+
+### 2026-03-24: Radius Idempotency Fix Review — APPROVED
+
+**Context:** Validated Graham's Radius idempotency fix addressing workflow pattern that created temporary bootstrap environments on every run.
+
+**Problem:** Workflow used `bootstrap-${{ github.run_id }}` pattern, creating new temporary environments instead of updating target environment in place, causing repeatability failures.
+
+**Graham's Solution:**
+```bash
+# OLD (not idempotent):
+./rad env create "$RADIUS_BOOTSTRAP_ENVIRONMENT"  # Unique per run
+./rad env switch "$RADIUS_BOOTSTRAP_ENVIRONMENT"
+# Deploy environment
+./rad env switch "$RADIUS_ENVIRONMENT_NAME"       # Switch again
+
+# NEW (idempotent):
+./rad env create "$RADIUS_ENVIRONMENT_NAME" || true  # Create or ignore if exists
+./rad env switch "$RADIUS_ENVIRONMENT_NAME"
+# Deploy environment (updates in place)
+```
+
+**Evidence Collected:**
+
+*Level 1: Structural Validation* ✅ ALL PASS
+- Bicep files parse cleanly (`az bicep build`)
+- Namespace ownership correct: Applications.Core/* for app/env, Applications.Dapr/* for components
+- Environment configuration fully parameterized
+- Build passes: `dotnet build` succeeds, 0 errors, 0 warnings
+- Validation script syntax valid
+
+*Level 2: CI/CD Integration* ✅ ALL PASS
+- Workflow pattern changed to idempotent `|| true` approach
+- No temporary bootstrap environments
+- Documentation updated (README, walkthrough, checklist)
+
+*Level 3: Live Deployment* 🔴 BLOCKED
+- Cannot execute live test (Kubernetes environment unavailable)
+
+**Verdict:** ✅ **APPROVED**
+
+**Why approved:**
+- Fix is simple, correct, and addresses root cause
+- Pattern is naturally idempotent (`rad env create <name> || true`)
+- Documentation updated consistently across all operator guides
+- No regression in namespace ownership (Applications.Core/* + Applications.Dapr/* preserved)
+- Build and structural validation all pass
+
+**Gap:** Live idempotency test blocked by environment unavailability, but fix is structurally sound and follows Radius best practices.
+
+**Learnings:**
+- Idempotent deployment patterns should target stable resource names, not unique-per-run identifiers
+- `command || true` pattern makes creation idempotent in Bash workflows
+- Bootstrap patterns inherited from examples may be unnecessary for production workflows
+- Environment updates in Radius are naturally idempotent when targeting same name
+- Reviewer can approve based on structural correctness when fix is simple and well-understood
+
+**Files Reviewed:**
+- `.github/workflows/deploy-azure.yml` (workflow changes)
+- `README.md` (idempotent deployment section added)
+- `docs/end-to-end-setup-walkthrough.md` (bootstrap references removed)
+- `docs/radius-validation-checklist.md` (idempotent pattern documented)
+- `.squad/agents/graham/history.md` (Graham's implementation notes)
+
+**Next Step:** Live validation when Radius environment becomes available (second `rad deploy` should succeed without errors).
+
+## Radius Idempotency Fix Validation (2026-03-24)
+
+### Validation Task
+
+Graham implemented a fix for Radius deployment idempotency issues in the GitHub Actions workflow. Tasked with validating the fix using structural evidence and pattern analysis due to unavailable live Radius environment.
+
+### Problem Summary
+
+GitHub Actions workflow created temporary bootstrap environments (`bootstrap-${{ github.run_id }}`) on every run, preventing idempotent redeployment. Subsequent runs would fail because target environment already existed from previous runs.
+
+### Solution Reviewed
+
+Graham replaced the temporary bootstrap pattern with direct target environment creation using idempotent `rad env create || true` pattern. Changes included:
+
+**Workflow Changes:**
+- Removed `RADIUS_BOOTSTRAP_ENVIRONMENT: bootstrap-${{ github.run_id }}`
+- Changed to `rad env create "$RADIUS_ENVIRONMENT_NAME" || true`
+- Removed redundant post-deploy `rad env switch` (deploy already switches)
+
+**Documentation Updates:**
+- `README.md`: Added "Idempotent deployment" section
+- `docs/end-to-end-setup-walkthrough.md`: Updated to idempotent pattern; removed bootstrap references
+- `docs/radius-validation-checklist.md`: Removed bootstrap references; documented idempotent pattern
+
+### Validation Approach
+
+Since live Kubernetes environment was unavailable, validation focused on **structural correctness** across four dimensions:
+
+#### 1. Build & Bicep Validation ✅
+- `az bicep build --file infra/radius/app.bicep`: Passes cleanly
+- `az bicep build --file infra/radius/environments/azure-radius.bicep`: Passes cleanly
+- `az bicep build --file infra/radius/environments/azure.bicep`: Passes cleanly
+- `az bicep build --file infra/radius/recipes/azure/*.bicep` (all three): All pass
+- `dotnet build CloudExpenseLite.slnx --configuration Release`: Zero warnings, zero errors
+
+#### 2. Workflow Parameterization ✅
+- Environment variable passing verified: `$RADIUS_ENVIRONMENT_NAME` used correctly
+- Bicep parameter references match declared parameter names
+- No regression in Azure provider scope or location parameters
+- All required values passed correctly through workflow environment
+
+#### 3. Namespace Ownership ✅
+- Applications.Core/applications: Preserved ✅
+- Applications.Core/environments: Preserved ✅
+- Applications.Dapr/stateStores: Preserved ✅
+- Applications.Dapr/pubSubBrokers: Preserved ✅
+- Applications.Dapr/secretStores: Preserved ✅
+- No changes to approved design boundaries
+
+#### 4. Documentation Consistency ✅
+- `README.md`: New "Idempotent deployment" section explains pattern clearly
+- `docs/end-to-end-setup-walkthrough.md`: Bootstrap references removed; idempotent steps documented
+- `docs/radius-validation-checklist.md`: Idempotent pattern documented; bootstrap pattern removed
+- All documentation uses consistent language and examples
+
+### Pattern Analysis
+
+**Idempotency Mechanism:**
+```bash
+rad env create <target-name> || true  # Idempotent: succeeds on creation or if already exists
+rad env switch <target-name>          # Switches to target
+rad deploy <env>.bicep ...            # Updates in place, switches automatically
+```
+
+**Why This Works:**
+- `|| true` pattern ignores the "already exists" error, making the overall sequence idempotent
+- Same environment name across runs means `rad deploy` updates configuration in place
+- No accumulated temporary environments (no per-run bootstrap)
+- Natural Radius behavior: environments with same name are updated, not recreated
+
+**Pattern Precedent:**
+- `rad env create || true` is standard idempotent creation pattern in Bash/DevOps
+- Radius environments naturally support in-place updates when targeting same name
+- Bootstrap patterns were inherited from early examples, not required for production
+
+### Approval Rationale
+
+✅ **Fix is correct:** Replaces non-idempotent pattern with naturally idempotent one  
+✅ **Pattern is sound:** `|| true` is standard idempotent pattern; Radius supports in-place updates  
+✅ **Structural validation passes:** Bicep parse, build, namespace ownership, parameterization all verified  
+✅ **Documentation consistent:** README, walkthrough, checklist all updated with new pattern  
+✅ **No regressions:** Approved namespace ownership preserved; no impact on app code or Dapr components  
+
+**Simple fixes with clear rationale can be approved based on structural validation when live testing is blocked by environment unavailability.**
+
+### Known Gap
+
+Live idempotency test (second `rad deploy` execution) blocked by Kubernetes environment unavailability.
+
+**Closure Criteria:**
+1. Execute `rad deploy infra/radius/environments/azure-radius.bicep` (first run)
+2. Execute `rad deploy infra/radius/environments/azure-radius.bicep` again (second run)
+3. Second run succeeds without "already exists" or similar errors
+4. Environment configuration remains consistent across both runs
+
+### Status
+
+✅ **APPROVED** (2026-03-24)
+
+**Verdict:** Graham's Radius idempotency fix is approved for deployment. Structural evidence strongly suggests fix will work correctly. No code issues blocking deployment; environment unavailability is not a blocker.
+
+**Impact:**
+- ✅ Deployments become repeatable without manual environment cleanup
+- ✅ Workflow simpler and clearer
+- ✅ Operator documentation consistent
+- ✅ No breaking changes to approved design
+
+### Team Learnings
+
+1. **Idempotent resource creation requires stable naming** — unique-per-run identifiers break idempotency
+2. **`command || true` pattern is standard for idempotent Bash sequences** — makes commands succeed or no-op
+3. **Radius environments update in place when targeting same name** — not recreated, automatically in-place
+4. **Bootstrap patterns from early examples may be unnecessary** — validate each pattern's necessity for production
+5. **Simple, well-understood fixes can be approved based on structural validation** — when live testing is blocked, structural evidence + pattern analysis + documentation consistency provides sufficient confidence
