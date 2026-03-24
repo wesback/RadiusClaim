@@ -415,3 +415,20 @@ From `.squad/identity/now.md`: "Portability Fixes — ✅ COMPLETE & APPROVED" a
 This update finalizes the portability narrative by making it honest and concrete rather than aspirational.
 
 
+
+## 2026-03-24: Walkthrough Location Update to belgiumcentral
+
+**Task:** Update location references in `docs/end-to-end-setup-walkthrough.md` from `eastus` to `belgiumcentral`
+
+**Work:**
+- Updated line 113: Create Azure Resource Group section (environment variable example)
+- Updated line 312: Required Variables section documentation
+- Updated line 351: Deploy Radius Environment section example
+
+**Rationale:**
+- Consistent region reference across all deployment examples
+- Aligns documentation with requested deployment region
+- Maintains tight scope—no unrelated content modified
+- All instances verified for consistency
+
+**Outcome:** ✅ Complete. Documentation now guides users to deploy using Belgium Central as the Azure region for all Radius deployment steps.

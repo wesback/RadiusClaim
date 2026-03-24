@@ -1189,3 +1189,19 @@ rad deploy infra/radius/environments/<env>.bicep --parameters ...
 **Impact:** Deployments become repeatable (no "already exists" errors). No temporary environment cleanup burden. Workflow simpler and clearer. Operator documentation consistent.
 **Files Modified:** `.github/workflows/deploy-azure.yml`, `README.md`, `docs/end-to-end-setup-walkthrough.md`, `docs/radius-validation-checklist.md`, `.squad/agents/graham/history.md`
 **Status:** Ready for commit/merge. No blockers (environment unavailability is not a code issue).
+
+### 2026-03-24: Eddie — Walkthrough Location Update to belgiumcentral
+**By:** Eddie (Docs/Story)  
+**Status:** COMPLETE  
+**What:** Updated all location references in `docs/end-to-end-setup-walkthrough.md` from `eastus` to `belgiumcentral` across three locations:
+1. Line 113: Create Azure Resource Group section (environment variable example)
+2. Line 312: Required Variables section documentation
+3. Line 351: Deploy Radius Environment section example
+
+**Rationale:**
+- Consistent region reference across all deployment examples
+- Aligns documentation with requested deployment region
+- Maintains tight scope—no unrelated content modified
+- All instances verified for consistency
+
+**Outcome:** ✅ Docs-only location example aligned to belgiumcentral. Documentation now guides users to deploy using Belgium Central as the Azure region for all Radius deployment steps.

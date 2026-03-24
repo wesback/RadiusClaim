@@ -23,3 +23,16 @@
 - Remaining source-level changes: `README.md`, `docs/radius-validation-checklist.md`, `.squad/agents/eddie/history.md` (3 files outside build/ directories)
 
 **Outcome:** Git working tree is now clean of untracked build churn. All rename work preserved. Tracked build outputs reflect current compilation state after project rename validation.
+
+## 2026-03-24: Orchestration Log Entry for Eddie Agent
+
+**Task:** Process Eddie (Docs/Story) agent work and scribe records.
+
+**Actions:**
+- ✅ Created orchestration log: `.squad/orchestration-log/2026-03-24T16:17:51Z-eddie.md`
+- ✅ Created session log: `.squad/log/2026-03-24T16:17:51Z-walkthrough-location.md`
+- ✅ Merged inbox decision to `.squad/decisions.md` (deduped)
+- ✅ Updated Eddie's `.squad/agents/eddie/history.md` with work summary
+- ✅ Prepared git commit
+
+**Outcome:** ✅ Scribe records complete. Team logs documented.
