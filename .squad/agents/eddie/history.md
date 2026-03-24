@@ -374,4 +374,44 @@ Covers the entire flow from resource group creation to opening the app in a web 
 - Includes both GitHub Actions automation and manual `rad` CLI options
 - Realistic timing, honest about prerequisites, practical troubleshooting
 
+## Phase 7 Work — Portability Documentation Update (2026-03-24)
+
+### Delivered
+
+**Portability Narrative Shift: AWS/GCP → Azure Local / Arc-Enabled Kubernetes**
+
+Removed speculative AWS/GCP examples and centered the portability story on concrete, supported targets:
+
+**Files Updated:**
+1. `README.md` — Removed explicit AWS/GCP naming; kept "other clouds" language as forward-looking
+2. `docs/ADR-0001-kubernetes-first-deployment.md` — Major rewrite:
+   - Replaced "Roadmap: Enabling Other Clouds" section with "Portability in Practice: Azure Local and Arc-Enabled Kubernetes"
+   - New concrete example: Azure Local (edge) + Arc-enabled Kubernetes (on-premises / multi-cloud) + self-managed Kubernetes
+   - Replaced "Example: Swapping to AWS" with "Example: Deploying to Azure Local or Arc-Enabled Kubernetes"
+   - Updated component stability line: `(Azure, AWS, GCP, self-managed)` → `(Azure, Arc-enabled, self-managed)`
+   - Updated backing-services portability language to remove AWS/GCP specifically, kept "other clouds" as future possibility
+3. `docs/end-to-end-setup-walkthrough.md` — Clarified cluster options:
+   - Option B now reads: "Any Kubernetes cluster (on-premises, edge, or multi-cloud) reachable from your machine and registered with Azure Arc"
+   - Removed "GCP, AWS" examples, kept honest: Arc-enabled + self-managed are the concrete non-AKS targets
+4. `scripts/README.md` — Already well-aligned; no changes needed
+
+**Messaging Pattern:**
+- **App code is portable** — Dapr abstractions, cloud-agnostic
+- **Deployment model is portable** — Kubernetes-first via Radius, recipe-agnostic
+- **Azure backing services are Azure-specific** — Blob, Service Bus, Key Vault; made explicit
+- **Azure Local + Arc-enabled + self-managed are the portability proof points** — concrete, not speculative
+- **Future recipes welcome** — if/when AWS, GCP, or other clouds have Radius recipes, pattern holds (same app, different env)
+
+**Key Learnings:**
+- Honesty matters more than aspirational cloud-agnosticism
+- Azure Local + Arc-enabled Kubernetes are the natural non-AKS deployment targets for enterprise Dapr + Radius patterns
+- Removing speculative examples (AWS, GCP) clarifies the real value: Kubernetes-portable app code + environment-swappable infrastructure
+- The future-recipes section is fine as possibility, but day-one portability proof must be concrete (Azure Local, Arc, self-managed K8s)
+
+### Context
+
+From `.squad/identity/now.md`: "Portability Fixes — ✅ COMPLETE & APPROVED" and "Eddie's documentation: README clearly separates app portability (Dapr + code) from infrastructure reality (Azure-specific today, Radius-intended)."
+
+This update finalizes the portability narrative by making it honest and concrete rather than aspirational.
+
 

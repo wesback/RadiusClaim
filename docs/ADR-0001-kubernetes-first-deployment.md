@@ -34,7 +34,7 @@ This ADR documents:
 - ✅ **Compute is portable:** Kubernetes (AKS, Arc, self-managed) all work the same
 - ✅ **Dapr components are portable:** Same component names and interfaces across all environments
 - ✅ **App code is portable:** Uses only Dapr APIs, no Azure-specific code
-- ❌ **Backing services are tied to recipes:** Azure recipes provide Azure services; AWS/GCP recipes would provide their equivalents
+- ❌ **Backing services are tied to recipes:** Azure recipes provide Azure services; other cloud recipes (if available) would provide their equivalents
 
 ---
 
@@ -81,7 +81,7 @@ This ADR documents:
 | **Connection/wiring** | ✅ Declarative (app.bicep links) |
 | **App code portability** | ✅ Yes (Dapr APIs only) |
 | **Deployment model portability** | ✅ Yes (Radius recipes define environment) |
-| **Backing services portability** | ⚠️ Tied to recipe choice (Azure recipes = Azure services; future AWS/GCP recipes = equivalents) |
+| **Backing services portability** | ⚠️ Tied to recipe choice (Azure recipes = Azure services; other recipe implementations = equivalents) |
 | **Kubernetes required** | ✅ Yes |
 | **Container registry** | GHCR (or any OCI registry) |
 
@@ -97,31 +97,37 @@ This ADR documents:
 
 ---
 
-## Roadmap: Enabling Other Clouds
+## Portability in Practice: Azure Local and Arc-Enabled Kubernetes
 
-**Kubernetes + Radius is the deployment model.** To support other clouds, we need Radius recipes for those clouds.
+**Kubernetes + Radius is the deployment model.** Portability is enabled through recipe swapping and environment definitions.
 
-### Option A: AWS Recipes (DynamoDB, SQS, Secrets Manager)
+### Concrete Portability Example: Azure Local and Arc-Enabled Kubernetes
 
-If Radius recipes for AWS are created, the app model in `infra/radius/app.bicep` and the deployment workflow remain unchanged. Only the environment definition switches:
-- Deploy to EKS (or any K8s on AWS) with `aws-radius.bicep` environment
-- Radius recipes provision AWS backing services instead of Azure
+This sample demonstrates portability on **Azure Local** (edge devices) and **Arc-enabled Kubernetes** (on-premises and multi-cloud clusters):
 
-**No app code changes. No Dapr component names changes.**
+- **Azure Local (edge):** Deploy with `azure-radius.bicep` environment to Azure Local devices running Kubernetes
+- **Arc-enabled Kubernetes (on-premises):** Deploy with the same `azure-radius.bicep` environment to on-premises clusters registered with Azure Arc
+- **Self-managed Kubernetes:** Deploy to any Kubernetes cluster with Dapr and Radius control plane; use Azure recipes if Azure subscription access is available, or bring custom recipes for alternative backing services
 
-### Option B: GCP Recipes (Firestore, Pub/Sub, Secret Manager)
+**The same app model, Dapr components, and deployment artifacts work across all three targets.** Only the Kubernetes cluster target changes; the Radius environment and recipes remain stable.
 
-Similar to AWS: same app model, new environment definition with GCP recipes, deploy to GKE or any K8s on GCP.
+```
+expense-api     ─┐
+workflow-engine ─┼─> [Radius] ─> Azure Recipes (Blob, Service Bus, Key Vault)
+notification-svc─┘                 │
+                                    └─> Runs on: AKS | Azure Local | Arc-Enabled K8s | Self-Managed K8s
+```
 
-### Option C: Hybrid Multi-Cloud
+**No app code changes. No Dapr component name changes. No contract changes.**
 
-Teams can define multiple environments in the Radius model:
-- `azure-radius.bicep` for AKS deployments
-- `aws-radius.bicep` for EKS deployments
-- `gcp-radius.bicep` for GKE deployments
-- `self-managed.bicep` for on-premises or private Kubernetes
+### Future: Recipes for Other Cloud Platforms
 
-Deploy the same app to any cloud by choosing the target environment.
+If and when Radius recipes for other clouds become available, the same pattern applies:
+- New environment definition (e.g., `aws-radius.bicep` or `gcp-radius.bicep`) with equivalent Radius recipes
+- Same app model (`infra/radius/app.bicep`)
+- Same deployment workflow, pointing to the new environment
+
+Teams can maintain multiple environment definitions in a single repository and switch between them without changing application code.
 
 ---
 
@@ -142,23 +148,26 @@ This Kubernetes-first path must continue to satisfy:
 **None.** The application code is agnostic to which deployment target is used:
 
 - All three services use Dapr APIs for state, pub/sub, secrets, and service invocation
-- Service names and Dapr component names are stable across all environments (Azure, AWS, GCP, self-managed)
+- Service names and Dapr component names are stable across all environments (Azure, Arc-enabled, self-managed)
 - The Radius environment choice is invisible to the application once deployed
 
 **This is the point of the design:** Dapr ensures the app is portable; Radius handles the infrastructure wiring. Swapping environments or backing-service recipes does not require code changes.
 
 ---
 
-## Example: Swapping to AWS
+## Example: Deploying to Azure Local or Arc-Enabled Kubernetes
 
-To deploy to AWS Kubernetes (EKS), a user:
+To deploy to **Azure Local** (edge) or **Arc-enabled Kubernetes** (on-premises or multi-cloud), a user:
 
-1. Adds AWS credentials to GitHub Actions secrets (or uses AWS IAM role)
-2. Switches the Radius environment from `azure-radius.bicep` to `aws-radius.bicep` (or creates a new GitHub Actions workflow variable to parameterize it)
-3. Runs the workflow
-4. Observes the same demo flow ($50 auto-approve, $150 manual review, end-to-end notifications), but with AWS backing services
+1. Ensures the cluster is **registered with Azure Arc** (or is Azure Local)
+2. Installs **Dapr and Radius control plane** on the cluster
+3. Configures **Azure credentials** (subscription ID, resource group) for backing services
+4. Runs the same workflow (or `rad deploy` locally) pointing to the `azure-radius.bicep` environment
+5. Observes the same demo flow ($50 auto-approve, $150 manual review, end-to-end notifications), using the same Azure backing services
 
-**No code changes. No Dapr config changes. No contract changes.**
+**No app code changes. No Dapr config changes. No contract changes. The only difference is the Kubernetes cluster target.**
+
+This pattern demonstrates true portability: the same application and infrastructure model runs across AKS, Azure Local, Arc-enabled clusters, and self-managed Kubernetes—as long as the cluster has Dapr and Radius installed and can reach Azure for backing services.
 
 ---
 

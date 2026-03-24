@@ -109,7 +109,7 @@ Radius generates the Kubernetes manifests and Dapr component specs — no hand-w
 1. **Application code is fully portable** — uses Dapr abstractions (state, pub/sub, service invocation, workflows)
 2. **Deployment model is portable** — Radius app model and environment patterns are cloud-agnostic
 3. **Azure backing services are Azure-specific** — Blob Storage, Service Bus, Key Vault recipes require Azure
-4. When Radius recipes for other clouds (AWS, GCP) are added, the same app model can target those platforms with only environment/recipe changes
+4. When Radius recipes for other clouds are added, the same app model can target those platforms with only environment/recipe changes
 
 **Legacy ACA reference only:**
 The old ACA fallback path has been removed from the GitHub Actions workflow. `infra/radius/environments/azure.bicep` remains only as a legacy Azure Container Apps reference; the active workflow is Kubernetes-first. Teams requiring container-only Azure deployment should use Azure Container Instances or Azure Container Apps directly outside this sample.
@@ -337,7 +337,7 @@ The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys to Ku
 7. **Phase 7**: Final documentation, extended demo walkthrough, and integration test harness
 
 **Future Enhancements (Out of Scope):**
-- Radius recipes for other clouds (AWS, GCP) — would enable same app model on other platforms
+- Radius recipes for other clouds — would enable same app model on other platforms
 - Multi-environment promotion (dev → staging → prod)
 - Real notification output bindings (email, Slack, Teams)
 - Integration test suite

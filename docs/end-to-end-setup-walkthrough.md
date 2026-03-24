@@ -53,8 +53,8 @@ You need a Kubernetes cluster with **Dapr and Radius already installed**. Option
 ```
 
 **Option B: Arc-enabled Kubernetes or Self-managed Cluster**
-- Any Kubernetes cluster (on-prem, GCP, AWS) reachable from your machine
-- Must have Dapr and Radius control plane installed
+- Any Kubernetes cluster (on-premises, edge, or multi-cloud) reachable from your machine and registered with Azure Arc
+- Or any self-managed Kubernetes cluster with Dapr and Radius control plane installed
 - Must have Azure credentials configured (for Azure backing services)
 
 ### Dapr & Radius CLI
