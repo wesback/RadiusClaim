@@ -668,3 +668,162 @@ This aligns with Graham's troubleshooting skill (`radius-azure-recipe-troublesho
 - Points operators to the credential registration step as the first diagnostic/fix
 
 ### Status: COMPLETE
+
+---
+
+## Phase 11 Work (2026-03-24) — First-Time Deploy Walkthrough Rewrite
+
+### Requested Work
+
+Wesley asked me to rewrite `docs/end-to-end-setup-walkthrough.md` to:
+- Keep the correct current deploy command in the happy path
+- Move redeploy/legacy owner-tag recovery language out of the main narrative
+- Keep those topics only as troubleshooting guidance
+- Make the wording clearly first-time friendly
+- Scope to the walkthrough unless tiny directly-related consistency fixes are unavoidable
+
+### What Changed
+
+**1. Removed "Deploy Changes" Subsection from Next Steps**
+- Moved the entire "Deploy Changes" (redeploy) section out of the "Next Steps → Explore the Architecture" flow
+- This was confusing for first-timers because it mixed iteration guidance with post-deployment validation
+
+**2. Reorganized Troubleshooting Section**
+- **Split "Services Not Starting" into two subsections:**
+  - "Services Not Starting" — focuses on immediate diagnostics (pod events, logs, image pull verification)
+  - "Image Reference Mismatch (Legacy Recovery)" — **new subsection** for the stale `ghcr.io/sovereignapp/radiusclaim/*:phase1` recovery case
+  - Simplified the "Services Not Starting" solution to focus on image registry authentication (403/pull errors), removing the legacy owner-tag reference
+
+- **Added "Redeploying After Code Changes"** troubleshooting section
+  - Placed after "Validation Script Fails"
+  - Contains the redeploy workflow (rebuild, push, re-run `rad deploy`)
+  - Includes cross-platform build guidance (docker buildx)
+  - Explains GitHub Actions push trigger
+  - Explicitly notes that this step comes **after** you've verified the initial deployment works
+
+### Result
+
+**Happy path for first-timers:**
+- Step 1–12: Deploy, validate, open the browser
+- Next Steps: Run demo flow → explore architecture
+- Clean, linear, no confusion about redeploy or legacy recovery
+
+**For operators returning to iterate:**
+- Troubleshooting → "Redeploying After Code Changes" tells them the full redeploy workflow
+- Troubleshooting → "Image Reference Mismatch" is available if they encounter the legacy issue (unlikely, but recoverable if it happens)
+
+### Key Design Decisions
+
+1. **Redeploying is troubleshooting, not part of the happy path:**
+   - First-timers need a clean, linear story: set up → deploy → validate → enjoy the demo
+   - Redeploy is an iteration task, not part of the first deployment
+   - Keeping it in troubleshooting sets expectations right
+
+2. **Legacy owner-tag recovery gets its own subsection:**
+   - Makes it easy to skip if not relevant
+   - Doesn't pollute the "Services Not Starting" generic debugging flow
+   - Explicitly named "Legacy Recovery" to make it clear this is edge-case defensive documentation
+
+3. **Simplified "Services Not Starting" language:**
+   - Removed conditional logic ("if you see old image path, do X; if you see 403 error, do Y")
+   - Focused on the common case: image pull auth issues
+   - Moved the old path case to its own section
+
+### Files Modified
+
+- `docs/end-to-end-setup-walkthrough.md`
+  - Removed "### Deploy Changes" subsection from "Next Steps"
+  - Reorganized troubleshooting: split "Services Not Starting" and added "Image Reference Mismatch (Legacy Recovery)"
+  - Added "### Redeploying After Code Changes" section in troubleshooting (placed after "Validation Script Fails")
+  - Cleaned up wording in "Services Not Starting" to focus on authentication rather than legacy recovery
+
+### Learnings
+
+- **Narrative clarity matters in deployment docs:** The order of sections shapes operator expectations
+- **Troubleshooting should be defensive, not prescriptive:** Offer paths for unexpected situations without forcing operators through them in the happy path
+- **Redeploy is not part of deploy:** Separating iteration (redeploy) from initial setup (deploy) keeps first-timers' mental model clean
+- **Legacy recovery deserves a name:** Naming the troubleshooting section "Legacy Recovery" signals that it's edge-case defensive, not the expected path
+
+### Status: COMPLETE
+
+---
+
+## Phase 7 Work (2026-03-24)
+
+### Consistency Pass: `rad deploy` Command Alignment
+
+**Scope:** Verify troubleshooting and redeploy `rad deploy infra/radius/app.bicep` commands match the happy-path command shape, particularly `--parameters deploymentTarget='radius'`.
+
+**Problem Found:**
+- Happy path (Step 9, manual CLI): `rad deploy` includes `--parameters deploymentTarget='radius'` ✅
+- Image Reference Mismatch (Troubleshooting): Missing `deploymentTarget='radius'` ❌
+- Redeploying After Code Changes (Troubleshooting): Missing `deploymentTarget='radius'` ❌
+
+**Changes Made:**
+
+1. **Image Reference Mismatch section:**
+   - Added `--parameters deploymentTarget='radius'` to the recovery command
+   - Rewrote symptom/heading: Removed "(Legacy Recovery)" label — was implying first-time user recovery path
+   - Changed symptom from "old registry path (e.g., `ghcr.io/sovereignapp/...`)" to "unexpected registry path or old tag (e.g., a previous environment's registry)"
+   - Rationale: First-timers should not think they need this section; it's truly edge-case (rebuilds with different parameters, environment switches)
+
+2. **Redeploying After Code Changes section:**
+   - Added `--parameters deploymentTarget='radius'` to the redeploy command
+   - Keeps consistency with main deployment flow
+
+### Files Modified
+
+- `docs/end-to-end-setup-walkthrough.md`
+  - Lines ~720–735 (Image Reference Mismatch): Reworded heading, symptom, command
+  - Lines ~795–806 (Redeploy section): Added missing `deploymentTarget` parameter
+
+### Learnings
+
+- **Command parameter consistency is trust:** If happy path and troubleshooting use different `rad deploy` forms, operators wonder "which one is right?"
+- **Naming shapes expectations:** "(Legacy Recovery)" in the heading signals edge-case defensive documentation; removing it lets operators read the symptom and self-decide relevance
+- **Wording avoids false implications:** Using "previous environment's registry" instead of pointing to a specific old project name keeps the doc agnostic and applies broadly
+
+### Status: COMPLETE
+
+---
+
+## Phase 8 Work (2026-03-25)
+
+### Spawn 1: First-Time Deploy Walkthrough Reorganization
+
+**Task:** Rewrite `docs/end-to-end-setup-walkthrough.md` so the happy path stays first-time friendly.
+
+**Changes Made:**
+- Moved redeploy flow out of the main narrative (previously in "Next Steps")
+- Isolated legacy/image-recovery guidance under troubleshooting section
+- Removed "(Legacy Recovery)" label from "Image Reference Mismatch" heading
+- Generalized symptom wording: "unexpected registry path or old tag (e.g., a previous environment's registry)" instead of project-specific example
+- Outcome: Clean linear path for first-timers (deploy → validate → demo), with troubleshooting discovery for iteration and edge cases
+
+**Learnings:**
+- **Narrative clarity matters:** Section order shapes operator expectations
+- **Troubleshooting is opt-in:** By placing edge-case sections in troubleshooting, we make them discoverable but invisible to happy-path followers
+- **Naming signals intent:** "Image Reference Mismatch (Legacy Recovery)" suggests defensive edge-case; removing the label lets operators read the symptom and self-decide relevance
+
+### Spawn 2: `rad deploy` Command Parameter Consistency
+
+**Task:** Polish command consistency so troubleshooting/redeploy examples include `--parameters deploymentTarget='radius'`.
+
+**Problem Found:**
+- Happy path (Step 9): `rad deploy` includes `--parameters deploymentTarget='radius'` ✓
+- Image Reference Mismatch (Troubleshooting): Missing `deploymentTarget='radius'` ✗
+- Redeploying After Code Changes (Troubleshooting): Missing `deploymentTarget='radius'` ✗
+
+**Changes Made:**
+1. Added `--parameters deploymentTarget='radius'` to Image Reference Mismatch recovery command
+2. Added `--parameters deploymentTarget='radius'` to Redeploying After Code Changes command
+3. Softened legacy-specific wording: "(Legacy Recovery)" removed to reduce false-positive scope
+
+**Files Modified:**
+- `docs/end-to-end-setup-walkthrough.md` (Lines ~720–735, ~795–806)
+
+**Learnings:**
+- **Parameter consistency builds trust:** If happy path and troubleshooting use different `rad deploy` forms, operators wonder which one is right
+- **Canonical forms reinforce learning:** Operators learn one shape; recovery paths mirror that shape exactly
+
+### Status: COMPLETE (both spawns)

@@ -772,3 +772,50 @@ Closure criteria: Execute `rad deploy` twice against same environment, verify se
 **Decisions Merged:** Graham — Daisy follow-ups (C2, C3, C7) → decisions.md
 
 **Open:** GHCR image pull 403; recipe artifacts require republishing before next live demo.
+
+
+---
+
+## 2026-03-24T18:00:00Z: GHCR 403 Triage — Graham
+
+**Work:** Traced the post-namespace live blocker to stale GHCR service-image defaults and separated that repo drift from the remaining operator-side package visibility question.
+
+**Changes:**
+- `infra/radius/app.bicep` now defaults the service-image registry to the current repo namespace (`ghcr.io/wesback/radiusclaim`) and requires an explicit `imageTag` instead of silently falling back to retired `phase1` images.
+- Regenerated `infra/radius/app.json` and aligned `infra/radius/environments/dev.parameters.json` / `prod.parameters.json` to the same GHCR namespace.
+- Updated `README.md`, `docs/radius-validation-checklist.md`, and `docs/end-to-end-setup-walkthrough.md` so operators know how to distinguish stale image refs from private-package pull failures and have an exact `imagePullSecret` sequence when GHCR auth is the real blocker.
+
+## Learnings
+
+- GHCR 403 during `rad deploy` should be classified by the **referenced image path first**: `ghcr.io/sovereignapp/radiusclaim/*:phase1` is repo drift, not a Radius control-plane regression.
+- Anonymous GHCR token probes are a fast discriminator: `403` for the old owner path and a token for the current recipe path tells you the namespace moved; `401` on current service-image packages means you are down to missing/private packages or pull auth.
+- For shared Radius app models, stale service-image defaults are worse than missing defaults. Requiring an explicit `imageTag` is more teachable than letting clusters inherit a retired tag that only fails at pull time.
+- User preference: keep the Radius namespace revert intact and treat image-pull failures as a separate layer unless the deployed image reference itself proves the repo model is stale.
+- Key file paths for this class of issue: `infra/radius/app.bicep`, `infra/radius/app.json`, `.github/workflows/deploy-azure.yml`, `docs/radius-validation-checklist.md`, `docs/end-to-end-setup-walkthrough.md`.
+
+---
+
+## 2026-03-25T09:21:52Z: Phase 8 Continuation — Documentation Triage (Eddie)
+
+**Spawn:** Eddie (Docs/Story) completed two sync tasks in Phase 8:
+
+1. **First-Time Deploy Walkthrough Reorganization**
+   - Rewrote `docs/end-to-end-setup-walkthrough.md` happy path narrative
+   - Moved redeploy flow out of main story into troubleshooting
+   - Isolated legacy image-recovery guidance under troubleshooting section
+   - Removed "(Legacy Recovery)" label that was causing first-timers to mis-assess section relevance
+
+2. **Command Consistency Polish**
+   - Added `--parameters deploymentTarget='radius'` to troubleshooting/redeploy `rad deploy` commands
+   - Generalized symptom wording to avoid project-specific examples
+   - Result: operators now see one canonical `rad deploy` shape across happy path and recovery flows
+
+**Impact for Platform:**
+- Documentation now clearly separates first-time setup from iteration/edge-case recovery
+- Command consistency reduces operator uncertainty about which deployment shape to use
+- Troubleshooting sections are now clearly marked as opt-in/discovery, not required path
+
+**Decisions Merged:** 
+- Decision 8: Eddie (Docs/Story) — First-Time Deploy Walkthrough Reorganization
+- Decision 9: Eddie (Docs/Story) — Walkthrough `rad deploy` Command Parameter Consistency
+- Decision 10: Graham — GHCR 403 triage (from Eddie spawn feedback)

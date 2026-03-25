@@ -327,3 +327,118 @@ Approve Graham's revert from `Radius.Compute/*` back to stock `Applications.Core
 - For stock Radius `0.55`, keep `Applications.Core/containers` and `Applications.Core/gateways` in `infra/radius/app.bicep` unless the platform team can point to a real preview catalog installed in the target environment.
 - If a live deploy now fails later on pod readiness or image pull, treat that as a separate runtime issue; do not reopen the namespace migration by default.
 - Current follow-up blocker for the demo path is image availability/auth for `ghcr.io/sovereignapp/radiusclaim/*:phase1`, not the Radius namespace choice.
+
+---
+
+## 8. Eddie (Docs/Story) — First-Time Deploy Walkthrough Reorganization
+
+**Date:** 2026-03-25  
+**Author:** Eddie (Docs/Story)  
+**Status:** Implemented  
+
+### Context
+
+The end-to-end setup walkthrough mixed first-time deployment guidance with redeploy and legacy owner-tag recovery language, creating cognitive load for operators on their first deployment. The request was to clarify the happy path for first-timers while preserving the troubleshooting guidance.
+
+### Decision
+
+**Separate deployment from iteration.**
+
+1. **Happy path remains linear (Steps 1–12):** Authenticate → set up cluster → deploy → validate → open browser
+2. **"Next Steps" focuses on demo and exploration:** Run demo flow → explore architecture (no redeploy guidance here)
+3. **Redeploy is troubleshooting, not navigation:** Moved to "### Redeploying After Code Changes" in the Troubleshooting section
+4. **Legacy recovery is defensive:** Moved the stale owner-tag case (`ghcr.io/sovereignapp/radiusclaim/*:phase1`) to "### Image Reference Mismatch (Legacy Recovery)"
+5. **"Services Not Starting" stays generic:** Focuses on pod diagnostics and image pull authentication, not legacy recovery
+
+### Rationale
+
+- **First-timers need linear storytelling:** Operators should not see redeploy or legacy recovery language in the main narrative; these are iteration and edge-case topics
+- **Troubleshooting is opt-in:** By placing these sections in troubleshooting, we make them discoverable for operators who need them but invisible to those following the happy path
+- **Naming matters:** "Image Reference Mismatch (Legacy Recovery)" signals "this is defensive, not expected" better than burying it in a larger section
+
+### Outcomes
+
+| Audience | Before | After |
+|----------|--------|-------|
+| **First-timers** | Mixed narrative with redeploy and legacy recovery interspersed | Clean linear path: deploy → validate → demo |
+| **Operators iterating** | Had to skip/ignore redeploy section in Next Steps | Troubleshooting section shows redeploy workflow clearly |
+| **Operators with legacy paths** | Legacy recovery mixed into Services Not Starting | "Image Reference Mismatch (Legacy Recovery)" section, easy to find if needed |
+
+---
+
+## 9. Eddie (Docs/Story) — Walkthrough `rad deploy` Command Parameter Consistency
+
+**Date:** 2026-03-25  
+**Owner:** Eddie (Docs/Story)  
+**Status:** COMPLETE  
+**Scope:** Minimal, targeted consistency pass
+
+### Problem
+
+The end-to-end setup walkthrough had an inconsistency in `rad deploy infra/radius/app.bicep` commands:
+
+- **Happy path** (Step 9 manual CLI): Includes `--parameters deploymentTarget='radius'`
+- **Troubleshooting (Image Reference Mismatch):** Missing `deploymentTarget='radius'`
+- **Troubleshooting (Redeploying After Code Changes):** Missing `deploymentTarget='radius'`
+
+This inconsistency creates operator confusion: "Should I use this parameter every time, or only in the happy path?"
+
+### Decision
+
+**Add `--parameters deploymentTarget='radius'` to all recovery `rad deploy` commands.**
+
+**Rationale:**
+- Consistency reinforces the canonical form; operators learn one shape
+- `deploymentTarget` is a legitimate app model parameter, not a workaround
+- Recovery paths should mirror the happy path exactly (build confidence, reduce variables)
+
+### Secondary Change: Reword "Image Reference Mismatch" Section
+
+**Original heading:** "### Image Reference Mismatch (Legacy Recovery)"
+
+**New heading:** "### Image Reference Mismatch"
+
+**Why:**
+- "(Legacy Recovery)" signals this is a defensive edge-case section
+- This is accurate (for real edge cases), but the phrasing was scaring off first-timers
+- Removing the label lets operators read the symptom and self-decide relevance
+- First-timers arriving here via "Cmd+F symptom not found" still find the generic recovery steps
+
+**Symptom reworded:**
+- **Old:** "Pod events reference an old registry path (e.g., `ghcr.io/sovereignapp/radiusclaim/*:phase1`)"
+- **New:** "Pod events reference an unexpected registry path or old tag (e.g., a previous environment's registry)"
+
+**Why:**
+- Removes project-specific example (`sovereignapp/`) that makes it seem like legacy recovery for a specific past state
+- Generalizes to any environment mismatch (switching environments, rebuilds with different parameters)
+- Makes the section applicable to a broader set of operators
+
+### Verification
+
+All three `rad deploy infra/radius/app.bicep` command instances in the walkthrough now use:
+```bash
+rad deploy infra/radius/app.bicep \
+  --parameters containerRegistry="$GHCR_PREFIX" \
+  --parameters imageTag="$TAG" \
+  --parameters deploymentTarget='radius'
+```
+
+Operators following happy path, recovering from image mismatch, or redeploying after code changes now use the same command shape.
+
+---
+
+## 10. Graham — GHCR 403 triage
+
+**Date:** 2026-03-25  
+**Status:** Decision  
+
+Treat `ghcr.io/sovereignapp/radiusclaim/*:phase1` pull failures as repo drift first, not as a Radius namespace regression. The shared app model now points at the current repo namespace (`ghcr.io/wesback/radiusclaim`) and requires an explicit service-image tag so operators stop inheriting the retired `phase1` image reference by accident.
+
+### Why
+- Anonymous GHCR token probes return `403` for `sovereignapp/radiusclaim/...`, which is consistent with a dead or unauthorized old owner path.
+- The same probe returns an anonymous token for the published recipe package under `wesback/radiusclaim/recipes/...`, proving the active repo namespace is different from the stale app default.
+- The deploy workflow already pushes service images with commit-SHA tags under `ghcr.io/wesback/radiusclaim`; `phase1` is no longer a workflow output.
+
+### Operator follow-up
+If Kubernetes now pulls `ghcr.io/wesback/...` and still gets `403 Forbidden`, the remaining blocker is GHCR package visibility or pull auth. Operators should either make the service-image packages public in GHCR or attach a namespace-scoped `ghcr-pull` imagePullSecret before retrying the app deploy.
+
