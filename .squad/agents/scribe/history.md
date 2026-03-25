@@ -54,3 +54,22 @@
 **Decisions Registry Status:** 7 active decisions, updated 2026-03-24T17:53:40Z.
 
 **Agents Updated:** Graham, Daisy, Karen history files appended with follow-up orchestration work.
+
+---
+
+## 2026-03-25T10:17:49Z: GHCR Private-by-Default Documentation Audit & Decision Merge
+
+**Work:** Process Eddie audit outcome and Graham recovery reference; merge 4 inbox decisions into main registry; delete inbox files; update agents' history.
+
+**Files Written:**
+- `.squad/orchestration-log/2026-03-25T10-17-49Z-eddie.md` — Eddie's GHCR audit and recommended doc changes
+- `.squad/log/2026-03-25T10-17-49Z-ghcr-private-doc-audit.md` — Session summary for audit work
+- Updated `.squad/decisions/decisions.md` — Added Decisions 11 (Eddie GHCR docs) and 12 (Graham recovery reference)
+
+**Inbox Purged:** eddie-ghcr-private-docs.md, eddie-docs-review.md, graham-recovery-commands.md, graham-sovereignapp-pubsub-diagnosis.md removed.
+
+**Decisions Registry Status:** 12 active decisions, updated 2026-03-25T10:17:49Z. Decisions 11–12 focus on GHCR private-by-default documentation clarity (Eddie audit) and live cluster recovery reference (Graham platform guidance).
+
+**Deduplication:** Verified no duplicate problem statements across merged entries. Graham's recovery reference complements Eddie's doc audit—both address GHCR 403 blocker from different angles (preventive docs vs. operational playbook).
+
+**Outcome:** Inbox merged, orchestration/session logs documented, team decision registry current.

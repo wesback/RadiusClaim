@@ -827,3 +827,82 @@ Wesley asked me to rewrite `docs/end-to-end-setup-walkthrough.md` to:
 - **Canonical forms reinforce learning:** Operators learn one shape; recovery paths mirror that shape exactly
 
 ### Status: COMPLETE (both spawns)
+
+## Opus 4.6 Documentation Review (2026-03-24)
+
+### What Was Done
+Deep review of README.md, end-to-end-setup-walkthrough.md, radius-validation-checklist.md, ADR-0001, and phase-7-demo-walkthrough.md. Cross-referenced all doc claims against actual codebase (Bicep files, workflow YAML, Dockerfiles, contracts, directory structure). Focus: factual drift, contradictions, misleading deploy guidance, missing prerequisites.
+
+### Key Findings (Prioritized)
+1. **P0 — README Project Layout tree still says `sovereignapp/`** (stale, should be repo root name)
+2. **P0 — README Contracts path wrong**: `src/RadiusClaim.Contracts/` vs actual `src/shared/RadiusClaim.Contracts/`
+3. **P0 — Radius CLI version contradiction**: walkthrough says v0.37.0, README says 0.55, checklist uses literal `v0.x.x` placeholder
+4. **P0 — "Coming in Phase 2" Quick Start placeholder** survived in README despite Phases 1-6 being complete
+5. **P1 — Walkthrough Step 11 UI description** says "Rejected" status but demo flow uses ManualReviewRequested
+6. **P1 — Missing .NET SDK prerequisite** in walkthrough — needed for local builds
+7. **P1 — GHCR image pull access** not addressed in happy-path setup (only in troubleshooting)
+8. **P2 — `belgiumcentral` vs `eastus`** region inconsistency across docs
+9. **P2 — Missing `ExpenseStatus` enum and `ExpenseRecord`** from README contracts section
+10. **P2 — Validation checklist `@parameters.json` usage** is redundant with inline overrides
+
+### Learnings
+- Cross-referencing the Project Layout tree against `find` output catches stale directory names that rename sweeps miss
+- Version numbers scattered across multiple docs drift independently — a single source-of-truth version table would prevent this
+- Prerequisites sections get stale when CI handles dependencies that manual operators also need
+- GHCR visibility is the #1 gotcha for first-time Kubernetes operators using GitHub-hosted images
+
+---
+
+## Session: GHCR Private Package Documentation Review
+
+**Date:** Current session
+**Reviewer:** Eddie
+**Request:** Verify whether docs explicitly state GHCR packages are private by default and require pull access setup.
+
+### Finding: PARTIALLY CLEAR (borderline insufficient)
+
+**Current state:**
+- ✅ Docs mention GHCR in multiple places: initial setup (token creation), build/push steps, troubleshooting
+- ✅ Troubleshooting explicitly offers two paths: "make the package public in GHCR, or wire a pull secret" (3 locations):
+  - `end-to-end-setup-walkthrough.md:703` 
+  - `end-to-end-setup-walkthrough.md:708–717` (full kubectl secret code)
+  - `radius-validation-checklist.md:551` and `551–567` (full kubectl secret code)
+- ⚠️  **GAPS:** 
+  1. NO explicit statement that "GHCR packages are private by default"
+  2. NO warning upfront during happy-path setup that private packages will cause 403 Forbidden
+  3. Token requirements mention `write:packages` and `read:packages` but don't connect "if you want to pull later, you need `read:packages`"
+  4. Troubleshooting assumes 403 is encountered; happy path doesn't prevent it
+
+**Why it matters:**
+A first-time user following the happy path (build → push → deploy) may push private packages and only discover the blocker at pod-start time. The docs don't preempt this with "packages are private by default—plan accordingly."
+
+### Recommended Doc Changes
+
+**Change 1: Add clarity in Step 6 (Token Creation)**
+After line 248 (`read:packages`), add:
+
+```markdown
+**Note:** GitHub Container Registry (GHCR) packages are **private by default**. 
+If you plan to deploy from a cluster (not just local testing), you have two options:
+- **Option A (simpler):** Make the package public in GitHub Settings after pushing.
+- **Option B (secure):** Keep packages private and wire a pull secret on the deployment namespace (see "Troubleshooting" for full steps).
+
+At deployment time, if images remain private and no pull secret is configured, you'll see `403 Forbidden` errors.
+```
+
+**Change 2: Add "Before You Deploy" callout**
+Before line 367 (Build step), add a new section:
+
+```markdown
+### ⚠️ Container Package Visibility Reminder
+
+Before deploying to a cluster, decide:
+1. Are your GHCR images public or private?
+2. If private, have you created a pull secret on the namespace? (See Troubleshooting → Image Registry Access)
+
+Skipping this step causes pod failures at image-pull time.
+```
+
+**Change 3: Simplify troubleshooting title**
+Line 700: Change `If you see 403 Forbidden...` to `When images are private: Create a pull secret` 
+This reframes from "error state" to "expected workflow for private packages."

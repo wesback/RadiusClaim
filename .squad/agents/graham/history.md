@@ -792,6 +792,9 @@ Closure criteria: Execute `rad deploy` twice against same environment, verify se
 - For shared Radius app models, stale service-image defaults are worse than missing defaults. Requiring an explicit `imageTag` is more teachable than letting clusters inherit a retired tag that only fails at pull time.
 - User preference: keep the Radius namespace revert intact and treat image-pull failures as a separate layer unless the deployed image reference itself proves the repo model is stale.
 - Key file paths for this class of issue: `infra/radius/app.bicep`, `infra/radius/app.json`, `.github/workflows/deploy-azure.yml`, `docs/radius-validation-checklist.md`, `docs/end-to-end-setup-walkthrough.md`.
+- When a repo "looks fixed" locally but live behavior still shows retired GHCR paths or old recipe contracts, compare the working tree against `HEAD` before blaming Radius. In this repo, the `wesback` image defaults and the Service Bus topics recipe fixes exist in the working tree, while committed `HEAD` still carries `ghcr.io/sovereignapp/radiusclaim`, default `phase1`, and the old pubsub recipe contract.
+- If the latest GitHub Actions `deploy-azure` run never reaches the deploy steps, do not use it to explain cluster state. Confirm whether the observed deployment came from a manual `rad deploy`, an older checkout, or stale published OCI recipe artifacts.
+- For this repo's Azure-backed pub/sub path, the highest-signal failure pattern is contract drift in `infra/radius/recipes/azure/pubsub.bicep`: queue-style `pubsub.azure.servicebus`, missing pre-created `notification-svc` subscription while `disableEntityManagement=true`, and a non-FQDN `namespaceName` output.
 
 ---
 
@@ -819,3 +822,37 @@ Closure criteria: Execute `rad deploy` twice against same environment, verify se
 - Decision 8: Eddie (Docs/Story) — First-Time Deploy Walkthrough Reorganization
 - Decision 9: Eddie (Docs/Story) — Walkthrough `rad deploy` Command Parameter Consistency
 - Decision 10: Graham — GHCR 403 triage (from Eddie spawn feedback)
+
+## Learnings
+
+### 2026-03-25: Live Cluster Recovery (Review Phase)
+
+**Situation:** Live AKS cluster (`radiusclaim-azure-radiusclaim`) stuck with three deployments failing due to stale and unauthorized image sources (sovereignapp/phase1 private images + wesback/latest 401 errors).
+
+**Analysis:**
+1. **Image pull failure root cause:** sovereignapp/* images are private; ghcr.io/wesback/radiusclaim/...:latest requires auth that AKS doesn't have.
+2. **No Dapr components:** Cluster has no statestore, pubsub, or platform-secrets components. Indicates Radius environment deployment incomplete or missing.
+3. **Sidecar failure cascade:** daprd can't initialize because app containers can't pull images; liveness probes fail, restarts loop.
+4. **Mixed image sources:** Deployment drift—two different registries/namespaces/tags in active use.
+
+**Key findings for recovery:**
+- Recovery requires: (1) registry auth OR public packages, (2) image redeploy with explicit tag, (3) Dapr component verification/recreation via Radius.
+- Scale-down-then-redeploy pattern avoids lingering Pending pods.
+- Kubernetes Set Image is non-disruptive; doesn't require recreating deployments.
+- Dapr components MUST come from Radius (via `rad deploy`), not manual manifests—maintains IaC contract.
+
+**Decision:** Provided three parallel recovery paths:
+- **Path A (recommended for samples):** Make ghcr.io/wesback packages public; simplifies auth, aligns with reference-impl intent.
+- **Path B (production):** Create imagePullSecret with GitHub token; keeps packages private, supports internal/gated access.
+- **Path C (component recovery):** Re-run `rad deploy` on environment to ensure Dapr component wiring is complete.
+
+**Commands generated:** 4 copy-paste blocks covering auth, image update, and validation.
+
+**Patterns for future recovery:**
+- Always validate image sources before deployment; mixed registries = configuration drift.
+- Explicit tag > :latest for prod/live; :latest hides which version is running.
+- Dapr component absence often masks image pull failures; check components AFTER containers run, not before.
+- `kubectl set image` is the correct one-off update mechanism; avoids editing manifests directly.
+
+**For team:** Documented in `.squad/decisions/inbox/graham-recovery-commands.md` for Coordinator review and approval before execution.
+

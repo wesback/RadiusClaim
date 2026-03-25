@@ -442,3 +442,91 @@ Treat `ghcr.io/sovereignapp/radiusclaim/*:phase1` pull failures as repo drift fi
 ### Operator follow-up
 If Kubernetes now pulls `ghcr.io/wesback/...` and still gets `403 Forbidden`, the remaining blocker is GHCR package visibility or pull auth. Operators should either make the service-image packages public in GHCR or attach a namespace-scoped `ghcr-pull` imagePullSecret before retrying the app deploy.
 
+
+---
+
+## 11. Eddie (Docs/Story) — GHCR Private Package Documentation Clarity
+
+**Date:** 2026-03-25  
+**Author:** Eddie (Docs/Story)  
+**Status:** Review finding (non-binding recommendation)  
+**Scope:** docs/end-to-end-setup-walkthrough.md, docs/radius-validation-checklist.md
+
+### Problem Statement
+
+Audit question: Are GHCR packages private by default documented?
+
+**Current State:** Partially documented. The docs mention pull secrets and offer "make public OR wire a secret" in troubleshooting, but:
+- Never explicitly state "GHCR packages are private by default"
+- Don't warn operators upfront during happy-path setup
+- Bury the pull-auth requirement in troubleshooting (error response) instead of happy-path (happy preemption)
+
+### Impact
+
+First-time users follow: build → push → deploy. They push private packages unknowingly, hit `403 Forbidden` at pod-start time, and have to jump to the troubleshooting section to understand the fix. The docs make this a **gotcha** instead of **expected workflow**.
+
+### Recommendation
+
+**Inject 3 clarity touchpoints** (non-invasive, no rewrites):
+
+1. **Token Creation section (after line 248):** Add 3-line note: GHCR is private by default; you have two deployment options (public vs. pull secret).
+2. **Before Build/Push (around line 367):** Add 2-sentence callout: "Visibility Decision Checkpoint" — decide now whether images are public or private, plan pull secrets if private.
+3. **Troubleshooting section (line 700):** Reframe title from "If you see 403" to "When Images are Private: Create a Pull Secret" — shifts mindset from error-state to expected workflow.
+
+### Trade-offs
+
+- **Pro:** Eliminates the most common 403 Forbidden blocker for first-time operators
+- **Pro:** Keeps happy-path compact (3 lines + 2 lines)
+- **Con:** Adds 5 lines of inline text (negligible)
+- **Con:** Troubleshooting section loses "only needed if error" framing (but that's okay—making it explicit is better)
+
+### Next Step
+
+Awaiting reviewer feedback. If approved, Eddie will implement these three changes in the artifacts.
+
+---
+
+## 12. Graham — Live Cluster Recovery Commands (Reference Documentation)
+
+**Date:** 2026-03-25  
+**Author:** Graham (Platform Dev)  
+**Status:** Documented for team reference
+
+### Context
+
+AKS cluster (`radiusclaim-azure-radiusclaim`) has three deployments stuck in `Pending`:
+- Stale image sources: `ghcr.io/sovereignapp/radiusclaim:{phase1,latest}` (private, incorrect)
+- No Dapr components in the namespace
+- Image pull failures (`403 Forbidden`) on private GHCR packages
+- daprd sidecars failing due to inability to fetch app images
+
+### Recovery Strategy (Reference Only)
+
+**Part 1: Image Registry Access** — Choose one:
+- **Option A:** Make `ghcr.io/wesback/radiusclaim` packages PUBLIC (recommended for public sample)
+- **Option B:** Add `imagePullSecret` to AKS for GHCR private access (if packages must stay private)
+
+**Part 2: Redeploy** — Scale down, update images, scale up:
+- Use `kubectl scale` and `kubectl set image` to swap container images
+- Redeploy with `ghcr.io/wesback/radiusclaim:<TAG>`
+
+**Part 3: Dapr Components** — Verify or recreate:
+- Check if Dapr components exist: `kubectl get components -n radiusclaim-azure-radiusclaim`
+- If missing, re-run `rad deploy` to provision environment and components
+
+### Operator Follow-up
+
+- Choose and execute Part 1 option first (image registry access)
+- Complete Part 2 redeploy
+- Verify Part 3 Dapr components
+- Validate all pods reach Running state and expected image pull succeeds
+
+### Notes
+
+- **Radius ownership:** Dapr components are IaC-owned by Radius, not manually created
+- **Image updates:** CI/CD workflow does exactly this—builds, tags with SHA, then `rad deploy` with imageTag. For one-off recovery, use `kubectl set image` directly.
+- **Private vs. public:** Public sample → Option A (make public). Production → Option B (imagePullSecret).
+
+---
+
+**Last Updated:** 2026-03-25T10:17:49Z

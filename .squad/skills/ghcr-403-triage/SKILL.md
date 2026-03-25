@@ -22,6 +22,12 @@ Use this when a Radius-managed Kubernetes deployment gets `ImagePullBackOff`, `E
 - Fix the app model defaults so they point at the current repository namespace, and require an explicit image tag if the old default is no longer published.
 - Do not reopen unrelated Radius namespace or recipe decisions just because the failure appears during `rad deploy`; image pulls are a later layer.
 
+### Compare working-tree fixes to committed deployment state
+
+- If the repo "already looks fixed," verify whether the fix is actually committed or only present in the local working tree.
+- In GitOps or GitHub Actions paths, `HEAD` is what matters; local Bicep edits do not explain live behavior until they are committed, pushed, and, for recipes, republished.
+- If the latest workflow run failed before any deploy step, do not use that run to explain cluster state. Look for a manual `rad deploy`, an older checkout, or stale published artifacts instead.
+
 ### Use GHCR anonymous token probes as a fast classifier
 
 - Probe `https://ghcr.io/token?scope=repository:<owner>/<package>:pull&service=ghcr.io`.
@@ -55,3 +61,4 @@ Use this when a Radius-managed Kubernetes deployment gets `ImagePullBackOff`, `E
 - Leaving stale image defaults in shared Bicep because "operators can override them anyway."
 - Adding custom Kubernetes YAML before proving the image path/tag is current.
 - Telling operators to retry `rad deploy` without checking whether the referenced package is public, private, or missing.
+- Assuming a repo fix is live just because it exists locally, without checking `HEAD`, the last workflow run, or the published OCI artifact tag that Radius actually resolves.
