@@ -1505,3 +1505,194 @@ Live AKS cluster `radiusclaim-azure-radiusclaim` has three deployments stuck in 
 - Pre-deployment recipe validation (compilation + type checking) must be CI gate before `rad deploy`
 
 [See detailed triages: `.squad/orchestration-log/20260325-110539-daisy.md` and `.squad/orchestration-log/20260325-110539-graham.md`]
+
+### 2026-03-25T16:14:00Z: Namespace Drift During Radius Application Update
+**By:** Graham (Platform Dev)
+**Date:** 2026-03-25
+**Status:** RESOLVED
+**Severity:** Operational (not code defect)
+
+**Context:**
+Error when re-deploying application via `rad deploy infra/radius/app.bicep` against environment with existing `radiusclaim` application:
+```
+Updating an application's Kubernetes namespace from 'radiusclaim-azure-radiusclaim' 
+to 'radiusclaim-azure-radiusclaim-radiusclaim' requires the application to be deleted and redeployed.
+```
+
+**Root Cause:**
+Radius computes workload namespaces by appending application name to environment namespace:
+- Environment namespace (from `azure-radius.bicep` line 7): `radiusclaim-azure`
+- Application name (from `app.bicep` line 7): `radiusclaim`
+- Expected workload namespace: `radiusclaim-azure-radiusclaim` ✓
+
+On re-deployment, Radius state drift causes it to recompute and treat existing namespace as if it already includes suffix, then appends again → `radiusclaim-azure-radiusclaim-radiusclaim`
+
+**Repository Assessment:**
+✅ Bicep files are **correct** — no code changes needed
+- `infra/radius/environments/azure-radius.bicep`: kubernetesNamespace properly set
+- `infra/radius/app.bicep`: applicationName properly set
+- `.github/workflows/deploy-azure.yml`: Parameters correctly passed
+
+This is **not a bug in repo configuration** — it is operator state mismatch in Radius.
+
+**Safe Recovery Pattern:**
+1. Delete existing Radius application: `rad app delete radiusclaim`
+2. Delete workload namespace: `kubectl delete namespace radiusclaim-azure-radiusclaim`
+3. Re-deploy: `rad deploy infra/radius/app.bicep`
+
+**Why deletion required:** Radius's idempotency for Kubernetes namespaces cannot self-heal once mismatch is detected.
+
+**Team Impact:**
+- Platform engineers: Use deletion-plus-redeploy pattern as recovery
+- Documentation: Troubleshooting section added to walkthrough
+- Future Radius versions: Monitor release notes; this may not recur in later versions
+
+**Decision:** No code changes. Add troubleshooting documentation (✅ done).
+
+---
+
+### 2026-03-25T16:14:00Z: Environment vs. Workload Namespace Variable Separation
+**By:** Eddie (Docs/Story)
+**Date:** 2026-03-25
+**Status:** IMPLEMENTED
+**Severity:** Documentation/Operator safety
+
+**Problem:**
+Double-namespace bug root cause identified in documentation: same shell variable reused for two conceptually different namespaces:
+1. **Environment namespace** (`radiusclaim-azure`) — Radius infrastructure & Dapr components
+2. **Workload namespace** (`radiusclaim-azure-radiusclaim`) — Application pods
+
+When operators copy-paste code blocks, they unknowingly reassigned `RADIUS_KUBERNETES_NAMESPACE` to workload namespace. Radius then interpreted that as environment namespace, leading to double-naming bug.
+
+**Decision:**
+Enforce strict variable naming across documentation:
+- `RADIUS_KUBERNETES_NAMESPACE` — **Always** refers to environment namespace (e.g., `radiusclaim-azure`)
+  - Set once in Step 7 (environment deployment)
+  - Used for `rad deploy` commands only
+  - **Never reassigned**
+- `WORKLOAD_NAMESPACE` — Used exclusively for workload operations (e.g., kubectl commands)
+  - Set in Step 9+ when accessing deployed services
+  - Used for all kubectl queries targeting running pods, services, logs
+  - Clear, unambiguous naming prevents accidental reuse
+
+**Implementation:**
+Updated `docs/end-to-end-setup-walkthrough.md`:
+- Lines 647, 662: Changed from `RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure-radiusclaim"` → `WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"`
+- Lines 686, 689: kubectl commands updated to use `$WORKLOAD_NAMESPACE`
+- Lines 820–867: Troubleshooting section reinforces distinction
+- Lines 887, 897, 1003, 1009: All workload-scoped commands use `$WORKLOAD_NAMESPACE`
+- Section 8a: Enhanced explanation of environment vs. workload roles
+
+Validation: `docs/radius-validation-checklist.md` already correct (no changes needed).
+
+**Impact:**
+- Operators can safely copy-paste code blocks without variable collision
+- Documentation is now immune to double-namespace bug
+- Variable naming is now part of API design for clarity
+- Future Radius helpers using environment namespace should follow `RADIUS_KUBERNETES_NAMESPACE` convention
+
+**Key Invariant:** `RADIUS_KUBERNETES_NAMESPACE` is never reassigned after initial setup.
+
+---
+
+### 2026-03-25T16:14:00Z: Walkthrough Readiness — Dapr Startup & Telemetry Dependencies
+**By:** Eddie (Docs/Story)
+**Date:** 2026-03-25
+**Status:** DOCUMENTED
+**Severity:** Documentation clarity
+
+**Context:**
+Local development walkthrough needs clarification on Dapr startup patterns and telemetry dependencies.
+
+**Decision:**
+1. **Document `/app` shell reachability separately from backend readiness**
+   - Opening browser shell is not sufficient evidence that Dapr-backed expense submission is working
+   - Requires explicit Dapr component health check or service test
+
+2. **Prefer real Dapr startup path over plain `dotnet run`**
+   - Local guidance should use `dapr run` for `expense-api`, not plain `dotnet run`
+   - Ensures developers use production-consistent startup pattern locally
+
+3. **Call out workflow telemetry dependency chain**
+   - Workflow telemetry has additional dependency on `workflow-engine` through Dapr
+   - Must be documented so developers understand startup order
+
+4. **Align launch profile parameters**
+   - When local run commands documented, match `dapr run --app-port` values to checked-in launch profiles
+   - Ensures walkthrough stays executable and reproducible
+
+**Status:** Guidance documented; developers now have clear expectations for local Dapr setup.
+
+---
+
+### 2026-03-25T16:14:00Z: Live Image Version Mismatch — Expense API Dapr Exception Handling
+**By:** Billy (QA/Testing)
+**Date:** 2026-03-25
+**Status:** IDENTIFIED & VERIFIED
+**Severity:** Deployment version tracking
+
+**Context:**
+Live AKS stack trace shows errors at line numbers mismatched with current source code, indicating running cluster is on older image.
+
+**Evidence:**
+- Current source (`src/expense-api/Program.cs`): Wraps `Dapr.DaprException` at ASP.NET boundary
+- Expected behavior: Dapr state failures on `GET /expenses` and `GET /expenses/{id}` return `503` problem details
+- Live stack trace line numbers: `GET /expenses` at line 153, `GetExpenseIndexAsync` at line 210
+- These line numbers **match pre-guard source layout**, not current file structure
+
+**Conclusion:**
+Running cluster is on **older image that predates Dapr exception middleware**.
+
+**Verification:**
+- Reproducing current build locally with plain `dotnet run`:
+  - Hitting `/expenses` and `/expenses/{id}` returns expected `503` problem details ✓
+  - Dapr exception handling working as designed ✓
+
+**Next Step:**
+Redeploy updated app image to cluster and confirm:
+1. Cluster running latest image version
+2. Configured state store exists and is accessible to Dapr
+3. `GET /expenses` and `GET /expenses/{id}` return `503` (not stack trace)
+
+**Recommendation:**
+Implement image version tracking in cluster (annotations or labels) to prevent version mismatch surprises in future. Consider semantic versioning or git SHA in image tags.
+
+---
+
+### 2026-03-25T16:14:00Z: Live Statestore Dapr Component Missing — Recovery Pattern
+**By:** Graham (Platform Dev)
+**Date:** 2026-03-25
+**Status:** RESOLVED (Live repair applied)
+**Severity:** Operational (infrastructure gap)
+
+**Context:**
+Live AKS workloads in `radiusclaim-azure-radiusclaim` were healthy but `expense-api` returned:
+```
+Dapr FailedPrecondition: state store statestore is not configured
+```
+
+**Evidence:**
+- `rad resource list -g radiusclaim-group` showed `statestore`, `pubsub`, `platform-secrets` as `Succeeded`
+- `kubectl get components.dapr.io -A` showed **zero Dapr components** anywhere in cluster
+- Re-running `rad deploy infra/radius/app.bicep` refreshed resources and rolled workloads but left cluster with zero components
+- Sidecar logs loaded only `secretstores.kubernetes` — no `statestore` or `pubsub` available
+
+**Root Cause:**
+**Missing Kubernetes Dapr Component projection** — not an app-model scope bug. Radius Resources succeeded, but CRDs were not materialized to cluster.
+
+**Recovery Actions Applied:**
+1. Backfilled `statestore` and `pubsub` as Dapr `Component` CRs in `radiusclaim-azure-radiusclaim` namespace
+2. Used Service Bus `connectionString` auth for `pubsub`
+3. Used Radius Azure service principal for Blob state auth; granted `Storage Blob Data Contributor` role (key auth disabled on storage account)
+4. Restarted three service deployments
+
+**Result:**
+✅ expense-api sidecar loads `statestore`
+✅ workflow-engine sidecar loads `statestore` and `pubsub`
+✅ `POST /expenses` and `GET /expenses/{id}` succeed
+
+**Recommendation:**
+Keep Radius as desired control plane, but investigate why successful `Applications.Dapr/*` Radius resources are not materializing as Kubernetes Dapr `Component` objects. Until control-plane gap is fixed, live-cluster backfill pattern is pragmatic break-glass recovery step.
+
+**Decision:** Accept live repair as temporary mitigation. Escalate component-projection gap to Radius team for investigation.
+

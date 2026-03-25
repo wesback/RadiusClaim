@@ -143,6 +143,9 @@ Phase 2: Extend README with "Local Development" section (setup commands, local e
 - **Roadmap transparency builds credibility.** The ADR doesn't promise "Radius will fix this"; it says "if Radius adds ACA support, the fallback disappears, and app code stays unchanged." That's credible.
 - **Demo walkthroughs need actual commands.** Telling teams "the workflow auto-approves at <$100" is abstract; showing the `curl` command, the JSON response, the log output, and the status progression makes it concrete and reproducible
 - **Dapr portability is the thesis.** By keeping the same component names across both paths and showing zero application code impact, the docs prove that Dapr is the actual portability layer—Radius/ACA are just the plumbing
+- **Shell readiness is not runtime readiness.** A hosted `/app` shell can render before Dapr-backed expense reads and writes are actually available, so walkthroughs must say that directly instead of implying the whole backend is ready.
+- **Local Dapr instructions must follow real launch profiles.** For `dotnet run` plus `dapr run`, the documented `--app-port` values need to match the checked-in `launchSettings.json` ports (`src/expense-api/Properties/launchSettings.json`, `src/workflow-engine/Properties/launchSettings.json`) or service invocation guidance becomes misleading.
+- **Workflow telemetry deserves its own dependency note.** Expense state can exist while telemetry is still unavailable, because the `/expenses/{id}/workflow` path has an additional Dapr reachability dependency on `workflow-engine`.
 
 ### 2026-03-24: Phase 7 Documentation Lane Complete
 
@@ -1122,3 +1125,110 @@ Completed the follow-up requested by Wesley on namespace/secret sequencing.
 - imagePullSecrets = for app images in workload namespace only
 - Environment and workload namespaces are separate and serve different purposes
 
+---
+
+## Phase 7 Session: Namespace Variable Separation Fix (2026-03-24)
+
+**Issue:** Deployment failed with "double namespace" bug — Radius tried to change namespace from `radiusclaim-azure-radiusclaim` to `radiusclaim-azure-radiusclaim-radiusclaim`.
+
+**Root Cause:** Docs reused `RADIUS_KUBERNETES_NAMESPACE` for both environment namespace (`radiusclaim-azure`) and workload namespace (`radiusclaim-azure-radiusclaim`). Copy-paste errors led operators to reassign the variable, causing Radius to misinterpret the workload namespace as the environment namespace.
+
+**Solution Implemented:**
+1. **Strict variable separation:**
+   - `RADIUS_KUBERNETES_NAMESPACE` (environment namespace) — set once, never reassigned
+   - `WORKLOAD_NAMESPACE` (workload namespace) — used exclusively for kubectl workload commands
+
+2. **Files Updated:**
+   - `docs/end-to-end-setup-walkthrough.md`: Fixed 9 instances where kubectl workload commands incorrectly used `RADIUS_KUBERNETES_NAMESPACE`; now use `WORKLOAD_NAMESPACE`
+   - Troubleshooting section (pod diagnostics) now explicitly guides operators to use `$WORKLOAD_NAMESPACE`
+   - Section 8a (Understanding Namespace Roles) reinforced distinction
+
+3. **Validation:**
+   - All `rad deploy` commands in Step 7 correctly use `RADIUS_KUBERNETES_NAMESPACE`
+   - All kubectl commands targeting workloads (Steps 9+) correctly use `WORKLOAD_NAMESPACE`
+   - No more reassignment of environment namespace variable
+
+**Decision Document:** `.squad/decisions/inbox/eddie-namespace-vars.md` — captures the pattern, validates against future regressions, and explains why this matters for operator safety.
+
+**Key Learnings:**
+- Variable naming is part of API design; reusing names across conceptual domains creates error traps at scale
+- Clear terminology (environment vs. workload) in docs prevents operator confusion
+- Code blocks in docs are deployed code — small naming mistakes cascade into failures
+
+---
+
+## 2026-03-25 | Namespace Variable Separation & Documentation Consistency
+
+### Summary
+Identified and fixed root cause of namespace drift bug in documentation. Implemented strict variable naming convention to prevent operator errors.
+
+### Problem & Root Cause
+**Double-namespace bug:** Operators unknowingly reused `RADIUS_KUBERNETES_NAMESPACE` for two different namespaces:
+- **Environment namespace** (`radiusclaim-azure`): Radius infrastructure & Dapr components
+- **Workload namespace** (`radiusclaim-azure-radiusclaim`): Application pods
+
+When copying documentation code blocks, operators reassigned the environment variable to the workload namespace, causing Radius to interpret it as the environment namespace and compute the wrong target.
+
+### Decision: Variable Naming Convention
+
+**Enforce strict naming across all documentation:**
+- `RADIUS_KUBERNETES_NAMESPACE` — **Always** environment namespace only (e.g., `radiusclaim-azure`)
+  - Set once in Step 7 (environment deployment)
+  - Used for `rad deploy` commands
+  - **Never reassigned**
+- `WORKLOAD_NAMESPACE` — **Always** workload operations (e.g., kubectl commands)
+  - Set in Step 9+ (when accessing deployed services)
+  - Used for all `kubectl` queries targeting pods, services, logs
+  - Clear name prevents accidental environment namespace reuse
+
+### Implementation
+
+**Files Updated:**
+- `docs/end-to-end-setup-walkthrough.md`:
+  - Lines 647, 662: Changed `RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure-radiusclaim"` → `WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"`
+  - Lines 686, 689: kubectl commands now use `$WORKLOAD_NAMESPACE`
+  - Lines 820–867: Troubleshooting section enhanced; reinforces distinction
+  - Lines 887, 897, 1003, 1009: All workload-scoped commands use `$WORKLOAD_NAMESPACE`
+  - Section 8a: Explanation of environment vs. workload roles updated
+
+- `docs/radius-validation-checklist.md`: No changes needed (already correct)
+
+### Validation
+
+Pattern verified across all code blocks:
+```bash
+# Environment operations (Step 7)
+export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"
+rad deploy infra/radius/environments/azure-radius.bicep --parameters kubernetesNamespace="$RADIUS_KUBERNETES_NAMESPACE"
+
+# Workload operations (Steps 9+)
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+kubectl get pods -n "$WORKLOAD_NAMESPACE"
+```
+
+**Key invariant:** `RADIUS_KUBERNETES_NAMESPACE` is never reassigned after initial setup.
+
+### Impact
+
+- ✅ Operators can safely copy-paste code blocks without variable collision
+- ✅ Documentation immune to double-namespace bug
+- ✅ Variable naming is now part of API design
+- ✅ Clear distinction prevents future errors
+
+### Additional Guidance Documented
+
+**Local Development Clarity:**
+- Document `/app` shell access separately from Dapr-backed submission readiness
+- Prefer `dapr run` pattern over plain `dotnet run` for `expense-api`
+- Call out `workflow-engine` Dapr dependency for telemetry
+- Align launch profile `--app-port` values to keep walkthrough executable
+
+### Decisions Merged
+- `.squad/decisions/inbox/eddie-namespace-vars.md` → `.squad/decisions.md`
+- `.squad/decisions/inbox/eddie-walkthrough-readiness.md` → `.squad/decisions.md`
+
+### Status
+✅ Variable naming enforced across documentation
+✅ Walkthrough and checklist synchronized
+✅ Operator error traps eliminated
+✅ Local development guidance clarified
