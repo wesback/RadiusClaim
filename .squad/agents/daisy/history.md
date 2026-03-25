@@ -994,3 +994,39 @@ Recipe artifacts and application container images follow different authenticatio
 - In this sample, a healthy `/healthz` plus a rendered `/app` shell does **not** prove expense submission is ready. Submission and list/history endpoints depend on the `expense-api` Dapr sidecar and the configured `statestore` component.
 - When users report the exact generic string "The expense could not be submitted." with no validation detail, the first suspect should be backend runtime/dependency failure rather than the `ExpenseSubmission` contract. Key file paths: `src/expense-api/Program.cs`, `src/expense-api/wwwroot/app/app.js`, `src/shared/RadiusClaim.Contracts/ExpenseSubmission.cs`, `src/workflow-engine/Program.cs`.
 - Truthful distributed-demo failure handling should return RFC 7807 problem details for dependency outages and let the browser extract `errors`, `detail`, `title`, or legacy `message` fields before falling back to a generic string.
+
+## 2026-03-25 — Orchestration Log: Walkthrough Review & Bootstrap Assessment
+
+**Timestamp:** 20260325T160545Z  
+**Status:** REVIEWS COMPLETE
+
+### Activities
+- Performed comprehensive walkthrough review; found 6 critical + 4 minor issues
+- Assessed bootstrap.sh feasibility; approved as operational orchestrator
+- Evaluated namespace model, component projection, and deployment flow
+- Designed 7-phase bootstrap.sh with pre-flight checks and idempotency patterns
+
+### Key Findings — Walkthrough
+**Verdict:** CONDITIONAL REJECTION — 6 critical issues block deployment
+- C1: Missing `deploy-dapr-components.sh` step (also missing from GitHub Actions workflow)
+- C2: Step 8 "What this does" misattributes resource creation
+- C3: Step 9 prerequisite checks components in wrong namespace
+- C4: Validation checklist uses wrong namespace for pods throughout
+- C5: Validation checklist patches `default` SA instead of named ones
+- C6: No documentation of known Radius Component projection gap
+
+### Key Findings — Bootstrap.sh
+**Verdict:** APPROVED WITH CONDITIONS — right move for this repo
+- Design: 7-phase orchestrator that wraps (not replaces) walkthrough
+- Includes 18 pre-flight checks, 6 stop-and-ask decision points
+- Addresses operator readiness: walkthrough = education, bootstrap.sh = operational automation
+
+### Decisions Filed
+- Decision 16: Walkthrough Review: End-to-End Setup
+- Decision 17: bootstrap.sh Feasibility and Design
+
+### Next Actions
+- Assign C1–C6 fixes to Eddie (docs) with Graham reviewing namespace/component accuracy
+- Graham to implement bootstrap.sh per design spec
+- Karen to validate corrected walkthrough, then bootstrap.sh end-to-end
+

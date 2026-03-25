@@ -80,6 +80,8 @@ Phase 4+ work deferred: output bindings, notification persistence, retry/dead-le
 
 ## Learnings
 
+- **Log triage signal: Dapr `FailedPrecondition` on component access means the component is missing from the sidecar configuration, not a transient connection failure.** When every request to `GET /expenses` hits `state store statestore is not configured`, the platform wiring (Radius IaC or AKS Dapr annotation) is incomplete. The app middleware correctly catches this as a 503; do not add retry logic or health checks to mask a missing deployment dependency.
+
 - For Dapr state-backed demo APIs, keep the record key (`expense:{id}`) and the list index (`expense-index`) explicit in shared constants so app code and component wiring cannot drift.
 - Phase 2 can stay workflow-free while still preparing the future orchestration path by persisting both `ExpenseId` and `CorrelationId` in the stored `ExpenseRecord`.
 - Lightweight smoke coverage is still possible without a Dapr sidecar by exercising health and validation-first routes; invalid requests should fail before any state call is attempted.

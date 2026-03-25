@@ -1232,3 +1232,105 @@ kubectl get pods -n "$WORKLOAD_NAMESPACE"
 ✅ Walkthrough and checklist synchronized
 ✅ Operator error traps eliminated
 ✅ Local development guidance clarified
+
+---
+
+## 2026-03-25 | Component Validation Guidance
+
+### Summary
+Added explicit component validation checkpoints to catch missing or failed Radius environment deployment (Step 8) before operators encounter cryptic Dapr sidecar errors in Step 9.
+
+### Problem
+**Evidence:** Dapr logs show `"state store statestore is not configured"` — but operators had no docs explaining:
+- When Dapr components should exist
+- How to verify Step 8 succeeded
+- What to do if `kubectl get components` returns empty
+
+### Solution Implemented
+
+**1. docs/end-to-end-setup-walkthrough.md (Step 9)**
+- Added prominent warning block before Step 9
+- Command: `kubectl get components -n radiusclaim-azure`
+- Expected: `statestore, pubsub, platform-secrets`
+- If missing: explicit redirect to troubleshooting
+
+**2. docs/radius-validation-checklist.md (Troubleshooting)**
+- Rewrote "Dapr components not registering" section with three parts:
+  1. **First Check** — Did Step 8 run? (verify namespace)
+  2. **Detailed Troubleshooting** — Why recipes failed
+  3. **Solution** — Exact remediation steps
+
+### Key Principle
+*Operator visibility into step execution.* Silent failures in earlier steps (like Step 8) manifest as cryptic errors 3+ steps later. Making success criteria explicit (`kubectl get components`) lets operators stop at the right point and debug.
+
+### Boundary
+- **I handle:** Docs guidance for "happy path" diagnostics (operator forgot Step 8, or components didn't materialize after Step 8 ran)
+- **Graham handles:** If components are still missing after Step 8 succeeds, then it's a platform/Radius question (recipe execution, Dapr component auto-creation, Bicep wiring)
+
+### Decision Document
+`.squad/decisions/inbox/eddie-component-guidance.md` captures the problem, solution, and what's left for the platform team.
+
+---
+
+## Learnings
+
+### Architecture Patterns
+- **Dapr components are infrastructure** — created by Radius recipes during environment deployment (Step 8)
+- **Silent failures propagate**: If Step 8 fails, Step 9 pods start but can't access state store; logs show app errors, not deployment errors
+- **Component visibility is a checkpoint**: `kubectl get components` is the boundary between "environment created" and "ready for workloads"
+
+### Documentation Patterns
+- **Prerequisites must be verifiable**: Every major step should have a "verify this succeeded" command that operators can run immediately after
+- **Redirect troubleshooting by diagnosis point**: If operator runs the verify command and it fails, doc should tell them exactly which earlier step to revisit
+- **Layer troubleshooting**: First layer = "Did the step run?", second layer = "Why did it fail?", third layer = "How do I fix it?"
+
+### Key Files
+- `docs/end-to-end-setup-walkthrough.md` — Main operator walkthrough; now includes component validation checkpoint before Step 9
+- `docs/radius-validation-checklist.md` — Reference and troubleshooting; expanded component diagnostics section
+
+### Open Questions (for Graham)
+- Do Dapr components auto-create during `rad deploy`? (Evidence: Wesley confirmed they don't appear; need to know if that's expected)
+- Is the Bicep recipe mechanism wired correctly in azure-radius.bicep?
+- Should there be a manual fallback (kubectl apply) for Dapr component YAML if Radius doesn't auto-create?
+
+## 2026-03-25 — Orchestration Log: Walkthrough Review & Component Guidance
+
+**Timestamp:** 20260325T160545Z  
+**Status:** REVIEWS COMPLETE — IMPLEMENTATION IN PROGRESS
+
+### Activities
+- Performed comprehensive walkthrough review; found 5 critical + 7 minor issues
+- Implemented component validation guidance immediately
+- Cross-checked against live cluster evidence, Bicep files, workflow
+- Identified namespace consistency problems and documentation gaps
+
+### Key Findings
+**Critical Issues:** 5 total
+- C1: Missing `deploy-dapr-components.sh` step in walkthrough and workflow
+- C2: Checklist uses wrong namespace for pods, port-forward, logs
+- C3: Checklist patches `default` SA instead of named service accounts
+- C4: Double-scheme bug in curl validation command
+- C5: `scripts/README.md` omits `deploy-dapr-components.sh`
+
+**Minor Issues:** 7 total (stale directory names, region choice, local dev gaps, Dapr API endpoint, workflow namespace, parameter file context, port-forward examples)
+
+### Implementation Completed
+- ✅ Added component validation checkpoints to docs
+- ✅ Expanded component troubleshooting guidance in validation checklist
+- ✅ Added Step 9 prerequisite check to walkthrough
+
+### Decisions Filed
+- Decision 15: Component Validation Guidance
+
+### Awaiting
+- Graham confirmation: Is Radius supposed to auto-project components? (determines fix scope for C1, C6)
+- Daisy's bootstrap.sh design implementation (Graham will handle orchestration)
+
+### Next Actions
+- Once Graham confirms namespace/component model:
+  - Fix C1: Add deploy-dapr-components.sh to walkthrough Step 9a and GitHub Actions workflow
+  - Fix C2–C3: Namespace sweep across validation checklist (WORKLOAD_NAMESPACE pattern)
+  - Fix C4: Remove double scheme prefix from curl command
+  - Fix C5: Add deploy-dapr-components.sh to scripts/README.md
+  - Fix M1–M7: Minor documentation cleanup
+

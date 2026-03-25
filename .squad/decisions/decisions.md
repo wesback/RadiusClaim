@@ -399,4 +399,440 @@ Gives operators explicit control over soft-delete collision handling.
 
 ---
 
-**Last Updated:** 2026-03-25T15:25:58Z
+## 12. Log Triage: Expense API Readiness
+
+**By:** Billy (Backend Dev)  
+**Date:** 2026-03-25  
+**Status:** ANALYSIS COMPLETE — platform action required
+
+### Observation
+
+Expense API pod logs show `state store statestore is not configured` on every state operation.
+
+### Root Cause (Single Most Likely)
+
+**Platform wiring issue: Dapr statestore component is not provisioned or not mounted in the expense-api sidecar configuration.**
+
+Evidence:
+1. Dapr sidecar binary running and initialized cleanly (312ms init time)
+2. Dapr can reach placement service, scheduler, actors subsystem
+3. gRPC error `StatusCode="FailedPrecondition"` with `Detail="state store statestore is not configured"` thrown by Dapr runtime when app tries to access component named `statestore` that does not exist
+4. App code calls `GetStateAsync(RadiusClaimDapr.Components.StateStore, ...)` where `StateStore = "statestore"` — hardcoded component name
+5. No app-code bug would cause this; error is caught and surfaced as 503
+6. Workflow engine has no error logs — either doesn't need statestore in startup, or Radius/AKS deployment wired differently
+
+### Verdict
+
+| Dimension | Verdict |
+|-----------|---------|
+| App code | ✓ Correct — error caught and surfaced as 503 |
+| Stale browser state | ✗ Not the issue — fresh logs show service consistently unavailable |
+| Workflow-engine behavior | ✓ Healthy — no errors, initialized cleanly |
+| **Platform wiring** | ✗ **FAULT** — Dapr statestore component missing from expense-api sidecar |
+
+### Next Action
+
+Verify Radius/AKS deployment for expense-api Dapr sidecar configuration:
+1. Check Dapr component definition (YAML or Bicep resource named `statestore`)
+2. Confirm mounted in `expense-api` namespace and visible to Dapr runtime
+3. Verify backing store reachability (Redis, Cosmos DB, etc.)
+
+Until statestore component available, `GET /expenses`, `POST /expenses`, and workflow lookups remain inaccessible.
+
+---
+
+## 13. Dapr Component Projection Gap and Recovery Strategy
+
+---
+**Decision Date:** 2026-03-25  
+**Author:** Graham (Platform Dev)  
+**Status:** IMPLEMENTED  
+**Affects:** deployment, recipes, documentation
+
+### Problem
+
+Radius recipes with `resourceProvisioning: 'recipe'` provision Azure backing resources (Storage, Service Bus, Key Vault) but **do NOT automatically project Kubernetes Dapr Component objects**. This is fundamentally different from `resourceProvisioning: 'manual'` mode, which does project components.
+
+#### Root Cause
+- Radius `Applications.Dapr/*` resources with recipe-based provisioning create Azure infrastructure only
+- Radius controller does not translate recipe outputs into Kubernetes `Component` CRDs
+- Services fail with `state store statestore is not configured` because Dapr sidecars have no component definitions
+
+#### Secondary Issue Discovered
+State-store recipe configures storage account without `allowSharedKeyAccess: true`, causing authentication failures even after manual component projection.
+
+### Solution Implemented
+
+**1. Manual Component Deployment Script**  
+Created `scripts/deploy-dapr-components.sh` that:
+- Extracts recipe parameters from Radius resources
+- Fetches Azure credentials (storage keys, Service Bus connection strings)
+- Creates Kubernetes secrets
+- Generates and applies Dapr Component manifests
+- Handles namespace auto-detection
+
+**2. Template Component File**  
+Created `infra/kubernetes/dapr-components.yaml` as reference template for manual deployment.
+
+### Recovery Sequence for Operators
+
+**CRITICAL BLOCKER:** Storage account created by recipe has `allowSharedKeyAccess: false` and this setting cannot be changed post-creation (enforced by Azure Policy). Component deployment script will create components, but Dapr will fail to initialize them.
+
+#### Only Viable Path (Requires Recipe Fix)
+
+```bash
+# Step 1: Update recipe to allow shared key access
+# Edit infra/radius/recipes/azure/state-store.bicep
+# Add allowSharedKeyAccess: true to storageAccount properties
+
+# Step 2: Rebuild and republish recipe
+./scripts/publish-radius-recipes.sh
+
+# Step 3: Redeploy entire Radius application
+rad app delete radiusclaim --yes
+rad deploy infra/radius/app.bicep -p imageTag=<tag>
+
+# Step 4: Deploy Dapr components
+./scripts/deploy-dapr-components.sh --resource-group "radiusclaim-rg"
+
+# Step 5: Verify components loaded
+kubectl logs -n radiusclaim-azure-radiusclaim deployment/expense-api -c daprd --tail=20 | grep "Component loaded"
+```
+
+### Long-Term Fix Required
+
+**Option 1: Fix the Recipe (Preferred)**  
+Update state-store recipe to include `allowSharedKeyAccess: true` in storage account properties.
+
+**Option 2: Use Managed Identity (Best Practice)**  
+Configure pods with Azure workload identity; update Dapr component to use `azureClientId` instead of `accountKey`.
+
+**Option 3: Radius Feature Request**  
+File issue with Radius project requesting automatic Dapr Component projection from recipe outputs.
+
+### Verdict
+
+TWO separate issues:
+
+1. **Component Projection Gap (Radius Behavior):** Recipes do not automatically project Dapr Component objects. Workaround implemented; recipe fix required.
+2. **Storage Account Auth Misconfiguration (Recipe Bug):** State-store recipe missing `allowSharedKeyAccess: true`. **BLOCKS DEPLOYMENT** — requires recipe fix before initial deployment.
+
+---
+
+## 14. Dapr Component Wiring Gap in Radius Recipe Output
+
+**Date:** 2026-03-25  
+**Agent:** Graham (Platform Dev)  
+**Status:** REQUIRES ACTION
+
+### Summary
+
+Cluster log triage reveals **platform wiring gap, not Dapr or app misconfiguration**: Radius recipes have successfully provisioned Azure Blob Storage backing resources and applications are running healthy, but the Dapr Component resource (Kubernetes object) for statestore is missing from radiusclaim-azure namespace.
+
+### Evidence
+
+✅ **Healthy signals:**
+- Both expense-api and workflow-engine pods running and registered with Dapr placement service
+- Dapr sidecars initialized cleanly (312–319ms init time)
+- Workflow engine and actors framework active
+- gRPC endpoints to Dapr runtime established
+
+❌ **The blocker:**
+- Repeated Dapr gRPC failures: `Status(StatusCode="FailedPrecondition", Detail="state store statestore is not configured")`
+- Apps crash when attempting state operations
+- Dapr reports "actors: state store is not configured" at INFO level
+
+### Root Cause
+
+**Hypothesis:** Radius `statestore` resource in `app.bicep` uses `resourceProvisioning: 'recipe'` to invoke Azure Blob recipe, which correctly creates Storage account and container. However, **Dapr Component resource** (Kubernetes object telling Dapr sidecars how to find and authenticate to statestore) is either:
+1. Not emitted by recipe's output binding, or
+2. Not being applied to namespace by Radius after recipe execution
+
+**Location of wiring:** Gap is at Dapr component resource level in Kubernetes, not app code or Dapr setup.
+
+### Next Step
+
+Verify component presence:
+```bash
+kubectl get components -n radiusclaim-azure
+```
+
+If empty or missing `statestore`, requires platform follow-up to:
+- Audit Radius recipe output for Dapr component metadata
+- Confirm Radius is emitting component resource to Kubernetes
+- If not, update recipe or Radius resource to generate component object
+- Verify component scopes include `expense-api` and `workflow-engine`
+
+### Impact
+
+**Hard blocker for:** Any workflow or expense-api operation that reads or writes state.  
+**Operator signal:** Platform work, not application work. App code is ready; wiring is incomplete.
+
+---
+
+## 15. Component Validation Guidance
+
+**Date:** 2026-03-25  
+**Owner:** Eddie (Docs/Story)  
+**Status:** IMPLEMENTED  
+**Related Evidence:** Wesley's confirmation that `kubectl get components` returns no resources in both environment and workload namespaces.
+
+### Problem
+
+**Evidence:** Dapr sidecar logs show `"state store statestore is not configured"` but operators couldn't find guidance on:
+1. **When components should exist** (after Step 8)
+2. **How to verify Step 8 actually succeeded** (before proceeding to Step 9)
+3. **What to do if components are missing**
+
+This left operators unable to diagnose whether their failure was a deployment issue or configuration gap.
+
+### Decision
+
+**Add explicit component validation checkpoints** to both documentation files:
+
+#### In `docs/end-to-end-setup-walkthrough.md` (Step 9)
+- Add prominent warning block **before Step 9** that tells operators to verify components exist
+- Command: `kubectl get components -n radiusclaim-azure`
+- Expected: `statestore, pubsub, platform-secrets`
+- If missing: "Do not proceed to Step 9 without these components."
+
+#### In `docs/radius-validation-checklist.md` (Troubleshooting)
+- Expand "Dapr components not registering" section to:
+  1. **First Check** — Did Step 8 actually run? (verify namespace exists)
+  2. **Detailed Troubleshooting** — What went wrong in recipe execution?
+  3. **Solution** — Step-by-step remediation with exact commands
+
+### Implementation
+
+**Files Updated:**
+- `docs/radius-validation-checklist.md` — Expanded component troubleshooting
+- `docs/end-to-end-setup-walkthrough.md` — Added Step 9 prerequisite check
+
+**Key Principle:** *Operator visibility into step execution*. If prerequisite step didn't run visibly (no pod logs, no Kubernetes manifests), operators can't debug downstream failure.
+
+### What This Doesn't Solve
+
+If `kubectl get components` still returns no resources **after** running `rad deploy infra/radius/environments/azure-radius.bicep`, then:
+- Either Bicep file has bug
+- Or Radius doesn't automatically create Dapr components
+- Or recipe mechanism isn't wired correctly
+
+**This is a platform question** requiring Graham (Platform) to investigate `rad deploy` output, Radius control plane logs, and recipe execution. Docs now point operators to that investigation.
+
+---
+
+## 16. Walkthrough Review: End-to-End Setup
+
+**By:** Daisy (Lead)  
+**Date:** 2026-03-25  
+**Status:** REVIEW COMPLETE — CONDITIONAL REJECTION  
+**Scope:** `docs/end-to-end-setup-walkthrough.md`, `docs/radius-validation-checklist.md`, cross-referenced against `infra/radius/app.bicep`, `infra/radius/environments/azure-radius.bicep`, `.github/workflows/deploy-azure.yml`, live deployment evidence, and earned skills.
+
+### Verdict
+
+**REJECT — must fix 6 critical issues before walkthrough can be considered fit-for-demo.**
+
+Walkthrough is well-structured and covers operator journey from resource group to browser. Namespace-variable hygiene (`WORKLOAD_NAMESPACE` pattern) is correctly applied. However, critical gaps in deployment flow — most notably complete absence of Dapr Component backfill step — mean user following guide end-to-end will reach Step 12 with broken app.
+
+### Critical Issues
+
+#### C1: Missing Dapr Component backfill step in deployment flow
+**Location:** Between Steps 9 and 10; also missing from GitHub Actions workflow  
+**Problem:** `scripts/deploy-dapr-components.sh` exists specifically to bridge gap where Radius recipes provision Azure backing resources but do NOT project Dapr `Component` CRDs into Kubernetes. Script referenced nowhere — not in walkthrough, not in validation checklist, not in workflow. Live evidence confirms this is active blocker: Dapr sidecars report `"state store statestore is not configured"` because zero `components.dapr.io` objects exist in workload namespace.  
+**Fix:** Add Step 9a after app deployment: run `./scripts/deploy-dapr-components.sh --resource-group "$AZURE_RESOURCE_GROUP"` targeting workload namespace. Add same step to GitHub Actions workflow after `rad deploy app.bicep` and before validation step. Document as known Radius behavior.
+
+#### C2: Step 8 "What this does" misattributes resource creation
+**Location:** Walkthrough lines 528–536  
+**Problem:** Claims environment deployment creates "Dapr component definitions" and "Azure backing services via Radius recipes." Neither is true. Environment deployment only registers recipe templates. Azure backing resources and Dapr components triggered by `Applications.Dapr/*` in `app.bicep` during Step 9.  
+**Fix:** Rewrite "What this does" block: "Registers Radius environment, configures Azure provider scope, registers three OCI-published recipe templates, creates environment namespace. Actual Azure backing resources and Dapr components created when application model deployed in Step 9."
+
+#### C3: Step 9 prerequisite checks components in wrong namespace
+**Location:** Walkthrough lines 657–661  
+**Problem:** Directs users to `kubectl get components -n radiusclaim-azure`. This is environment namespace. Dapr Component CRDs must exist in workload namespace (`radiusclaim-azure-radiusclaim`) where sidecars run. Even if components projected, checking wrong namespace gives false negative/positive.  
+**Fix:** Change namespace to workload namespace. Move component check to Step 9a or start of Step 10 (after app deployment, since `Applications.Dapr/*` resources trigger recipe execution).
+
+#### C4: Validation checklist uses wrong namespace for pods throughout
+**Location:** `docs/radius-validation-checklist.md` lines 336, 351–358, 366–372, 410, 432, 437, 627–630  
+**Problem:** Every `kubectl get pods`, `kubectl logs`, `kubectl port-forward`, and `kubectl describe component` uses `-n radiusclaim-azure` (environment namespace). Live evidence confirms pods run in `radiusclaim-azure-radiusclaim` (workload namespace). Operators following checklist see "No resources found" for every pod command.  
+**Fix:** Update all pod/log/port-forward commands to use workload namespace. Adopt `WORKLOAD_NAMESPACE` variable pattern walkthrough already uses. Keep environment namespace only for commands targeting environment.
+
+#### C5: Validation checklist imagePullSecret patches `default` service account
+**Location:** `docs/radius-validation-checklist.md` lines 563–566  
+**Problem:** Patches `serviceaccount default` in environment namespace. Walkthrough correctly documents pods use NAMED service accounts (`expense-api`, `workflow-engine`, `notification-svc`) and patches each in WORKLOAD namespace. Checklist contradicts and has no effect.  
+**Fix:** Align with walkthrough's correct pattern: patch named service accounts in workload namespace.
+
+#### C6: No documentation of known Radius Component projection gap
+**Location:** Walkthrough troubleshooting section and validation checklist "Dapr components not registering" section  
+**Problem:** `radius-live-dapr-component-backfill` skill documents known pattern where Radius claims `Applications.Dapr/*` resources `Succeeded` but Kubernetes has zero corresponding `components.dapr.io` objects. Troubleshooting sections assume problem is always failed recipe or missing credential, not projection gap.  
+**Fix:** Add troubleshooting entry distinguishing "recipe failed" from "recipe succeeded but component not projected." Reference `scripts/deploy-dapr-components.sh` as recovery path. Include sidecar-log diagnostic: if sidecar only loads `kubernetes (secretstores.kubernetes/v1)` and never loads `statestore`/`pubsub`, issue is missing projection.
+
+### Minor Issues
+
+**M1: Double-scheme URL in troubleshooting** — `curl "http://$EXPENSE_API_URL/healthz"` produces `http://http://...`  
+**M2: Group name mismatch** — Walkthrough uses `radiusclaim-group` vs workflow uses `radiusclaim`  
+**M3: `deploymentTarget='radius'` passed without explanation**  
+**M4: `belgiumcentral` as example region** — less familiar, may not have all SKUs available
+
+### What's Working Well
+
+- **Namespace variable hygiene in walkthrough:** `RADIUS_KUBERNETES_NAMESPACE` / `WORKLOAD_NAMESPACE` separation correct
+- **OCI recipe visibility guidance:** Step 6 thorough and correct
+- **Named service account documentation:** Step 8b correctly identifies Radius creates named SAs
+- **Troubleshooting breadth:** Namespace drift, image mismatch, port-forward fallback covered
+
+### Recommendation
+
+Assign 6 critical fixes to Eddie (docs) with Graham reviewing namespace and component accuracy. Validation checklist needs sweep to align with walkthrough's namespace model. `deploy-dapr-components.sh` integration is highest-priority fix — without it, no operator can complete walkthrough successfully.
+
+**Do not merge or publish until C1–C6 resolved.**
+
+---
+
+## 17. bootstrap.sh Feasibility and Design
+
+---
+**Decision Date:** 2026-03-25  
+**Author:** Daisy (Lead)  
+**Status:** APPROVED-WITH-CONDITIONS  
+**Affects:** scripts, documentation, deployment
+
+### Verdict
+
+**YES — a `scripts/bootstrap.sh` is the right move for this repo now.** Walkthrough has 12 manual steps, two hidden blockers (component projection gap, recipe-auth sequencing), and six critical documentation issues. Operator following walkthrough today cannot reach working app. Bootstrap script that automates happy path — with guardrails — directly addresses "can I actually use this sample?" question.
+
+### Relationship to Walkthrough
+
+**bootstrap.sh wraps the walkthrough; it does not replace it.**
+
+Walkthrough teaches Radius/Dapr platform story. Script automates operator path. Both must exist:
+
+- **Walkthrough stays as-is** (after C1–C6 fixes): explains *why* each step exists and is reference for platform teams evaluating architecture
+- **bootstrap.sh is "just make it work" entry point**: runs same steps in order, with pre-flight checks and error recovery, for operators wanting working deployment without reading 40 pages first
+
+Walkthrough should reference bootstrap.sh as fast path. bootstrap.sh should reference walkthrough as detailed explanation.
+
+### Required Pre-Flight Checks
+
+Script must verify all BEFORE making any changes. Fail fast, fail clearly.
+
+#### Tool Availability (exit immediately if missing)
+1. `az` CLI installed and logged in (`az account show`)
+2. `kubectl` installed and cluster reachable (`kubectl cluster-info`)
+3. `rad` CLI installed (`rad version`)
+4. `dapr` CLI installed (for `dapr status -k` check)
+5. `jq` installed
+6. `docker` installed (for recipe publishing)
+7. `curl` installed (for validation)
+
+#### Cluster State (exit if prerequisites missing)
+8. Kubernetes cluster reachable and user has write access
+9. Dapr control plane running (`kubectl get pods -n dapr-system`)
+10. Radius control plane running (`kubectl get pods -n radius-system`)
+
+#### Azure State (exit or prompt if misconfigured)
+11. Azure subscription selected (`az account show` non-empty)
+12. Resource group exists OR user confirms creation
+13. Radius Azure credential registered (`rad credential show azure`)
+
+#### Recipe State (warn if stale)
+14. Recipe OCI artifacts published and accessible
+15. State-store recipe includes `allowSharedKeyAccess: true` (Graham's root-cause finding)
+
+#### Existing Deployment State (prompt before overwriting)
+16. If Radius environment exists: prompt to reuse or recreate
+17. If Radius app exists: prompt to redeploy or skip
+18. If Dapr components exist in workload namespace: prompt to overwrite or skip
+
+### Stop-and-Ask Points
+
+Script MUST NOT silently guess at these decision points:
+
+1. **Resource group creation:** "Resource group 'radiusclaim-rg' does not exist. Create it in 'eastus'? [y/N]"
+2. **Recipe republishing:** "Recipes may be stale. Republish to GHCR? [y/N]" (skip if `--no-publish` flag)
+3. **Existing app teardown:** "Application 'radiusclaim' already exists. Redeploy in place? [y/N]"
+4. **Azure credential registration:** If `rad credential show azure` fails: "Radius Azure credential not found. Register now? [y/N]"
+
+### Idempotency Patterns
+
+Following `radius-idempotent-deployment` skill:
+
+- Use `rad env create <name> || true` pattern — never fail if environment exists
+- Use `kubectl apply` (not `create`) for secrets and components — always safe to rerun
+- Use `--dry-run=client -o yaml | kubectl apply -f -` for secret creation
+- Never use `rad app delete` as routine step — destroys Azure backing resources
+- Recipe publishing inherently idempotent (overwrites OCI tag)
+
+**Risk:** `rad deploy app.bicep` triggers Azure recipe re-evaluation. If recipe parameter changes, may attempt to recreate Azure resources. Acceptable for reference sample but should be documented.
+
+### Phase Structure
+
+```
+Phase 0: Pre-Flight Checks
+  ├── Tool availability
+  ├── Cluster reachability and permissions
+  ├── Dapr control plane health
+  ├── Radius control plane health
+  ├── Azure subscription and credential state
+  └── Existing deployment detection
+
+Phase 1: Azure Foundation
+  ├── Create resource group (if needed, with prompt)
+  └── Verify resource group accessible
+
+Phase 2: Radius Workspace Setup
+  ├── rad workspace create kubernetes
+  ├── rad group create
+  ├── rad env create
+  └── rad credential register azure (if needed)
+
+Phase 3: Recipe Publishing
+  ├── Verify recipe source files exist
+  ├── Verify state-store recipe has allowSharedKeyAccess: true
+  ├── Publish recipes to OCI registry
+  └── Verify published artifacts accessible
+
+Phase 4: Environment Deployment
+  ├── rad deploy environments/azure-radius.bicep
+  └── Verify environment shows correct provider scope and recipes
+
+Phase 5: Application Deployment
+  ├── rad deploy app.bicep with parameters
+  ├── Wait for Radius resources to report Succeeded
+  └── Verify pods running in workload namespace
+
+Phase 6: Dapr Component Backfill
+  ├── Detect workload namespace automatically
+  ├── Run deploy-dapr-components.sh
+  ├── Verify components.dapr.io objects exist
+  └── Bounce pods to pick up new components
+
+Phase 7: Validation (optional)
+  ├── Wait for pods to stabilize after bounce
+  ├── Set up port-forward or detect ingress URL
+  ├── Run validate-deployment.sh
+  └── Report results
+```
+
+### Key Design Decisions
+
+1. **Reuse existing scripts:** Phases 3, 6, 7 delegate to `publish-radius-recipes.sh`, `deploy-dapr-components.sh`, `validate-deployment.sh`. bootstrap.sh is orchestrator, not reimplementation.
+2. **Each phase independently safe to retry:** If Phase 5 fails, user can fix and rerun. Phases 0–4 detect existing state and skip or update in place.
+3. **Explicit pod bounce after component backfill:** Existing pods won't pick up new Dapr components. Script should `kubectl rollout restart` after Phase 6.
+4. **No cluster or Dapr/Radius installation:** bootstrap.sh assumes those already done. Installing AKS, Dapr, Radius is separate concern covered by walkthrough Steps 3–5.
+
+### Risks
+
+1. **Credential leakage in terminal history:** Script fetches storage keys and Service Bus connection strings. Never echo to stdout. Existing `deploy-dapr-components.sh` already handles correctly.
+2. **Namespace drift:** Workload namespace is `{env-namespace}-{app-name}`, not environment namespace. Script must auto-detect, not assume hard-coded value.
+3. **Recipe staleness:** If bootstrap.sh run without publishing recipes first, `rad deploy` pulls whatever last pushed to GHCR. Pre-flight check mitigates this.
+4. **Azure Policy conflicts:** Some subscriptions enforce `allowSharedKeyAccess: false` at policy level. Script cannot fix — should detect and tell user to change policy or switch managed identity auth.
+5. **Partial failure recovery:** If script fails mid-way, next run must be safe. Each phase independently idempotent.
+
+### Implementation Guidance
+
+**Who:** Graham (Platform Dev) should implement — it's platform orchestration, not app code or docs.  
+**Support:** Eddie should update walkthrough to reference bootstrap.sh as fast path. Karen should validate full sequence on fresh cluster.
+
+---
+
+**Last Updated:** 2026-03-25T16:05:45Z

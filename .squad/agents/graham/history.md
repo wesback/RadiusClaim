@@ -1233,3 +1233,148 @@ For future operators:
 ✅ Recovery paths documented and provided
 ✅ Validation checklist updated with troubleshooting
 ✅ Team decision recorded
+
+## Learnings
+
+### 2026-03-25: Dapr Component Wiring — Reconciliation between Radius Application Model and Kubernetes Deployment
+
+**What:** Confirmed that Dapr statestore component resource definition is missing from the Kubernetes namespace after Radius deployment, causing "state store statestore is not configured" runtime failures in expense-api and workflow-engine pods.
+
+**Key Signals:**
+- Pods are healthy and running (expense-api-6df497b496-z5mtb, workflow-engine-75b75b4959-j6fzz, scheduler initialized, placement connected).
+- Dapr sidecars have initialized cleanly (init elapsed 312ms / 319ms).
+- Actors and workflows are running — log shows "Workflow engine started", "Actor runtime started", placement dissemination complete.
+- BUT: Apps cannot invoke `GetStateAsync()` on the `statestore` component — gRPC returns FailedPrecondition: "state store statestore is not configured".
+- Dapr messages "state store is not configured" appear at INFO level for expense-api and workflow-engine, indicating Dapr detected the missing component gracefully but apps depend on it and fail on use.
+
+**Root Cause:** Radius recipe execution provisioned the Azure Blob Storage backing resource but did not create the Dapr Component resource (the Kubernetes object that Dapr sidecars load to discover component metadata). This is a Dapr component wiring gap — the platform abstraction layer in Radius successfully created the cloud resource but the Dapr component resource itself was not applied to the namespace.
+
+**Decision:** This is a hard blocker requiring platform investigation: verify that Radius recipe postprocessing includes Dapr component resource emission, or that the statestore Radius resource type properly translates to a Dapr Component object in Kubernetes. The gap is at the Radius→Dapr boundary, not app code or Dapr sidecar setup.
+
+**Next Step for Operator:** Before any workflow or expense-api state operations will work, run:
+```bash
+kubectl get components -n radiusclaim-azure
+```
+If empty, request a platform engineer (Graham) to validate the recipe→Dapr binding. If components exist but statestore is absent, re-deploy the Radius statestore resource.
+
+**Categorization:** This is an **operator-safe** observation: Dapr and app health indicators are green; the platform wiring is incomplete. Noise: The "state store is not configured" messages at Dapr INFO level during app startup are expected and not a blocker by themselves—they signal graceful degradation. The blocker is the runtime failure when an app actually tries to use the store.
+
+---
+
+## Phase 7 Component Projection Investigation (2026-03-25)
+
+### Problem Diagnosed
+
+Traced Radius-to-Dapr component projection failure. User reported:
+- `kubectl get components -n radiusclaim-azure` => none
+- `kubectl get components -n radiusclaim-azure-radiusclaim` => none
+- Services failing with "state store statestore is not configured"
+
+### Root Cause Analysis
+
+**Primary Issue:** Radius recipes with `resourceProvisioning: 'recipe'` do NOT automatically project Kubernetes Dapr Component objects. This is fundamentally different from `resourceProvisioning: 'manual'` mode.
+
+- Radius `Applications.Dapr/*` resources successfully provision Azure backing resources (Storage, Service Bus, Key Vault)
+- Recipe outputs contain component specs in `result.values` and `result.secrets` format
+- Radius controller does NOT translate these into Kubernetes `Component` CRDs
+- Dapr sidecars start successfully but have no components to load
+
+**Secondary Issue:** Storage account recipe creates accounts with `allowSharedKeyAccess: false` (security best practice), but the recipe outputs account keys for authentication. This creates an impossible configuration:
+- Recipe outputs: `accountKey` in secrets
+- Storage account: rejects key-based authentication
+- Post-deployment workaround: BLOCKED (setting cannot be changed, likely Azure Policy)
+
+### Solution Implemented
+
+1. **Fixed the recipe** (`infra/radius/recipes/azure/state-store.bicep`):
+   - Added `allowSharedKeyAccess: true` to storage account properties
+   - This is required for key-based auth (the recipe's chosen method)
+   - Alternative would be managed identity (future enhancement)
+
+2. **Created component deployment automation** (`scripts/deploy-dapr-components.sh`):
+   - Extracts recipe parameters from Radius resources
+   - Fetches Azure credentials (storage keys, Service Bus connection strings)
+   - Creates Kubernetes secrets for sensitive values
+   - Generates and applies Dapr Component manifests
+   - Handles namespace auto-detection
+
+3. **Provided template** (`infra/kubernetes/dapr-components.yaml`):
+   - Reference implementation for manual deployment
+   - Documents required fields and their sources
+
+4. **Documented the gap** (`.squad/decisions/inbox/graham-component-projection-rootcause.md`):
+   - Explains the Radius behavioral characteristic
+   - Provides operator recovery sequence
+   - Documents long-term fix options (managed identity, Radius feature request)
+
+### Key Learnings
+
+- **Radius recipe behavior is not intuitive.** Manual provisioning projects components; recipe provisioning does not. This should be explicit in Radius documentation.
+- **Recipe outputs don't imply automatic wiring.** Recipes return structured data (component specs), but it's the operator's responsibility to apply them to Kubernetes.
+- **Security defaults can conflict with recipe implementations.** The storage account's `allowSharedKeyAccess: false` default is correct security posture, but recipes must explicitly enable it if using key-based auth.
+- **Post-deployment workarounds have limits.** Some Azure settings (like storage account auth method) cannot be changed after creation, making recipe fixes critical.
+
+### Validation
+
+- ✅ Manual Dapr component creation succeeds (`kubectl apply -f test-component.yaml`)
+- ✅ Deployment script dry-run generates correct manifests
+- ✅ Deployment script applies components successfully
+- ✅ Recipe fix implemented (storage account allows shared key access)
+- ⚠️ End-to-end validation requires redeployment with fixed recipe (existing storage account cannot be retroactively fixed)
+
+### Deployment Path
+
+**Before this fix:**
+1. `rad deploy infra/radius/app.bicep` → Azure resources created, NO Kubernetes components
+2. Services start → Dapr sidecars fail with "statestore is not configured"
+
+**After this fix:**
+1. `rad deploy infra/radius/app.bicep` → Azure resources created (with correct auth settings), NO Kubernetes components
+2. `./scripts/deploy-dapr-components.sh --resource-group <rg>` → Kubernetes components created
+3. `kubectl rollout restart deployment -n <namespace>` → Services restart and load components
+4. Services functional → Dapr sidecars connect to Azure backing resources
+
+### Files Modified
+
+- `infra/radius/recipes/azure/state-store.bicep` — added `allowSharedKeyAccess: true`
+- `scripts/deploy-dapr-components.sh` (new) — automated component deployment
+- `infra/kubernetes/dapr-components.yaml` (new) — manual deployment template
+- `.squad/decisions/inbox/graham-component-projection-rootcause.md` (new) — architecture decision record
+
+### Impact
+
+- **Deployment complexity:** Increased (requires post-deployment script execution)
+- **Security posture:** Acceptable (key-based auth is enabled explicitly, can migrate to managed identity later)
+- **Portability:** Unchanged (Dapr components remain cloud-agnostic, only backing resources are Azure-specific)
+
+### Recommendations
+
+1. **Short-term:** Document the component deployment step in walkthroughs and CI/CD workflows
+2. **Medium-term:** Migrate to managed identity authentication (eliminates key management, improves security)
+3. **Long-term:** File Radius feature request for automatic component projection from recipe outputs
+
+## 2026-03-25 — Orchestration Log: Component Projection Gap Analysis
+
+**Timestamp:** 20260325T160545Z  
+**Status:** IMPLEMENTATION COMPLETE
+
+### Activities
+- Traced Dapr component projection failure; found Radius recipes provision Azure resources but do not auto-create Kubernetes Dapr Component objects
+- Reported repo-side fixes and operator recovery sequence
+- Created `scripts/deploy-dapr-components.sh` for manual component deployment
+- Created `infra/kubernetes/dapr-components.yaml` as reference template
+- Documented secondary issue: state-store recipe missing `allowSharedKeyAccess: true`
+
+### Key Findings
+1. **Component Projection Gap (Radius Behavior):** Recipes do not automatically project Dapr Component objects — workaround implemented, recipe fix required
+2. **Storage Account Auth Misconfiguration (Recipe Bug):** State-store recipe missing `allowSharedKeyAccess: true` — BLOCKS DEPLOYMENT
+
+### Decisions Filed
+- Decision 13: Dapr Component Projection Gap and Recovery Strategy
+- Decision 14: Dapr Component Wiring Gap in Radius Recipe Output
+
+### Next Actions
+- Implement recipe fix: add `allowSharedKeyAccess: true` to state-store.bicep
+- Integrate `deploy-dapr-components.sh` into bootstrap.sh Phase 6
+- Validate corrected recipe on fresh deployment
+
