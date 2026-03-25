@@ -1,5 +1,5 @@
 ---
-last_updated: 2026-03-24T17:36:38Z
+last_updated: 2026-03-25T19:48:57Z
 ---
 
 # Graham History
@@ -1509,3 +1509,36 @@ Update `scripts/prepare-cluster.sh` to install Dapr with `dapr init -k --wait` i
 - 2026-03-25: `scripts/prepare-cluster.sh` failing with `Dapr control plane is not ready` is expected when `--install-dapr` was omitted. The platform boundary stays intentional if Dapr/Radius installs remain explicit, but first-time docs and help text must state that omission means verify-only mode on a fresh cluster. Key files: `scripts/prepare-cluster.sh`, `scripts/README.md`, `docs/end-to-end-setup-walkthrough.md`, `docs/radius-validation-checklist.md`, `.squad/skills/radius-cluster-prep-boundary/SKILL.md`.
 - 2026-03-25: `dapr init -k` reports installation success before the control plane is actually ready unless `--wait` is supplied. For cluster-prep automation, prefer the CLI's native readiness gate (`dapr init -k --wait`) over ad hoc sleeps, then keep the script's existing post-install verification as the final guard.
 - 2026-03-25: Key files for this install-readiness pattern are `scripts/prepare-cluster.sh`, `.squad/decisions.md` (merged decision entry), and `.squad/log/20260325T182103Z-dapr-readiness-fix.md` (session log).
+- 2026-03-25: `rad install kubernetes` exposes no native wait flag and the official install guide still teaches a manual `kubectl get pods -n radius-system` verification step, so `scripts/prepare-cluster.sh` cannot assume the command blocks until Radius is healthy.
+- 2026-03-25: For Radius cluster-prep automation, the smallest truthful readiness repair is a Kubernetes-native rollout gate on `deployment/radius-controller-manager` followed by the existing `verify_radius_ready` check. Key files: `scripts/prepare-cluster.sh`, `.squad/decisions/inbox/graham-radius-readiness-contract.md`, `.squad/skills/native-cli-install-wait/SKILL.md`.
+- 2026-03-26: Current Radius docs and Helm chart identify the stock control-plane deployment as `controller` with pod label `app.kubernetes.io/name=controller`; repo-local `radius-controller-manager` assumptions can misdiagnose healthy installs as broken. Platform checks should prefer current names but tolerate legacy `radius-controller-manager` for older clusters. Key files: `scripts/lib/platform-common.sh`, `scripts/prepare-cluster.sh`, `scripts/bootstrap.sh`, `docs/end-to-end-setup-walkthrough.md`, `docs/radius-validation-checklist.md`.
+- 2026-03-26: If `rad install kubernetes` reports an existing installation, cluster prep must not pretend it repaired anything. On post-install failure in that branch, the message should explicitly say the installation already existed, the script did not auto-repair it, and the operator should inspect `kubectl get deployments,pods -n radius-system` before deciding whether to rerun with `--reinstall`.
+- 2026-03-26: The `platform-secrets` failure belongs in the repeatable bootstrap layer, not in `app.bicep`. The app model should keep its deterministic Azure Key Vault name; `scripts/bootstrap.sh` should resolve that name up front, detect soft-deleted collisions before `rad deploy infra/radius/app.bicep`, and only then restore/reuse or stop with guidance.
+- 2026-03-26: A soft-deleted Azure-backed secret store is only safe to auto-reuse when the deleted Key Vault can be recovered back into the same subscription, resource group, and location the current bootstrap run targets. If Azure can only recover it elsewhere, fail early and tell the operator to restore/purge it manually or use a different Radius environment name.
+- 2026-03-26: Key files for this soft-delete preflight pattern: `scripts/bootstrap.sh`, `infra/radius/app.bicep`, `scripts/README.md`, `docs/end-to-end-setup-walkthrough.md`, `docs/radius-validation-checklist.md`, `.squad/decisions/inbox/graham-soft-deleted-secretstore.md`, `.squad/skills/azure-keyvault-soft-delete-preflight/SKILL.md`.
+
+## 2026-03-26: Bootstrap Soft-Deleted Key Vault Preflight
+
+**Task:** Add deterministic Key Vault resolution and soft-delete preflight to `scripts/bootstrap.sh`  
+**Outcome:** Completed successfully; bootstrap now detects soft-deleted Key Vaults early and restores them when recoverable.
+
+### Decision
+`scripts/bootstrap.sh` now resolves the deterministic Azure Key Vault name behind the `platform-secrets` store before app deployment. If that vault is soft-deleted, it restores the vault when Azure can recover it back into the current subscription, resource group, and location; otherwise, it fails early with actionable guidance instead of letting `rad deploy infra/radius/app.bicep` fail unclearly on `Applications.Dapr/secretStores`.
+
+### Changes
+- Added Key Vault name resolution logic to `scripts/bootstrap.sh` using deterministic naming convention
+- Added soft-delete detection via Azure CLI queries on vault properties
+- Added recovery logic: restores vault only when all constraints (subscription, RG, location) match
+- Non-recoverable scenarios provide clear guidance with Azure Portal and CLI commands
+- Updated `scripts/README.md` with soft-delete behavior documentation
+- Updated `docs/end-to-end-setup-walkthrough.md` to include soft-delete recovery steps
+- Updated `docs/radius-validation-checklist.md` to add soft-delete state validation checkpoint
+- Created reusable pattern skill: `.squad/skills/azure-keyvault-soft-delete-preflight/SKILL.md`
+
+### Validation
+- ✅ All existing syntax, Bicep, build, and test checks passed
+- ✅ Manual testing: soft-delete recovery path works end-to-end
+- ✅ Manual testing: non-recoverable scenario fails with clear guidance
+- ✅ Bootstrap flow timing and idempotency verified
+
+**Status:** Closed and merged into decisions.md

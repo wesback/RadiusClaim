@@ -1378,3 +1378,45 @@ Added explicit component validation checkpoints to catch missing or failed Radiu
 - `scripts/deploy-dapr-components.sh` — component backfill script
 - `scripts/README.md` — script inventory
 - `.squad/decisions/inbox/eddie-bootstrap-docs.md` — team decision filed
+
+## Phase 7 Continuation — Dual-Path Script Documentation (2026-03-25)
+
+### Task
+Add the new cluster-prep script option to the end-to-end walkthrough, alongside the existing manual flow and bootstrap script paths.
+
+### Changes Made
+
+1. **docs/end-to-end-setup-walkthrough.md**
+   - Reframed overview from "Two Ways" → "Three Ways" (cluster-prep script, manual, bootstrap)
+   - Added explicit "Quick Start" section showing script-based path before manual steps
+   - Updated Prerequisites to dual-path (script vs manual prerequisites)
+   - Added header note before Step 1 to direct script users to skip manual details
+   - Maintained educational value: manual steps remain detailed reference for troubleshooting/customization
+
+2. **scripts/README.md**
+   - Added "Script Workflow" section showing orchestration: cluster-prep → bootstrap
+   - Documented `prepare-cluster.sh` as logical first step (Steps 1–6 of manual walkthrough)
+   - Reorganized `bootstrap.sh` description to clarify it's for app deployment after cluster ready (Steps 7–12)
+   - Improved prerequisite clarity for each script
+
+### Key Decision
+**Resilience to script timing:** Used "if available" caveat throughout because `prepare-cluster.sh` doesn't exist yet (Graham creating it). Docs remain truthful whether script exists or not; walkthrough directs readers to "Quick Start" section which gracefully mentions the script as an option.
+
+### Narrative Thread
+- **For first-timers:** Cluster-prep script (if available) + bootstrap script gives the fastest path
+- **For learners:** Manual walkthrough explains why each step exists
+- **For returners:** Bootstrap script alone for repeated deployments
+- All paths converge on the same cluster-ready state before app deployment begins
+
+### Files Not Updated
+- `docs/radius-validation-checklist.md` — Already companion to walkthrough; no changes needed
+- `docs/phase-7-validation-checklist.md` — Phase-specific; not affected
+- `docs/phase-7-demo-walkthrough.md` — Demo flow; mentions bootstrap, no changes needed
+- `README.md` — Already points to end-to-end walkthrough; no changes needed
+
+### Consistency Validation
+- All references to `prepare-cluster.sh` use consistent naming
+- Step numbering (1–12) unchanged in manual path
+- Bootstrap script's actual help text matches our documentation claim
+- No broken links or stale references introduced
+

@@ -173,3 +173,17 @@ Using the CLI's built-in wait semantics is the smallest correct repair:
 - Fresh-cluster prep becomes deterministic for the Dapr install step.
 - The control-plane boundary stays explicit: install when asked, then verify readiness before proceeding.
 
+### 2026-03-26: Decision — Bootstrap Preflights Soft-Deleted Azure Secret Stores
+**By:** Graham (Platform Dev)
+**Status:** IMPLEMENTED
+**What:** `scripts/bootstrap.sh` now resolves the deterministic Azure Key Vault name behind the `platform-secrets` store before app deployment. If that vault is soft-deleted, it restores the vault when Azure can recover it back into the current subscription, resource group, and location; otherwise, it fails early with actionable guidance instead of letting `rad deploy infra/radius/app.bicep` fail unclearly on `Applications.Dapr/secretStores`.
+**Why:** The failure is a repeatable deployment concern, not an application-model design bug. Key Vault soft-delete blocks name reuse, so the scripted operator path should tell the truth before app deployment rather than surfacing an opaque Radius recipe failure later.
+**Affected Files:**
+- `scripts/bootstrap.sh` — Key Vault soft-delete preflight and recovery logic
+- `scripts/README.md` — Behavior documentation
+- `docs/end-to-end-setup-walkthrough.md` — Integration into walkthrough
+- `docs/radius-validation-checklist.md` — Soft-delete validation steps
+
+**Supporting Pattern:**
+- `.squad/skills/azure-keyvault-soft-delete-preflight/SKILL.md` — Reusable detection and recovery pattern for future platforms
+

@@ -36,6 +36,9 @@ Use this when a live Kubernetes deployment created by Radius shows app pods and 
 
 - Healthy sidecars should log `Component loaded: <name> (...)`.
 - If the sidecar only loads `kubernetes (secretstores.kubernetes/v1)` and never loads `statestore`/`pubsub`, the runtime symptom is explained immediately.
+- If the sidecar crashloops during component init, inspect the live `Component` CRs before blaming app annotations:
+  - `KeyBasedAuthenticationNotPermitted` points at a Blob statestore auth mismatch (`accountKey` against a storage account that disallows shared-key auth).
+  - `pubsub.azure.servicebus.topics` must not carry both `namespaceName` and `connectionString`.
 
 ### Re-run `rad deploy` once to rule out staleness
 
@@ -51,7 +54,8 @@ Use this when a live Kubernetes deployment created by Radius shows app pods and 
 ### Match Azure auth to the backing service's actual policy
 
 - Azure Blob state:
-  - If the storage account rejects shared-key auth (`KeyBasedAuthenticationNotPermitted`), switch the component to Microsoft Entra auth (`azureTenantId`, `azureClientId`, `azureClientSecret`) and grant `Storage Blob Data Contributor`.
+  - If the storage account rejects shared-key auth (`KeyBasedAuthenticationNotPermitted`), use the same Microsoft Entra principal Radius already uses for recipe provisioning. Carry `azureTenantId` + `azureClientId` into the component, add `azureClientSecret` only when running in service-principal mode, and grant `Storage Blob Data Contributor`.
+  - Prefer repairing RBAC and regenerating the component over trying to re-enable shared keys. In this repo's tenant, shared-key re-enable is no longer the valid operator path.
 - Azure Service Bus topics:
   - Use **either** `connectionString`
   - **or** `namespaceName` + Azure auth
@@ -80,5 +84,6 @@ Use this when a live Kubernetes deployment created by Radius shows app pods and 
 - Assuming the problem is a missing app scope before checking whether the component exists at all.
 - Treating a `Succeeded` Radius Dapr resource as proof that Kubernetes received the component.
 - Reusing Blob `accountKey` auth after the storage account or policy disables shared-key access.
+- Treating the Radius Azure credential and the Dapr runtime credential as separate stories when a single Entra principal keeps the model smaller and more teachable.
 - Supplying both `namespaceName` and `connectionString` to `pubsub.azure.servicebus.topics`.
 - Backfilling components into the environment namespace when workloads and sidecars live in a separate workload namespace.
