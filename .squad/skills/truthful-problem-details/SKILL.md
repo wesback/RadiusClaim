@@ -46,3 +46,4 @@ Use this when a browser client submits to a backend write path and different fai
 - Name the missing dependency in human terms (`Dapr sidecar`, `statestore`, dependent workflow service) so operators know whether to fix startup wiring or business logic.
 - Split dependency guidance by surface area when possible: make it clear that expense persistence/listing depends on the host service's Dapr state path, while workflow telemetry may have an additional dependency on a separate downstream service such as `workflow-engine`.
 - In the browser, prefer problem-details `detail`/`title`/`message`, and only use raw text as a last-resort fallback.
+- Mirror that same truth in walkthroughs and README notes: explicitly say that `/app` shell reachability is not the same thing as Dapr-backed backend readiness, and pair the message with the exact local startup commands operators should run.

@@ -1162,3 +1162,74 @@ Diagnosed and documented the namespace drift error encountered during Radius app
 ✅ Diagnosis complete
 ✅ Recovery pattern documented
 ✅ Walkthrough troubleshooting added
+
+---
+
+## 2026-03-25 | Azure Key Vault Soft-Delete Collision Resolution
+
+### Summary
+Diagnosed and resolved Key Vault soft-delete collision during Radius deployment. Confirmed vault naming logic is correct and deterministic; provided three safe operator recovery paths.
+
+### Work Log
+
+**Error Analysis:**
+- Error: `failed to deploy recipe azure-keyvault-secrets because a vault with the same name already exists in deleted state [Microsoft.KeyVault/vaults/ce-ghhsgdsk4etcc]`
+- Root cause: **Not a code bug.** Azure Key Vault soft-delete behavior:
+  - When deleted, vault name is **reserved** for 7 days (our recipes use `softDeleteRetentionInDays: 7`)
+  - Our vault name is generated **deterministically** via `uniqueString(applicationName, environment, 'platform-secrets')`
+  - Same environment → same vault name → collision within 7-day window
+
+**Vault Naming Logic (Correct):**
+```bicep
+# app.bicep
+var secretVaultName = 'ce-${take(uniqueString(applicationName, environment, 'platform-secrets'), 20)}'
+
+# recipes/azure/secrets.bicep
+param vaultName string = 'ce-${take(uniqueString(context.resource.id, 'keyvault'), 20)}'
+```
+These are intentionally deterministic (idempotent) — this is **correct behavior** for Radius recipes.
+
+**Soft-Delete Confirmed:**
+- Vault `ce-ghhsgdsk4etcc` is soft-deleted: `scheduledPurgeDate: 2026-04-01T15:22:30Z`
+- Vault cannot be recovered or purged before auto-purge completes
+- This is **normal Azure behavior**, not a platform defect
+
+### Recovery Paths (3 Options)
+
+**Option A (Recommended):** Wait for auto-purge
+- No risk, no action needed
+- Retry deployment after `scheduledPurgeDate`
+
+**Option B:** Create new Radius environment
+- Forces new `uniqueString()` hash → new vault name
+- Command: `rad env create <new-name>`
+- Immediate but requires ops change
+
+**Option C (High Risk):** Force manual purge
+- Only if timeline-critical
+- Command: `az keyvault purge --name ce-... --location <region>`
+- Risk: if purge fails, deployment still fails
+
+### Documentation Updated
+- `docs/radius-validation-checklist.md` — Added full "Key Vault soft-delete collision" troubleshooting section
+- Covers diagnosis, 3 recovery options, and prevention guidance
+- `.squad/decisions/inbox/graham-keyvault-softdelete.md` — Team decision document
+
+### Architecture Insights
+- Radius recipes **should** use deterministic naming for idempotency
+- Azure soft-delete is a feature, not a bug
+- Operators should understand this window during environment planning
+- Future improvement: Add optional vault recovery step in recipe for explicit control
+
+### Prevention Pattern
+For future operators:
+1. Understand soft-delete window aligns with retention setting (7 days)
+2. Plan environment names and timing accordingly
+3. Document custom environment names in runbooks
+4. If re-deploying to same environment within 7 days of deletion, use a different environment name
+
+### Status
+✅ Diagnosis complete
+✅ Recovery paths documented and provided
+✅ Validation checklist updated with troubleshooting
+✅ Team decision recorded

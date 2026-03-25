@@ -329,4 +329,74 @@ Do **not** remove the default and do **not** change the docs to describe it as d
 
 ---
 
-**Last Updated:** 2026-03-25T11:40:12Z
+## 8. Key Vault Soft-Delete Collision Resolution
+
+**Date:** 2026-03-25  
+**Owner:** Graham (Platform Dev)  
+**Status:** DECISION  
+
+### Problem
+
+Radius `rad deploy` fails with soft-delete collision:
+```
+failed to deploy recipe azure-keyvault-secrets because a vault with the same name 
+already exists in deleted state [Microsoft.KeyVault/vaults/ce-ghhsgdsk4etcc]
+```
+
+### Root Cause
+
+**Not an app-model bug.** This is Azure Key Vault soft-delete behavior:
+
+1. Radius `app.bicep` generates vault names deterministically via `uniqueString(applicationName, environment, 'platform-secrets')`
+2. When deleted, Key Vaults enter a **7-day soft-delete period**
+3. Within this window, vault names are **reserved** — cannot create new vaults with that name
+4. After retention, Azure **automatically purges** the vault
+
+### Solution: Three Operator Paths
+
+#### Option A: Wait for Auto-Purge (Recommended)
+- Vault `ce-ghhsgdsk4etcc` auto-purges on **2026-04-01 15:22:30 UTC**
+- Zero risk; aligns with Azure defaults
+- Steps: Check purge date with `az keyvault list-deleted`, retry deployment after date passes
+
+#### Option B: Force New Vault Name (Timeline-Critical)
+- Create new Radius environment with different name (forces new `uniqueString` hash)
+- ```bash
+  rad env create <new-environment-name> --namespace radiusclaim-azure
+  rad deploy --environment <new-environment-name> --from ./infra/radius/app.bicep --parameters imageTag=<TAG>
+  ```
+- Lower risk than Option C
+
+#### Option C: Manual Purge (Not Recommended)
+- ```bash
+  az keyvault purge --name ce-ghhsgdsk4etcc --location <region>
+  ```
+- High risk; use only if Option A timeline unacceptable
+
+### Prevention: Code-Level Fix (Future)
+
+Add optional `recoverDeletedVault` parameter to `recipes/azure/secrets.bicep`:
+
+```bicep
+param recoverDeletedVault bool = false
+
+resource recoveryStep 'Microsoft.KeyVault/vaults/recover@2023-07-01' = if (recoverDeletedVault) {
+  // recovery logic
+}
+```
+
+Gives operators explicit control over soft-delete collision handling.
+
+### Decision
+
+**Recommended:** Option A (wait for auto-purge). Zero operator risk.  
+**If timeline-critical:** Option B safer than Option C.  
+**For future deployments:** Document soft-delete behavior in operator runbooks and validation checklist.
+
+### Files Updated
+
+- `docs/radius-validation-checklist.md` — Added soft-delete troubleshooting section
+
+---
+
+**Last Updated:** 2026-03-25T15:25:58Z
