@@ -1,6 +1,6 @@
 # Decisions Registry
 
-**Last Updated:** 2026-03-24T17:53:40Z
+**Last Updated:** 2026-03-25T11:31:49Z
 
 ---
 
@@ -48,445 +48,152 @@ Conducted a full-depth architectural review of the entire RadiusClaim codebase: 
 - README "Quick Start (Local Dev)" still says "Coming in Phase 2" — we're in Phase 7
 - `dotnet test` in CI is vacuous — zero test projects exist, green badge is misleading
 - Stale `ghcr.io/sovereignapp/radiusclaim` default registry in `app.bicep` and params files
-- Validation checklist shows `Applications.Core/containers` but code uses `Radius.Compute/containers`
 
-### Decisions
-
-1. **Graham** should own infra criticals (C1–C3) — recipe type mismatches and resource type resolution.
-2. **Eddie** should own docs criticals (C4–C6) — README accuracy sweep.
-3. **Graham** should fix the CI workflow auth gap (C7).
-4. **Billy** should clean the dead `ExpenseRejected` contract or wire it — decide one way.
-5. The `dotnet test` step should either be removed from CI or Karen should be asked to create real test projects.
-
-### Verdict
-
-**App code is clean.** Zero portability violations, correct Dapr SDK usage, sound workflow design. Billy's work holds up.
-
-**Infrastructure has real deployment blockers.** The recipe type mismatches (C2, C3) will cause silent failures on Radius-provisioned paths. The `Radius.Compute/*` question (C1) needs immediate clarification.
-
-**Documentation has drifted significantly from the code.** Multiple stale names, wrong paths, and a portability narrative that doesn't match the actual `dev.bicep` behavior. Eddie needs a reconciliation pass.
-
-**CI workflow will fail in a fresh environment** due to missing Azure auth. This should be the first fix since it blocks validation of everything else.
-
----
-
-## 2. Radius.Compute/* Namespace Rejection — Revert to Applications.Core/*
-
-**By:** Daisy (Lead)  
-**Date:** 2026-03-24  
-**Status:** DECISION — REJECT current `Radius.Compute/*` modeling, revert to `Applications.Core/*`
-
-### Situation
-
-Deployment confirms what my earlier full-codebase review flagged as Critical Finding C1: Azure-backed recipes (Dapr state, pub/sub, secrets) provision successfully, but all three app services fail because `Radius.Compute/containers@2025-08-01-preview` and `Radius.Compute/routes@2025-08-01-preview` are not recognized resource types in the deployed Radius environment.
-
-The `Radius.Compute` namespace was adopted based on Graham's migration proposal during Phase 5–6. `az bicep build` compiled with only `BCP081` warnings, which the team accepted as "expected." The warnings were actually honest: these types don't resolve at deploy time against stock Radius.
-
-### Decision
-
-**REJECT the `Radius.Compute/*` namespace for containers and routes. Revert to `Applications.Core/containers` and `Applications.Core/httpRoutes`.**
-
-Rationale:
-1. The sample must deploy on stock Radius without preview builds or custom type registrations. That's the whole point of a reference sample.
-2. `BCP081` warnings were a signal, not noise. We treated compile-time ambiguity as acceptable when it was actually predicting a deploy-time failure.
-3. `Applications.Core/applications` already stayed on the old namespace (correctly). The compute resources should follow the same boundary.
-4. The `Applications.Dapr/*` types never moved and work fine. The mixed state is the problem — not namespace age.
-
-### What Changes
-
-| File | Current | Revert To |
-|---|---|---|
-| `infra/radius/modules/container-service.bicep` | `Radius.Compute/containers@2025-08-01-preview` | `Applications.Core/containers@2023-10-01-preview` |
-| `infra/radius/app.bicep` | `Radius.Compute/routes@2025-08-01-preview` | `Applications.Core/httpRoutes@2023-10-01-preview` |
-| `infra/radius/app.json` | Regenerated from above | Regenerate after revert |
-| README.md, docs/*.md | References to `Radius.Compute/*` | Update to `Applications.Core/*` |
-
-### Shape Changes Required
-
-The revert is not a pure string swap. Graham's migration changed resource shapes:
-- `Radius.Compute/containers` uses a `containers` map + `extensions.daprSidecar` object
-- `Applications.Core/containers` uses a `container` singular object + `extensions` array with `kind: 'daprSidecar'`
-- `Radius.Compute/routes` has different rule/destination semantics than `Applications.Core/httpRoutes`
-
-Graham must handle the shape revert, not just the namespace rename.
-
-### Who Does the Revision
-
-**Graham** should NOT do this revision alone. He authored the original migration and approved the `BCP081`-is-acceptable position. Per my review protocol: when I reject work, a different agent should revise OR Graham revises with explicit reviewer oversight.
-
-**Recommendation:** Graham does the revert (he knows the shape differences best), but **Karen** must validate the result against a fresh `rad deploy` before it merges. No more "compiles clean" as a proxy for "deploys clean."
-
-### Follow-Up Items (From Earlier Review) — Pick Up Immediately
-
-After the compute revert unblocks deployment, these findings from my full-codebase review become the next priorities:
-
-1. **C2: Pub/sub recipe type mismatch** — Recipe outputs `pubsub.azure.servicebus` (queues) but app expects `pubsub.azure.servicebus.topics`. Graham owns this.
-2. **C3: State store version mismatch** — ACA bootstrap uses v2, recipe outputs v1. Graham owns this.
-3. **C7: CI workflow missing `azure/login`** — Workflow has OIDC permissions but no auth step. Graham owns this.
-
-These three are the next deployment blockers after compute is unblocked.
-
-### Lesson
-
-Compile-time validation is necessary but not sufficient. `az bicep build` with warnings told us "I don't know these types" — we should have treated that as "these types might not exist" rather than "these types are just new." For a reference sample, the bar is: it deploys on stock tooling, period.
-
----
-
-## 3. Document Azure Credential Registration in Radius Deployment
-
-**By:** Eddie  
-**Date:** 2026-03-24  
-**Owner:** Eddie  
-**Status:** Complete
-
-### Problem
-
-Graham's recipe troubleshooting diagnosed that Radius recipe deployment fails with `azure-azurecloud-default` secret errors when the Azure credential is not registered with the Radius control plane. This critical bootstrap step was missing from:
-- GitHub Actions workflow
-- Manual deployment walkthrough
-- Validation checklist
-- README narrative
-
-### Solution
-
-Added Azure credential registration documentation across four artifacts:
-
-1. **README.md** — Added "Azure credential registration (required)" section
-   - High-level explanation of what must happen and why
-   - Error message that indicates the problem
-   - Directs readers to checklist for steps
-
-2. **docs/radius-validation-checklist.md** — Comprehensive operator guidance
-   - Pre-deployment checkbox: explains purpose, shows command, verifies success
-   - Deployment Step 2: exact sequence and critical warning
-   - Troubleshooting entry: diagnosis, solution, explanation of the error
-
-3. **docs/end-to-end-setup-walkthrough.md** — Manual deployment path
-   - Inserted credential registration block after environment creation
-   - Placed before environment Bicep deployment
-   - Comments explain what the credential enables
-
-4. **.github/workflows/deploy-azure.yml** — CI/CD implementation
-   - New step: "Register Azure provider credentials with Radius"
-   - Placed between workspace setup and environment deployment
-   - Matches manual guidance sequence
-
-### Key Design
-
-**Sequence:** workspace → environment → **credential registration** → recipe publishing → environment deploy → app deploy
-
-**Error message:** `azure-azurecloud-default` (Kubernetes secret) is the operator-visible symptom; calling it out helps teams recognize the issue
-
-**Credibility:** Both CI/CD and manual paths now show the same step in the same sequence, building confidence in the guidance
-
-### Alignment with Graham's Work
-
-This documentation supports Graham's recipe repairs:
-- Treats credential registration as a separate bootstrap concern from app/environment Bicep
-- Separates "missing credential" (bootstrap) from "recipe output contract bugs" (recipe layer)
-- Points operators to credential registration as the first diagnostic step
-- Uses troubleshooting skill `radius-azure-recipe-troubleshooting/SKILL.md` as reference
-
-### Related Files
-
-- Graham history: Radius Dapr provisioning fix, Key Vault remediation, troubleshooting skill creation
-- Eddie history: Phase 10 documentation work
-- Modified docs: README, walkthrough, validation checklist, workflow
-- Modified recipes: Azure Blob, Service Bus, Key Vault (removals of manual resource IDs per Graham's repairs)
-
----
-
-## 4. Revert app compute surface to stock Applications.Core on Radius 0.55
-
-**By:** Graham (Platform Dev)  
-**Date:** 2026-03-24  
-**Status:** IMPLEMENTED
-
-### Decision
-
-Keep RadiusClaim app services on `Applications.Core/containers@2023-10-01-preview` and public ingress on `Applications.Core/gateways@2023-10-01-preview` for the shared repo. Do not depend on `Radius.Compute/containers` or `Radius.Compute/routes` unless the target Radius installation explicitly documents and registers those preview resource types.
-
-### Why
-
-- Live deployment now proves the concrete blocker: Azure-backed recipes succeed, then app service deployment fails with `InvalidResourceNamespace` for `Radius.Compute/containers`.
-- First-party Radius 0.55 docs still model stock container and gateway authoring on `Applications.Core/*`, so the repo should match the documented control-plane surface.
-- The repo's public endpoint story is already gateway-oriented (`rad deploy` prints a public endpoint); `Applications.Core/gateways` is the stock ingress resource that preserves that operator experience.
-
-### Exact future pivot to document, not depend on today
-
-- `Applications.Core/containers` → `Radius.Compute/containers`
-- `Applications.Core/gateways` → `Radius.Compute/routes`
-- Shape changes required: `properties.container` → `properties.containers[...]`, and `extensions[]` → `extensions.daprSidecar`
-
-### Team Impact
-
-- Platform and docs should describe the repo as stock-Radius-0.55 aligned.
-- Reviewers should treat any new `Radius.Compute/*` introduction as preview-only work that requires explicit catalog proof, not just a successful Bicep compile.
-- Troubleshooting should pivot from schema warnings to namespace support whenever live deploy returns `InvalidResourceNamespace`.
-
-### Repo touchpoints
-
-- `infra/radius/app.bicep`
-- `infra/radius/modules/container-service.bicep`
-- `infra/radius/app.json`
-- `README.md`
-- `docs/end-to-end-setup-walkthrough.md`
-- `docs/radius-validation-checklist.md`
-
----
-
-## 5. Radius Azure recipes should not manually emit Azure resource IDs
-
-**By:** Graham (Platform Dev)  
-**Date:** 2026-03-24  
-**Status:** Proposed
-
-### What
-
-For Azure-backed Radius recipes in this repo, remove manual `result.resources` emission when the recipe only creates Azure resources. Keep recipe outputs focused on Dapr `values` and `secrets`, then regenerate the checked-in JSON mirrors.
-
-### Why
-
-Radius already tracks Azure backing resources for these recipes. Manually emitting storage account, Service Bus, or Key Vault IDs creates contract drift and is a concrete source of deployment failure.
-
-### Scope
-
-- `infra/radius/recipes/azure/state-store.{bicep,json}`
-- `infra/radius/recipes/azure/pubsub.{bicep,json}`
-- `infra/radius/recipes/azure/secrets.{bicep,json}`
-
-### Implication
-
-Future Azure/AWS recipe work should only populate `result.resources` for Kubernetes/UCP IDs that Radius cannot infer.
-
----
-
-## 6. Graham — Daisy follow-ups (C2, C3, C7)
-
-**By:** Graham (Platform Dev)  
-**Date:** 2026-03-24  
-**Status:** IMPLEMENTED
-
-### Decision
-
-Close Daisy's next platform follow-ups by aligning the Radius recipe contract with the repo's existing ACA reference contract, while keeping CI bootstrap explicit instead of adding runner-side Azure auth glue.
-
-### What Changed
-
-1. **C2 — Pub/sub recipe contract aligned to topics**
-   - `infra/radius/recipes/azure/pubsub.bicep` now outputs `pubsub.azure.servicebus.topics`
-   - The recipe now pre-creates the demo topic (`expense-notifications`) and subscriber-facing subscription (`notification-svc`)
-   - `namespaceName` metadata is now emitted as the Service Bus FQDN to match Dapr's topics guidance
-   - `infra/radius/app.bicep` passes the subscription name explicitly so the app model stays teachable
-
-2. **C3 — State store contract aligned to v2**
-   - `infra/radius/recipes/azure/state-store.bicep` now emits `state.azure.blobstorage` version `v2`
-   - This matches `infra/radius/environments/azure.bicep`, which already modeled the ACA reference path on v2
-
-3. **C7 — Investigated workflow auth/bootstrap gap**
-   - Current workflow already uses the right bootstrap primitive for Radius: `rad credential register azure sp`
-   - No `azure/login` step was added because the runner does not provision Azure resources directly; Radius does, using the registered service principal
-   - Removed the unused `id-token: write` permission and documented the intent inline so the workflow no longer suggests an OIDC path it does not use
-
-### Why
-
-- The demo story is cleaner when both deployment surfaces prove the same Dapr component contracts.
-- Service Bus topics plus disabled entity management only stays honest if the recipe creates the topic/subscription pair the app actually uses.
-- CI should show the real trust boundary: kubeconfig to reach the cluster, service principal registration so Radius can reach Azure.
-
-### Validation
-
-- ✓ `az bicep build --file infra/radius/app.bicep`
-- ✓ `az bicep build --file infra/radius/environments/azure-radius.bicep`
-- ✓ `az bicep build --file infra/radius/recipes/azure/pubsub.bicep`
-- ✓ `az bicep build --file infra/radius/recipes/azure/state-store.bicep`
-- ✓ `dotnet build RadiusClaim.slnx --configuration Release`
-- ✓ `dotnet test RadiusClaim.slnx --configuration Release --no-build`
-- ✓ YAML parse of `.github/workflows/deploy-azure.yml`
-
----
-
-## 7. Karen: approve the stock Applications.Core revert
-
-**By:** Karen (Reviewer)  
-**Date:** 2026-03-24  
-**Status:** APPROVED
-
-### Decision
-
-Approve Graham's revert from `Radius.Compute/*` back to stock `Applications.Core/*` resources for the deployable app surface on the current Radius environment.
-
-### Why
-
-- Local evidence is now live, not hypothetical: stock Radius `0.55.0` is installed and reachable on this machine, and `rad deploy infra/radius/app.bicep` advanced past the old namespace failure.
-- The deploy created `Applications.Core/containers` resources for `expense-api`, `workflow-engine`, and `notification-svc`, which directly disproves the earlier `InvalidResourceNamespace` blocker for the reverted model.
-- The checked-in Bicep/JSON contract is internally consistent again: containers use `properties.container`, Dapr wiring uses the legacy `extensions[]` array, and ingress reverts to `Applications.Core/gateways`.
-
-### Team Impact
-
-- For stock Radius `0.55`, keep `Applications.Core/containers` and `Applications.Core/gateways` in `infra/radius/app.bicep` unless the platform team can point to a real preview catalog installed in the target environment.
-- If a live deploy now fails later on pod readiness or image pull, treat that as a separate runtime issue; do not reopen the namespace migration by default.
-- Current follow-up blocker for the demo path is image availability/auth for `ghcr.io/sovereignapp/radiusclaim/*:phase1`, not the Radius namespace choice.
-
----
-
-## 8. Eddie (Docs/Story) — First-Time Deploy Walkthrough Reorganization
-
-**Date:** 2026-03-25  
-**Author:** Eddie (Docs/Story)  
-**Status:** Implemented  
-
-### Context
-
-The end-to-end setup walkthrough mixed first-time deployment guidance with redeploy and legacy owner-tag recovery language, creating cognitive load for operators on their first deployment. The request was to clarify the happy path for first-timers while preserving the troubleshooting guidance.
-
-### Decision
-
-**Separate deployment from iteration.**
-
-1. **Happy path remains linear (Steps 1–12):** Authenticate → set up cluster → deploy → validate → open browser
-2. **"Next Steps" focuses on demo and exploration:** Run demo flow → explore architecture (no redeploy guidance here)
-3. **Redeploy is troubleshooting, not navigation:** Moved to "### Redeploying After Code Changes" in the Troubleshooting section
-4. **Legacy recovery is defensive:** Moved the stale owner-tag case (`ghcr.io/sovereignapp/radiusclaim/*:phase1`) to "### Image Reference Mismatch (Legacy Recovery)"
-5. **"Services Not Starting" stays generic:** Focuses on pod diagnostics and image pull authentication, not legacy recovery
-
-### Rationale
-
-- **First-timers need linear storytelling:** Operators should not see redeploy or legacy recovery language in the main narrative; these are iteration and edge-case topics
-- **Troubleshooting is opt-in:** By placing these sections in troubleshooting, we make them discoverable for operators who need them but invisible to those following the happy path
-- **Naming matters:** "Image Reference Mismatch (Legacy Recovery)" signals "this is defensive, not expected" better than burying it in a larger section
-
-### Outcomes
-
-| Audience | Before | After |
-|----------|--------|-------|
-| **First-timers** | Mixed narrative with redeploy and legacy recovery interspersed | Clean linear path: deploy → validate → demo |
-| **Operators iterating** | Had to skip/ignore redeploy section in Next Steps | Troubleshooting section shows redeploy workflow clearly |
-| **Operators with legacy paths** | Legacy recovery mixed into Services Not Starting | "Image Reference Mismatch (Legacy Recovery)" section, easy to find if needed |
-
----
-
-## 9. Eddie (Docs/Story) — Walkthrough `rad deploy` Command Parameter Consistency
-
-**Date:** 2026-03-25  
-**Owner:** Eddie (Docs/Story)  
-**Status:** COMPLETE  
-**Scope:** Minimal, targeted consistency pass
-
-### Problem
-
-The end-to-end setup walkthrough had an inconsistency in `rad deploy infra/radius/app.bicep` commands:
-
-- **Happy path** (Step 9 manual CLI): Includes `--parameters deploymentTarget='radius'`
-- **Troubleshooting (Image Reference Mismatch):** Missing `deploymentTarget='radius'`
-- **Troubleshooting (Redeploying After Code Changes):** Missing `deploymentTarget='radius'`
-
-This inconsistency creates operator confusion: "Should I use this parameter every time, or only in the happy path?"
-
-### Decision
-
-**Add `--parameters deploymentTarget='radius'` to all recovery `rad deploy` commands.**
-
-**Rationale:**
-- Consistency reinforces the canonical form; operators learn one shape
-- `deploymentTarget` is a legitimate app model parameter, not a workaround
-- Recovery paths should mirror the happy path exactly (build confidence, reduce variables)
-
-### Secondary Change: Reword "Image Reference Mismatch" Section
-
-**Original heading:** "### Image Reference Mismatch (Legacy Recovery)"
-
-**New heading:** "### Image Reference Mismatch"
-
-**Why:**
-- "(Legacy Recovery)" signals this is a defensive edge-case section
-- This is accurate (for real edge cases), but the phrasing was scaring off first-timers
-- Removing the label lets operators read the symptom and self-decide relevance
-- First-timers arriving here via "Cmd+F symptom not found" still find the generic recovery steps
-
-**Symptom reworded:**
-- **Old:** "Pod events reference an old registry path (e.g., `ghcr.io/sovereignapp/radiusclaim/*:phase1`)"
-- **New:** "Pod events reference an unexpected registry path or old tag (e.g., a previous environment's registry)"
-
-**Why:**
-- Removes project-specific example (`sovereignapp/`) that makes it seem like legacy recovery for a specific past state
-- Generalizes to any environment mismatch (switching environments, rebuilds with different parameters)
-- Makes the section applicable to a broader set of operators
-
-### Verification
-
-All three `rad deploy infra/radius/app.bicep` command instances in the walkthrough now use:
-```bash
-rad deploy infra/radius/app.bicep \
-  --parameters containerRegistry="$GHCR_PREFIX" \
-  --parameters imageTag="$TAG" \
-  --parameters deploymentTarget='radius'
-```
-
-Operators following happy path, recovering from image mismatch, or redeploying after code changes now use the same command shape.
-
----
-
-## 10. Graham — GHCR 403 triage
-
-**Date:** 2026-03-25  
-**Status:** Decision  
-
-Treat `ghcr.io/sovereignapp/radiusclaim/*:phase1` pull failures as repo drift first, not as a Radius namespace regression. The shared app model now points at the current repo namespace (`ghcr.io/wesback/radiusclaim`) and requires an explicit service-image tag so operators stop inheriting the retired `phase1` image reference by accident.
-
-### Why
-- Anonymous GHCR token probes return `403` for `sovereignapp/radiusclaim/...`, which is consistent with a dead or unauthorized old owner path.
-- The same probe returns an anonymous token for the published recipe package under `wesback/radiusclaim/recipes/...`, proving the active repo namespace is different from the stale app default.
-- The deploy workflow already pushes service images with commit-SHA tags under `ghcr.io/wesback/radiusclaim`; `phase1` is no longer a workflow output.
-
-### Operator follow-up
-If Kubernetes now pulls `ghcr.io/wesback/...` and still gets `403 Forbidden`, the remaining blocker is GHCR package visibility or pull auth. Operators should either make the service-image packages public in GHCR or attach a namespace-scoped `ghcr-pull` imagePullSecret before retrying the app deploy.
-
-
----
-
-## 11. Eddie (Docs/Story) — GHCR Private Package Documentation Clarity
-
-**Date:** 2026-03-25  
-**Author:** Eddie (Docs/Story)  
-**Status:** Review finding (non-binding recommendation)  
-**Scope:** docs/end-to-end-setup-walkthrough.md, docs/radius-validation-checklist.md
-
-### Problem Statement
-
-Audit question: Are GHCR packages private by default documented?
-
-**Current State:** Partially documented. The docs mention pull secrets and offer "make public OR wire a secret" in troubleshooting, but:
-- Never explicitly state "GHCR packages are private by default"
-- Don't warn operators upfront during happy-path setup
-- Bury the pull-auth requirement in troubleshooting (error response) instead of happy-path (happy preemption)
-
-### Impact
-
-First-time users follow: build → push → deploy. They push private packages unknowingly, hit `403 Forbidden` at pod-start time, and have to jump to the troubleshooting section to understand the fix. The docs make this a **gotcha** instead of **expected workflow**.
-
-### Recommendation
-
-**Inject 3 clarity touchpoints** (non-invasive, no rewrites):
-
-1. **Token Creation section (after line 248):** Add 3-line note: GHCR is private by default; you have two deployment options (public vs. pull secret).
-2. **Before Build/Push (around line 367):** Add 2-sentence callout: "Visibility Decision Checkpoint" — decide now whether images are public or private, plan pull secrets if private.
-3. **Troubleshooting section (line 700):** Reframe title from "If you see 403" to "When Images are Private: Create a Pull Secret" — shifts mindset from error-state to expected workflow.
-
-### Trade-offs
-
-- **Pro:** Eliminates the most common 403 Forbidden blocker for first-time operators
-- **Pro:** Keeps happy-path compact (3 lines + 2 lines)
-- **Con:** Adds 5 lines of inline text (negligible)
-- **Con:** Troubleshooting section loses "only needed if error" framing (but that's okay—making it explicit is better)
+### Recommended Action Sequence (Risk-Ordered)
+
+1. **Infrastructure API compatibility** (Daisy/Platform) — Confirm Radius version or update resource types
+2. **Pubsub type fix** (Daisy/Platform) — Change recipe output to `pubsub.azure.servicebus.topics`
+3. **State store alignment** (Daisy/Platform) — Unify recipe v1 or bootstrap v2
+4. **Registry update** (Billy/CI) — Replace `sovereignapp` with `wesback` in app.bicep, params, and CI workflows
+5. **README and docs cleanup** (Eddie/Docs) — Correct tree, paths, and Quick Start status
+6. **Code contract cleanup** (Graham/Core Dev) — Remove dead code; wire `ExpenseRejected` handling
+7. **Local Dapr config** (Graham/Core Dev) — Add secret store component for `dapr run`
 
 ### Next Step
 
-Awaiting reviewer feedback. If approved, Eddie will implement these three changes in the artifacts.
+Awaiting consensus on priority sequence.
 
 ---
 
-## 12. Graham — Live Cluster Recovery Commands (Reference Documentation)
+## 2. Remove misleading namespace defaults; teach discovery pattern
+
+**Date:** 2026-03-25  
+**Author:** Eddie (Docs/Story)  
+**Status:** Completed  
+
+### Problem
+
+The image pull secret creation docs used a harmful fallback pattern:
+```bash
+export RADIUS_KUBERNETES_NAMESPACE="${RADIUS_KUBERNETES_NAMESPACE:-default}"
+```
+
+This silently defaulted to "default" namespace, which is dangerous because:
+- Radius maps group names (e.g., "radiusclaim-group") to Kubernetes namespaces automatically
+- First-time users had no visibility into which namespace would be created
+- Errors only appeared *after* the user ran the kubectl commands
+- It violated the team's earlier decision (2026-03-24) that namespace changes should be direct string updates, not hidden compatibility logic
+
+### Solution
+
+**Remove the fallback entirely. Teach discovery instead.**
+
+1. **Discovery step** (`kubectl get namespaces | grep -i radius`): Users see what actually exists
+2. **Clear naming**: Document the relationship "group name → namespace name"
+3. **Explicit assignment**: Users set `RADIUS_KUBERNETES_NAMESPACE` to their actual group name before copy/pasting
+
+### Implementation
+
+- **docs/end-to-end-setup-walkthrough.md** (lines 360–379):
+  - Added discovery command before the secret creation
+  - Removed `-default` fallback
+  - Showed how group name determines namespace
+
+- **docs/radius-validation-checklist.md** (lines 34–35, 76–86):
+  - Updated cluster verification to discover namespaces
+  - Removed hard-coded default from variable guidance
+  - Added explanation: "discover it by running `kubectl get namespaces | grep -i radius`"
+
+### Rationale
+
+**Why discovery over defaults?**
+- Namespace is infrastructure metadata users must own. Guessing it is worse than asking.
+- `kubectl get namespaces` is a skill first-time users should learn anyway.
+- The team's namespace migration decision (3/24) emphasizes direct, transparent config changes, not silent fallbacks.
+
+**Why still allow override?**
+- Advanced users may run multiple Radius groups in one cluster.
+- Keeping `RADIUS_KUBERNETES_NAMESPACE` as an optional variable respects that flexibility.
+
+### Alignment with Prior Decisions
+
+- Aligns with 2026-03-24 namespace migration decision: "no compatibility code that supports both old and new namespaces"
+- Consistent with the team's emphasis on explicit, auditable configuration
+- Reduces support burden: errors are caught at kubectl discovery, not at pod creation
+
+### Copy-Paste Safety
+
+✅ Users must now:
+1. Discover their namespace: `kubectl get namespaces | grep -i radius`
+2. Replace the example value: `export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-group"`
+3. Understand the mapping before running the rest of the code
+
+This is more hands-on but safer and more transparent than silent defaults.
+
+---
+
+## 3. AKS docker_bridge_cidr Warning Resolution
+
+**Date:** 2026-03-25  
+**Raised by:** Eddie (Docs/Story)  
+**Status:** Resolved — No action required for RadiusClaim
+
+### Problem
+
+User reported warning: `docker_bridge_cidr is not a known attribute of class azure.mgmt.containerservice.models._models_py3.ContainerServiceNetworkProfile and will be ignored when running the az aks create`.
+
+### Investigation
+
+Checked Azure Learn documentation (Microsoft Learn MCP):
+- `docker_bridge_cidr` exists in PowerShell, JavaScript, and ML SDKs as a valid property
+- **Python `azure-mgmt-containerservice` SDK does NOT expose it** in current version
+- SDK version mismatch: API-level property vs. Python client binding limitation
+- AKS CLI equivalent is `--docker-bridge-address` (takes IP address like `172.17.0.1/16`)
+
+### Resolution
+
+1. **This warning is SDK-scoped; code is safe.** RadiusClaim does not use `docker_bridge_cidr` anywhere (searched all `.py`, `.sh`, `.yaml`, `.bicep`, `.tf` files).
+
+2. **If property is needed in future:** Upgrade `azure-mgmt-containerservice` to a newer release that includes the attribute, or use CLI parameter instead.
+
+3. **Docs note:** No documentation updates needed—property was never exposed in RadiusClaim's AKS deployment workflows.
+
+### Recommendation
+
+No code changes. If encountered in external scripts or CI/CD:
+- Replace `docker_bridge_cidr` with `--docker-bridge-address` in CLI calls
+- Or remove entirely and let Azure auto-assign the bridge address (safe for most clusters)
+
+---
+
+## 4. README Disclaimer: Sample Code Status
+
+**Decided:** Add a concise, practical disclaimer to README.md clarifying RadiusClaim is sample/reference code, not production-ready.
+
+### Placement
+- **Location:** Between the intro tagline and the "The Problem" section
+- **Rationale:** First-time readers encounter it immediately after understanding what the repo is, before diving into the narrative. Early visibility without being alarmist.
+
+### Content
+```
+> **Note:** This is sample code for learning and reference. It is not production-ready. Use it to understand patterns; adapt it for your production requirements, security posture, and testing standards.
+```
+
+### Tone Alignment
+- Practical, direct voice matching the existing README
+- Constructive: frames it as "learn patterns, then adapt" rather than "do not use"
+- Specific: calls out real concerns (security posture, testing standards)
+- Not verbose: fits the visual rhythm of the blockquote header
+
+### Why This Works
+- Uses blockquote formatting (matches the existing tagline style)
+- Placed in the established "separator + intro" flow
+- Acknowledges the value of the code while being clear about its limitations
+- Readers see it early and understand context before reading detailed sections
+
+---
+
+## 5. Live Cluster Recovery Commands (Reference Documentation)
 
 **Date:** 2026-03-25  
 **Author:** Graham (Platform Dev)  
@@ -529,4 +236,4 @@ AKS cluster (`radiusclaim-azure-radiusclaim`) has three deployments stuck in `Pe
 
 ---
 
-**Last Updated:** 2026-03-25T10:17:49Z
+**Last Updated:** 2026-03-25T11:31:49Z

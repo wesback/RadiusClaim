@@ -73,3 +73,29 @@
 **Deduplication:** Verified no duplicate problem statements across merged entries. Graham's recovery reference complements Eddie's doc audit—both address GHCR 403 blocker from different angles (preventive docs vs. operational playbook).
 
 **Outcome:** Inbox merged, orchestration/session logs documented, team decision registry current.
+
+---
+
+## 2026-03-25T11:31:49Z: Namespace Guidance Docs Fix — Orchestration & Decision Merge
+
+**Work:** Process Eddie (Docs/Story) namespace clarification work; merge 3 inbox decisions into main registry; delete inbox files; update affected agents' history.
+
+**Files Written:**
+- `.squad/orchestration-log/2026-03-25T11-31-49Z-eddie.md` — Eddie's namespace guidance orchestration record
+- `.squad/log/2026-03-25T11-31-49Z-namespace-docs-fix.md` — Brief session summary for namespace docs fix
+- Updated `.squad/decisions/decisions.md` — Consolidated Decisions 1–5 from archived registry + merged 3 inbox decisions (namespace guidance, AKS docker_bridge_cidr resolution, README sample disclaimer)
+
+**Inbox Purged:** eddie-namespace-guidance.md, eddie-aks-network-warning.md, eddie-readme-sample-disclaimer.md removed.
+
+**Decisions Registry Status:** 5 active decisions, updated 2026-03-25T11:31:49Z. Decisions focus on:
+1. Full codebase audit findings (Daisy)
+2. Namespace discovery pattern (Eddie) — removed misleading fallback, added transparent kubectl discovery workflow
+3. AKS docker_bridge_cidr SDK compatibility (Eddie) — resolved, no action needed for RadiusClaim
+4. README sample code disclaimer (Eddie) — placement between intro tagline and problem statement
+5. Live cluster recovery commands (Graham) — operational reference for image pull failures
+
+**Deduplication:** Verified no overlaps across merged entries. All three Eddie decisions addressed distinct concerns (namespace config transparency, SDK compatibility note, README messaging).
+
+**Agents Updated:** Eddie history appended with namespace discovery learning. Scribe history (this file) documents full orchestration cycle.
+
+**Outcome:** Inbox merged, orchestration/session logs documented, team decision registry current. Namespace guidance decision fully integrated into project memory.

@@ -41,6 +41,8 @@ All members drawn from "Daisy Jones & The Six" universe per user naming preferen
 - Azure is the current target, but application code must stay cloud-agnostic through Dapr abstractions.
 - Own the README narrative, demo script, and explanation of how the platform story differs from the app story.
 - See `.squad/decisions.md` for canonical decision log: CloudExpense Lite architecture, naming conventions, and Azure-first-but-portable strategy.
+- **AKS Network Config (2026-03-25):** `docker_bridge_cidr` is not a known attribute in the current Python `azure-mgmt-containerservice` SDK, even though it exists in PowerShell, JavaScript, and ML SDKs. Use `--docker-bridge-address` (CLI) or upgrade Python SDK, or let Azure auto-assign. Not present in RadiusClaim codebase.
+- **Namespace Discovery Pattern (2026-03-25):** Never assume a default Kubernetes namespace or provide silent fallbacks. Always teach users to discover their namespace from the cluster (`kubectl get namespaces | grep -i radius`), then document how their Radius group name maps to that namespace. This aligns with the team's decision to use direct, transparent config changes, not compatibility layers.
 
 ## Phase 1 Work (2026-03-23)
 
@@ -959,3 +961,34 @@ This reframes from "error state" to "expected workflow for private packages."
 - **Angle-bracket placeholders:** Reserve these for one-off values users generate (e.g., random IDs, domain names). For structured config (credentials, usernames), use shell variables already exported
 - **Kubectl flag hygiene:** Remove flags that downstream tools ignore (docker-email in pull secrets). Simpler commands = higher completion rate
 
+
+## 2026-03-25: Namespace guidance clarification
+
+**Problem:** Misleading namespace fallback in the pull secret creation step. The pattern `export RADIUS_KUBERNETES_NAMESPACE="${RADIUS_KUBERNETES_NAMESPACE:-default}"` defaulted to "default" namespace, which is error-prone because:
+- Radius group names (e.g., "radiusclaim-group") map to Kubernetes namespaces automatically
+- Hardcoding a fallback to "default" conflicted with actual deployment namespaces
+- First-time users had no way to discover the correct namespace before copy/pasting
+
+**Solution (discovery-based, not guessed defaults):**
+1. **end-to-end-setup-walkthrough.md (lines 360–375):** 
+   - Removed the `${RADIUS_KUBERNETES_NAMESPACE:-default}` fallback entirely
+   - Added an explicit discovery step: `kubectl get namespaces | grep -i radius`
+   - Users now set the variable to their actual Radius group name (e.g., `radiusclaim-group`)
+   - Inline comment explains the relationship: "Radius group name → Kubernetes namespace"
+
+2. **radius-validation-checklist.md (lines 34–35, 76–86):**
+   - Updated the namespace verification to use discovery: `kubectl get namespaces | grep -i radius`
+   - Removed hard-coded default from variable guidance
+   - Added explanation in the verification step: group names map to namespaces; discover before setting
+
+**Key pattern:** Never assume a fallback namespace. Always guide users to discover their actual namespace from the cluster, then document how their choices (e.g., group name) determine the namespace name.
+
+**Learnings:**
+- Defaulting to "default" in a Radius context is confusing and error-prone
+- Kubernetes discovery commands (`kubectl get namespaces`) are first-time-user friendly
+- The team decided namespace changes are direct string updates, not compatibility layers (see squad decisions 2026-03-24)
+- Documentation should teach the relationship ("group name → namespace") not hide it behind defaults
+
+**Files updated:**
+- docs/end-to-end-setup-walkthrough.md (image pull secret section)
+- docs/radius-validation-checklist.md (GitHub Actions variables and cluster verification)
