@@ -5,6 +5,8 @@
 > **Scope:** Phase 7 validation requirements
 
 > **Start here for the full operator flow:** Use [`docs/end-to-end-setup-walkthrough.md`](./end-to-end-setup-walkthrough.md) if you need the resource-group-to-browser journey. Keep this checklist open as the companion preflight and troubleshooting reference.
+>
+> **First-time cluster prep:** `./scripts/prepare-cluster.sh` owns the cluster boundary (AKS verify/create, `kubectl` context, Dapr, Radius). On a fresh cluster, include `--install-dapr --install-radius`; without them the script only verifies those control planes and stops if they are missing. `./scripts/bootstrap.sh` is the repeatable deploy step after that.
 
 ---
 
@@ -19,9 +21,9 @@ Before running `rad deploy`, verify these requirements are met:
 rad --version
 # Expected: v0.x.x or later
 
-# Verify Radius control plane is running
-kubectl get pods -n radius-system
-# Expected: radius-controller-manager pods in Running state
+# Verify the Radius controller is running
+kubectl get pods -n radius-system -l app.kubernetes.io/name=controller
+# Expected: controller pod in Running state
 ```
 
 ### ✅ Kubernetes Cluster Access
@@ -69,7 +71,7 @@ For CI/CD deployment, verify these are configured:
 
 **Required Variables:**
 ```bash
-# AZURE_LOCATION (e.g., eastus, westus2) — for Azure backing services
+# AZURE_LOCATION (e.g., belgiumcentral, westus2) — for Azure backing services
 # AZURE_RESOURCE_GROUP (e.g., radiusclaim-rg) — for Azure backing services
 ```
 
@@ -248,7 +250,7 @@ rad credential register azure wi \
 
 ## Deployment Steps
 
-For the scripted operator path, use `./scripts/bootstrap.sh --resource-group <your-resource-group>`. The steps below are the explicit equivalent when you want to inspect or troubleshoot each Radius action individually.
+For the scripted operator path, use `./scripts/prepare-cluster.sh` once per cluster, then `./scripts/bootstrap.sh --resource-group <your-resource-group>` for each repeatable deployment. The steps below are the explicit equivalent when you want to inspect or troubleshoot each Radius action individually.
 
 ### Step 1: Create Target Environment (Idempotent)
 
@@ -279,6 +281,14 @@ rad credential list
 
 **Critical:** If you skip this step, the environment deployment will fail when Radius tries to provision Azure resources via recipes.
 
+For the tenant-compliant statestore path, also resolve the Microsoft Entra object ID that should receive Blob data-plane RBAC:
+
+```bash
+export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
+```
+
+If your tenant blocks directory reads for the current operator identity, set `AZURE_PRINCIPAL_ID` explicitly instead of relying on `az ad sp show`.
+
 ### Step 3: Publish Radius Recipe Artifacts
 
 ```bash
@@ -295,6 +305,9 @@ rad deploy infra/radius/environments/azure-radius.bicep \
   --parameters kubernetesNamespace=radiusclaim-azure \
   --parameters azureProviderScope="/subscriptions/<subscription-id>/resourceGroups/<resource-group>" \
   --parameters location=<azure-location> \
+  --parameters daprAzureClientId="$AZURE_CLIENT_ID" \
+  --parameters daprAzurePrincipalId="$AZURE_PRINCIPAL_ID" \
+  --parameters daprAzureTenantId="$AZURE_TENANT_ID" \
   --parameters recipeRegistry='ghcr.io/<your-org>/radiusclaim/recipes' \
   --parameters recipeTag='<your-tag>'
 ```
@@ -382,6 +395,19 @@ kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
 kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
   -n "$WORKLOAD_NAMESPACE"
 ```
+
+The backfill now uses Microsoft Entra auth for `statestore`, so make sure the same Radius Azure credential variables are still present in your shell:
+
+```bash
+export AZURE_CLIENT_ID="<azure-service-principal-client-id>"
+export AZURE_TENANT_ID="<azure-tenant-id>"
+# Service-principal auth only:
+export AZURE_CLIENT_SECRET="<azure-service-principal-client-secret>"
+# Optional if Graph lookup is blocked:
+export AZURE_PRINCIPAL_ID="<entra-object-id>"
+```
+
+`deploy-dapr-components.sh` will grant `Storage Blob Data Contributor` on the Blob account if the role assignment is missing, then generate a statestore component that uses `azureTenantId`, `azureClientId`, and `azureClientSecret` (or workload identity when no client secret is supplied).
 
 **Verification:**
 ```bash
@@ -656,6 +682,42 @@ kubectl rollout restart deployment/expense-api deployment/workflow-engine deploy
 3. Re-run `rad deploy infra/radius/app.bicep ...` once to rule out staleness
 4. If `kubectl get components.dapr.io -A` is still empty, run the backfill script
 
+### Issue: `daprd` is in `CrashLoopBackOff`
+
+**Cause:** The sidecar is loading a broken Dapr component, which is a platform wiring issue rather than an app-container issue. In the live RadiusClaim Azure slice, the highest-signal failure is an invalid statestore auth path (`KeyBasedAuthenticationNotPermitted`) after a manual component backfill.
+
+**Confirm:**
+```bash
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+POD=$(kubectl get pods -n "$WORKLOAD_NAMESPACE" --no-headers | awk '/expense-api/ {print $1; exit}')
+
+kubectl logs -n "$WORKLOAD_NAMESPACE" "$POD" -c daprd --previous --tail=120
+kubectl get component statestore pubsub -n "$WORKLOAD_NAMESPACE" -o yaml
+```
+
+**Interpretation:**
+- `KeyBasedAuthenticationNotPermitted` in `daprd` logs → `statestore` is using `accountKey`, but the backing storage account disallows shared-key auth.
+- `pubsub` metadata includes both `namespaceName` and `connectionString` → the pub/sub component is also invalid and will become the next blocker after statestore is repaired.
+- Dapr annotations such as `dapr.io/enabled`, `dapr.io/app-id`, and `dapr.io/app-port` are **not** the problem when the sidecar dies during component initialization.
+
+**Fix path:**
+```bash
+export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
+
+./scripts/deploy-dapr-components.sh \
+  --resource-group <your-resource-group> \
+  --namespace "$WORKLOAD_NAMESPACE"
+
+# Keep Service Bus on exactly one auth path: connectionString only for the current backfill flow
+kubectl patch component pubsub -n "$WORKLOAD_NAMESPACE" --type merge \
+  -p '{"spec":{"metadata":[{"name":"connectionString","secretKeyRef":{"name":"pubsub-secrets","key":"connectionString"}},{"name":"disableEntityManagement","value":"true"}]}}'
+
+kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
+  -n "$WORKLOAD_NAMESPACE"
+```
+
+The statestore recovery path is Microsoft Entra/RBAC only. Shared-key re-enable is no longer a valid tenant-safe fix.
+
 ### Issue: Services return 500 errors
 
 **Cause:** Dapr sidecar not initialized or component wiring broken.
@@ -677,6 +739,11 @@ kubectl get pod <pod-name> -n "$WORKLOAD_NAMESPACE" -o jsonpath='{.spec.containe
 
 **Cause:** Azure Key Vault soft-delete collision. When a Key Vault is deleted, Azure reserves the name for 7 days before automatic purge. Our Radius recipe generates vault names **deterministically** using `uniqueString()`, so the same environment always tries to create the same vault name.
 
+**Scripted path behavior (`./scripts/bootstrap.sh`):**
+- Bootstrap now resolves the exact deterministic Key Vault name for `platform-secrets` before app deployment.
+- If that vault is soft-deleted **in the same subscription, resource group, and location**, bootstrap prompts to restore it and then reuses it.
+- If Azure can only recover the deleted vault into some other scope, bootstrap fails early with that scope called out explicitly instead of letting `rad deploy infra/radius/app.bicep` fail unclearly.
+
 **Diagnosis:**
 ```bash
 # List soft-deleted vaults
@@ -686,13 +753,25 @@ az keyvault list-deleted
 # Expected output shows a vault like "ce-ghhsgdsk4etcc" with a future purge date
 ```
 
-**Solution — Option A (Recommended: Wait for Auto-Purge)**
-1. Note the `scheduledPurgeDate` from `az keyvault list-deleted`
-2. Wait until that date passes (typically 7 days)
-3. Retry `rad deploy`
-4. Azure automatically frees the vault name after purge
+**Solution — Option A (Recommended when scope matches: Restore the deleted vault)**
+1. Confirm the deleted vault belongs to the same subscription/resource group/location that bootstrap or your manual deployment targets
+2. Restore it:
+   ```bash
+   az keyvault recover --name ce-<vault-suffix> --location <region>
+   ```
+3. Retry `./scripts/bootstrap.sh --resource-group <name>` or `rad deploy`
+4. Re-apply any required runtime RBAC afterward (the repo's Dapr backfill step already repairs the Key Vault Secrets User assignment)
 
-**Solution — Option B (Immediate: Use New Environment)**
+**Solution — Option B (If restore is not safe/possible: Wait for Auto-Purge or Purge Manually)**
+1. Note the `scheduledPurgeDate` from `az keyvault list-deleted`
+2. If you own the deleted vault and understand the impact, purge it:
+   ```bash
+   az keyvault purge --name ce-<vault-suffix> --location <region>
+   ```
+3. Otherwise wait until the scheduled purge date passes
+4. Retry deployment after the name is free again
+
+**Solution — Option C (Immediate isolation: Use New Environment)**
 1. Create a new Radius environment with a different name:
    ```bash
    rad env create <new-environment-name> --namespace radiusclaim-azure
@@ -700,17 +779,6 @@ az keyvault list-deleted
    ```
 2. Deploy using the new environment — `uniqueString()` will generate a new vault name
 3. Update team runbooks to reference the new environment name
-
-**Solution — Option C (High Risk: Force Purge)**
-Only use if timeline-critical and Option A/B are blocked:
-```bash
-# ⚠️ WARNING: Permanently deletes the vault and all secrets
-az keyvault purge --name ce-<vault-suffix> --location <region>
-
-# Then retry deployment
-rad deploy ...
-```
-Do not use this unless you understand the risk.
 
 **Prevention:** This is normal Azure behavior and not a code bug. Document any custom environment names in your runbooks so future operators understand the soft-delete window.
 

@@ -17,6 +17,33 @@ var app = builder.Build();
 
 app.UseStaticFiles();
 app.UseCloudEvents();
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Dapr.DaprException ex) when (!context.RequestAborted.IsCancellationRequested)
+    {
+        app.Logger.LogWarning(
+            ex,
+            "Dapr dependency unavailable while handling {Method} {Path}.",
+            context.Request.Method,
+            context.Request.Path);
+
+        if (context.Response.HasStarted)
+        {
+            throw;
+        }
+
+        context.Response.Clear();
+        await Results.Problem(
+            title: "Expense state is unavailable.",
+            detail: "The hosted /app shell can render on its own, but loading or submitting expenses requires the expense-api Dapr sidecar and the configured 'statestore' component. Start expense-api with Dapr. Workflow telemetry also depends on workflow-engine being reachable through Dapr.",
+            statusCode: StatusCodes.Status503ServiceUnavailable)
+            .ExecuteAsync(context);
+    }
+});
 
 var expenses = app.MapGroup("/expenses");
 
@@ -68,22 +95,23 @@ expenses.MapPost("/", async (ExpenseSubmission submission, DaprClient daprClient
 
     if (createOutcome.Result == ExpenseCreateResult.AlreadyExists)
     {
-        return Results.Conflict(new
-        {
-            message = $"Expense '{expenseId}' already exists."
-        });
+        var existingRecord = createOutcome.Record ?? record;
+        return Results.Problem(
+            title: "Expense already exists.",
+            detail: $"Expense '{expenseId}' already exists. Fetch it directly at /expenses/{expenseId}.",
+            statusCode: StatusCodes.Status409Conflict,
+            extensions: CreateExpenseErrorExtensions(existingRecord));
     }
 
     var persistedRecord = createOutcome.Record ?? record;
     var indexOutcome = await TryAddExpenseToIndexAsync(expenseId, daprClient, cancellationToken);
     if (indexOutcome == ExpenseIndexMutationResult.Failed)
     {
-        return Results.Json(new
-        {
-            message = "Expense was persisted, but the recent-expense index could not be updated.",
-            expense = persistedRecord,
-            location = $"/expenses/{expenseId}"
-        }, statusCode: StatusCodes.Status500InternalServerError);
+        return Results.Problem(
+            title: "Expense was saved, but follow-up indexing failed.",
+            detail: $"Expense '{expenseId}' was persisted, but the recent-expense list could not be updated. Fetch it directly at /expenses/{expenseId}.",
+            statusCode: StatusCodes.Status500InternalServerError,
+            extensions: CreateExpenseErrorExtensions(persistedRecord));
     }
 
     var workflowSubmission = ToWorkflowSubmission(persistedRecord);
@@ -368,6 +396,15 @@ static ExpenseSubmission ToWorkflowSubmission(ExpenseRecord record)
         record.SubmittedAtUtc);
 }
 
+static Dictionary<string, object?> CreateExpenseErrorExtensions(ExpenseRecord record)
+{
+    return new Dictionary<string, object?>(StringComparer.Ordinal)
+    {
+        ["expenseId"] = record.ExpenseId,
+        ["location"] = $"/expenses/{record.ExpenseId}"
+    };
+}
+
 static async Task TryStartExpenseWorkflowAsync(
     ExpenseSubmission submission,
     DaprClient daprClient,
@@ -482,7 +519,7 @@ static ExpenseWorkflowSnapshot CreateUnavailableWorkflowSnapshot(ExpenseRecord r
         record.CorrelationId,
         record.CorrelationId,
         "Unavailable",
-        "Workflow telemetry is temporarily unavailable, but the expense record is still accessible.",
+        "The expense record is available, but workflow telemetry needs workflow-engine to be reachable through Dapr.",
         null,
         null,
         null,

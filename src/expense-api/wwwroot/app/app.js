@@ -86,9 +86,10 @@ async function handleSubmit(event) {
         });
 
         if (!response.ok) {
-            const problem = await safeJson(response);
+            const problem = await safeProblem(response);
+            await hydratePersistedExpense(problem);
             const details = extractProblemDetails(problem);
-            throw new Error(details ?? "The expense could not be submitted.");
+            throw new Error(details || "The expense could not be submitted.");
         }
 
         const createdExpense = await response.json();
@@ -155,7 +156,8 @@ async function refreshExpenses(preserveSelection = true, explicitSelection = nul
     try {
         const response = await fetch("/expenses", { cache: "no-store" });
         if (!response.ok) {
-            throw new Error("The expense API is not ready yet. Start the app with Dapr and try again.");
+            const problem = await safeProblem(response);
+            throw new Error(extractProblemDetails(problem) || "Live expense data is unavailable.");
         }
 
         const expenses = await response.json();
@@ -201,11 +203,16 @@ async function selectExpense(expenseId) {
         ]);
 
         if (!expenseResponse.ok) {
-            throw new Error("The selected expense is no longer available.");
+            const problem = await safeProblem(expenseResponse);
+            throw new Error(extractProblemDetails(problem) || "The selected expense is no longer available.");
         }
 
         state.selectedExpense = await expenseResponse.json();
-        state.selectedWorkflow = workflowResponse.ok ? await workflowResponse.json() : null;
+        state.selectedWorkflow = workflowResponse.ok
+            ? await workflowResponse.json()
+            : workflowResponse.status === 404
+                ? null
+                : extractProblemDetails(await safeProblem(workflowResponse));
         renderDetail(state.selectedExpense);
         renderWorkflow(state.selectedExpense, state.selectedWorkflow);
         renderHistory(state.expenses);
@@ -345,7 +352,7 @@ function renderWorkflow(expense, workflowOrError) {
             "Workflow telemetry waits here",
             typeof workflowOrError === "string"
                 ? workflowOrError
-                : "Submit or select an expense to inspect the orchestrator.",
+                : "Submit or select an expense to inspect the orchestrator. Live telemetry appears after expense state and workflow-engine are both reachable through Dapr.",
             false);
         return;
     }
@@ -460,7 +467,7 @@ function describeExpense(expense) {
 function renderConnectionState(isHealthy, message = "") {
     elements.connection.dataset.state = isHealthy ? "ok" : "error";
     elements.connection.textContent = isHealthy
-        ? "Expense API is reachable. Live polling is active."
+        ? "Expense API and Dapr state are reachable. Live polling is active."
         : message || "The expense API is unavailable right now.";
 }
 
@@ -545,15 +552,41 @@ function extractProblemDetails(problem) {
         return Object.values(problem.errors).flat().join(" ");
     }
 
-    return problem.detail || problem.title || "";
+    const detail = typeof problem === "string"
+        ? problem
+        : problem.detail || problem.title || problem.message || "";
+
+    if (detail.includes("Dapr.DaprException") || detail.includes("Connection refused")) {
+        return "Loading and submitting expenses requires the expense-api Dapr sidecar plus the configured statestore. Workflow telemetry also needs workflow-engine to be reachable through Dapr.";
+    }
+
+    return detail;
 }
 
-async function safeJson(response) {
+async function safeProblem(response) {
     try {
-        return await response.json();
+        const text = await response.text();
+        if (!text) {
+            return null;
+        }
+
+        try {
+            return JSON.parse(text);
+        } catch {
+            return { detail: text.trim().split(/\r?\n/, 1)[0] || "" };
+        }
     } catch {
         return null;
     }
+}
+
+async function hydratePersistedExpense(problem) {
+    const expenseId = problem?.expenseId || problem?.expense?.expenseId;
+    if (!expenseId) {
+        return;
+    }
+
+    await selectExpense(expenseId);
 }
 
 function escapeHtml(value) {

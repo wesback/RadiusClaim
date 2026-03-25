@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "13416486747756090361"
+      "templateHash": "8069152949573122925"
     }
   },
   "parameters": {
@@ -42,7 +42,39 @@
       "metadata": {
         "description": "Storage SKU for the backing Azure Storage account."
       }
+    },
+    "azureTenantId": {
+      "type": "string",
+      "defaultValue": "[subscription().tenantId]",
+      "metadata": {
+        "description": "Microsoft Entra tenant ID used by the Dapr statestore component."
+      }
+    },
+    "azureClientId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Microsoft Entra client ID used by the Dapr statestore component."
+      }
+    },
+    "azurePrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Object ID of the Microsoft Entra principal that should receive Blob data-plane access."
+      }
+    },
+    "azurePrincipalType": {
+      "type": "string",
+      "defaultValue": "ServicePrincipal",
+      "metadata": {
+        "description": "Principal type for the Microsoft Entra identity used by the Dapr statestore component."
+      }
     }
+  },
+  "variables": {
+    "storageBlobDataContributorRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+    "stateStoreMetadata": "[union(createObject('accountName', createObject('value', parameters('storageAccountName')), 'containerName', createObject('value', parameters('containerName')), 'azureTenantId', createObject('value', parameters('azureTenantId')), 'azureEnvironment', createObject('value', 'AZUREPUBLICCLOUD')), if(empty(parameters('azureClientId')), createObject(), createObject('azureClientId', createObject('value', parameters('azureClientId')))))]"
   },
   "resources": [
     {
@@ -57,6 +89,7 @@
       "properties": {
         "accessTier": "Hot",
         "allowBlobPublicAccess": false,
+        "allowSharedKeyAccess": false,
         "minimumTlsVersion": "TLS1_2",
         "supportsHttpsTrafficOnly": true
       }
@@ -79,6 +112,21 @@
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]"
       ]
+    },
+    {
+      "condition": "[not(empty(parameters('azurePrincipalId')))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('azurePrincipalId'), 'storageblobdatacontributor')]",
+      "properties": {
+        "roleDefinitionId": "[variables('storageBlobDataContributorRoleDefinitionId')]",
+        "principalId": "[parameters('azurePrincipalId')]",
+        "principalType": "[parameters('azurePrincipalType')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]"
+      ]
     }
   ],
   "outputs": {
@@ -88,21 +136,7 @@
         "values": {
           "type": "state.azure.blobstorage",
           "version": "v2",
-          "metadata": {
-            "accountName": {
-              "value": "[parameters('storageAccountName')]"
-            },
-            "containerName": {
-              "value": "[parameters('containerName')]"
-            }
-          }
-        },
-        "secrets": {
-          "metadata": {
-            "accountKey": {
-              "value": "[listKeys(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), '2023-05-01').keys[0].value]"
-            }
-          }
+          "metadata": "[variables('stateStoreMetadata')]"
         }
       }
     }

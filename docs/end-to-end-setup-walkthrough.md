@@ -10,38 +10,98 @@
 
 This guide walks you through the entire RadiusClaim deployment pipeline from initial Azure setup to opening the application in a web browser. It covers both **what this repository automates** and **what you must do manually**.
 
-### Two Ways to Use This Guide
+### Three Ways to Use This Guide
 
-| Path | Who It's For | What It Does |
-|------|-------------|-------------|
-| **Manual walkthrough** (Steps 1–12) | Learning how Radius, Dapr, and Kubernetes fit together | Walks through every step with explanations so you understand the deployment model |
-| **Bootstrap** (`scripts/bootstrap.sh`, when available) | "Just make it work" for returning operators | Automates prerequisite checks, recipe publishing, environment + app deployment, and component backfill in one command |
+| Path | Phase | Who It's For | What It Does |
+|------|-------|-------------|-------------|
+| **Cluster Prep Script** (`scripts/prepare-cluster.sh`) | 1st-time setup | New operators | Verifies or creates AKS, sets `kubectl` context, and makes sure Dapr + Radius are ready |
+| **Bootstrap Script** (`scripts/bootstrap.sh`) | Repeatable deploys | Returning operators | Automates recipe publishing, environment/app deployment, component backfill, and validation after the cluster is ready |
+| **Manual walkthrough** (Steps 1–12) | All phases | Learning-focused operators | Walks through every step with explanations so you understand the deployment model and can customize |
 
-If a bootstrap script is present in `scripts/`, start there. This walkthrough remains the reference when you need to understand *why* each step exists, troubleshoot a failure, or customize a deployment.
+**Recommended approach for first deployment:**
+1. Run `scripts/prepare-cluster.sh` once to set up or verify the cluster boundary
+2. Then run `scripts/bootstrap.sh` to deploy RadiusClaim (replaces Steps 7–12)
+3. This walkthrough remains the reference when you need to understand *why* each step exists, troubleshoot a failure, or customize a deployment
 
 ### What's Automated
-- Kubernetes cluster detection/validation (via Radius)
-- Dapr and Radius control plane prerequisites checks (via CLI scripts)
+- AKS verification/creation and `kubectl` context setup (via cluster prep script)
+- Dapr and Radius control plane installation/preflight (via cluster prep script)
+- Kubernetes cluster detection/validation (via Radius and bootstrap scripts)
 - Container image builds and registry pushes (GitHub Actions)
-- Radius environment and application deployment (GitHub Actions or local `rad` CLI)
+- Radius environment and application deployment (via bootstrap script or GitHub Actions)
 - Kubernetes resource creation and Dapr component wiring (Radius + Bicep)
 - Public endpoint exposure and DNS resolution (Radius gateway)
 
 ### What You Must Do Manually
-1. Azure subscription selection and authentication
-2. Resource group creation (if not using an existing one)
-3. Kubernetes cluster provisioning (AKS, Arc-enabled, or self-managed) with Dapr + Radius prerequisites
-4. GitHub Actions secret/variable configuration (if using CI/CD)
-5. Radius workspace and group initialization (if running locally)
+**If using cluster prep script + bootstrap script:**
+1. Decide whether the script should create AKS (`--create-aks`) or reuse an existing cluster/context
+2. Open the app URL in a browser
+
+**If using manual walkthrough:**
+1. Azure subscription selection and authentication (CLI)
+2. Resource group creation
+3. Kubernetes cluster provisioning (AKS, Arc-enabled, or self-managed) with Dapr + Radius installation
+4. GitHub Actions secret/variable configuration (if using CI/CD for app deployment)
+5. Radius workspace and group initialization (if running app deployment locally)
 6. Opening the app URL in a browser
+
+---
+
+## Quick Start: Using the Cluster Prep Script (First Time Only)
+
+Use the cluster prep script for your first deployment. It automates the infrastructure foundation:
+
+```bash
+# For first-time cluster setup
+./scripts/prepare-cluster.sh \
+  --resource-group radiusclaim-rg \
+  --location belgiumcentral \
+  --aks-cluster-name radiusclaim-aks \
+  --create-aks \
+  --install-dapr \
+  --install-radius \
+  --yes
+
+# Then, for repeatable app deployment
+./scripts/bootstrap.sh \
+  --resource-group radiusclaim-rg \
+  --yes
+```
+
+> **Fresh cluster note:** Keep `--install-dapr` and `--install-radius` in the first-time command unless those control planes are already present. Leaving them out makes `prepare-cluster.sh` verification-only for Dapr/Radius, so it will stop with a readiness error instead of installing them.
+
+**What the cluster prep script does:**
+- Verifies Azure login and subscription context
+- Reuses or creates the Azure resource group used later by `bootstrap.sh`
+- Reuses or creates an AKS cluster when explicitly allowed
+- Sets the `kubectl` context
+- Installs or verifies Dapr control plane
+- Installs or verifies Radius control plane
+- Selects the Radius workspace/group for later deploys
+
+If you are reusing an existing non-AKS cluster, keep `--resource-group` but omit the AKS flags and make sure `kubectl` already points at the target cluster (or pass `--kube-context`).
+
+**Next:** Run `scripts/bootstrap.sh` after cluster prep completes, then skip to [Opening the Web UI](#step-11-open-the-web-ui-in-a-browser) or read the manual steps below to understand what the scripts automate.
+
+> **Bootstrap note:** The scripted path now preflights the deterministic Azure Key Vault name behind `platform-secrets`. If the vault is only soft-deleted and Azure can safely recover it back into the current subscription/resource-group/location, bootstrap restores it before the app deploy. Otherwise it stops early with actionable scope/purge guidance.
 
 ---
 
 ## Prerequisites
 
-Before you start, confirm you have:
+Before you start, confirm you have the basic tools. Depending on your path:
 
-### Azure Account & CLI
+### For Cluster Prep Script Path
+- **Azure CLI** — for authentication
+- **git** — to clone this repository
+- **bash** — to run the script
+- Azure subscription with permissions to create AKS clusters and resource groups
+- Roughly 15–20 minutes and AKS quota in your target region
+
+### For Manual Walkthrough Path
+In addition to what's above, you'll manually install:
+
+### Azure Account & CLI (Required for Both Paths)
 ```bash
 # Install Azure CLI
 # macOS: brew install azure-cli
@@ -52,12 +112,12 @@ az --version
 # Expected: Azure CLI 2.60.0 or later
 ```
 
-### Kubernetes Cluster with Dapr & Radius
+### Kubernetes Cluster with Dapr & Radius (Required for Manual Path)
 You need a Kubernetes cluster with **Dapr and Radius already installed**. Options:
 
 **Option A: Azure Kubernetes Service (AKS) — Recommended**
 ```bash
-# If you don't have AKS yet, create it (see "Create AKS Cluster" section below)
+# If you don't have AKS yet, create it (see Step 3 below)
 # But you must install Dapr and Radius on it before deploying RadiusClaim
 ```
 
@@ -66,7 +126,7 @@ You need a Kubernetes cluster with **Dapr and Radius already installed**. Option
 - Or any self-managed Kubernetes cluster with Dapr and Radius control plane installed
 - Must have Azure credentials configured (for Azure backing services)
 
-### Dapr & Radius CLI
+### Dapr & Radius CLI (Required for Manual Path)
 ```bash
 # Install Dapr CLI (for local development; optional if using only GitHub Actions)
 # https://docs.dapr.io/getting-started/install-dapr-cli/
@@ -91,6 +151,12 @@ rad --version
 # For multi-platform builds (Mac ARM, Linux, Windows)
 - docker buildx (usually included with Docker Desktop)
 ```
+
+---
+
+## Manual Deployment Steps (Steps 1–12)
+
+> **Skip this section if using the cluster prep script.** These steps are the detailed reference for understanding and customizing cluster setup and app deployment. If you're using `scripts/prepare-cluster.sh` + `scripts/bootstrap.sh`, jump directly to [Step 11: Open the Web UI in a Browser](#step-11-open-the-web-ui-in-a-browser).
 
 ---
 
@@ -141,6 +207,8 @@ Creates a logical container in Azure that will hold the backing services (Blob S
 ## Step 3: Provision a Kubernetes Cluster (if needed)
 
 If you already have a Kubernetes cluster with Dapr and Radius, skip to **Step 4**.
+
+> **Fast path:** `./scripts/prepare-cluster.sh --resource-group "$AZURE_RESOURCE_GROUP" --aks-cluster-name radiusclaim-aks --create-aks --install-dapr --install-radius --yes` covers the cluster-prep work in Steps 3–5 and the Radius workspace/group setup in Step 7.
 
 ### Option A: Create an AKS Cluster
 
@@ -225,7 +293,7 @@ rad install kubernetes --set clusterType=generic
 
 # Verify Radius is running
 kubectl get pods -n radius-system
-# Expected: radius-controller-manager, radius-dashboard (if enabled), etc. in Running state
+# Expected: controller, dashboard (if enabled), etc. in Running state
 
 # Verify rad CLI recognizes the cluster
 rad workspace list
@@ -484,7 +552,7 @@ The environment definition wires Dapr components to Azure backing services.
 
 ### Option B: Manual Deployment with `rad` CLI
 
-If you prefer the scripted operator path, `./scripts/bootstrap.sh --resource-group "$AZURE_RESOURCE_GROUP"` wraps the manual flow below after the same prerequisites are in place. The commands that follow remain the detailed, step-by-step reference.
+If you prefer the scripted operator path, run `./scripts/prepare-cluster.sh` once for cluster readiness, then use `./scripts/bootstrap.sh --resource-group "$AZURE_RESOURCE_GROUP"` for the repeatable deployment layer. The commands that follow remain the detailed, step-by-step reference.
 
 ```bash
 # Set environment variables
@@ -495,6 +563,7 @@ export AZURE_CLIENT_SECRET="<azure-service-principal-client-secret>"
 export AZURE_RESOURCE_GROUP="radiusclaim-rg"
 export AZURE_LOCATION="belgiumcentral"
 export AZURE_TENANT_ID="<azure-tenant-id>"
+export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
 export AZURE_PROVIDER_SCOPE="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP"
 export RADIUS_ENVIRONMENT_NAME="azure"
 # The Kubernetes namespace is explicitly configured in azure-radius.bicep as "radiusclaim-azure".
@@ -528,6 +597,9 @@ rad deploy infra/radius/environments/azure-radius.bicep \
   --parameters kubernetesNamespace="$RADIUS_KUBERNETES_NAMESPACE" \
   --parameters azureProviderScope="$AZURE_PROVIDER_SCOPE" \
   --parameters location="$AZURE_LOCATION" \
+  --parameters daprAzureClientId="$AZURE_CLIENT_ID" \
+  --parameters daprAzurePrincipalId="$AZURE_PRINCIPAL_ID" \
+  --parameters daprAzureTenantId="$AZURE_TENANT_ID" \
   --parameters recipeRegistry="$RECIPE_REGISTRY" \
   --parameters recipeTag="$RECIPE_TAG"
 
@@ -544,6 +616,7 @@ Deploys the Radius environment to your Kubernetes cluster. This creates:
   - This is where your three services (expense-api, workflow-engine, notification-svc) actually run.
   - If you need private GHCR package access, imagePullSecrets go in the *workload* namespace.
 - Azure resource groups and backing services (Blob Storage, Service Bus, Key Vault) via Radius recipes
+- A statestore recipe contract that carries Microsoft Entra metadata and Blob RBAC instead of shared keys
 - Radius `Applications.Dapr/*` resources that *describe* the Dapr components (state store, pub/sub, secrets)
 
 > **⚠️ Component projection gap:** Radius may report the `Applications.Dapr/*` resources as `Succeeded` even though no Kubernetes `components.dapr.io` CRDs were actually projected into the cluster. After deploying the application in Step 9, you **must** verify that Dapr Component objects exist in the workload namespace. If they are missing, run the backfill step in **Step 9a**.
@@ -717,9 +790,19 @@ kubectl logs -n "$WORKLOAD_NAMESPACE" deployment/expense-api -c daprd --tail=20 
 
 The script:
 1. Reads Azure backing-resource details from Radius resource metadata
-2. Fetches credentials (storage account key, Service Bus connection string)
-3. Creates Kubernetes secrets in the workload namespace
-4. Generates and applies `components.dapr.io` manifests for `statestore`, `pubsub`, and `platform-secrets`
+2. Repairs the Azure data-plane RBAC needed by the backfilled Blob/Key Vault components
+3. Fetches runtime credentials (client secret when present, Service Bus connection string)
+4. Creates Kubernetes secrets in the workload namespace
+5. Generates and applies `components.dapr.io` manifests for `statestore`, `pubsub`, and `platform-secrets`
+
+> **Important:** The script expects the same Entra principal details you used for `rad credential register azure ...`:
+> ```bash
+> export AZURE_CLIENT_ID="<azure-service-principal-client-id>"
+> export AZURE_TENANT_ID="<azure-tenant-id>"
+> export AZURE_CLIENT_SECRET="<azure-service-principal-client-secret>"   # omit for workload identity
+> export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
+> ```
+> It then keeps the statestore on the supported Microsoft Entra/RBAC path and the pubsub component on **one** auth path only (`connectionString` for the current operator flow).
 
 **Dry run first** (generates YAML without applying):
 
@@ -886,11 +969,11 @@ kubectl config get-contexts
 ```bash
 # Check pod status and logs
 kubectl logs -n dapr-system -l app=dapr-sidecar-injector --tail=50
-kubectl logs -n radius-system -l app.kubernetes.io/name=radius-controller-manager --tail=50
+kubectl logs -n radius-system -l app.kubernetes.io/name=controller --tail=50
 
 # Restart the control planes if needed
 kubectl rollout restart deployment/dapr-sidecar-injector -n dapr-system
-kubectl rollout restart deployment/radius-controller-manager -n radius-system
+kubectl rollout restart deployment/controller -n radius-system
 ```
 
 ### Recipes Not Published
@@ -908,6 +991,23 @@ docker login ghcr.io --username "$GITHUB_USERNAME"
 # Verify images exist in GHCR
 docker pull "$RECIPE_REGISTRY/state-store:$RECIPE_TAG"
 ```
+
+### `platform-secrets` fails because the Key Vault name is in deleted state
+
+**Symptom:** `rad deploy infra/radius/app.bicep` or `./scripts/bootstrap.sh` reports that the Key Vault name already exists in deleted state
+
+**Solution:**
+```bash
+# Inspect the deleted vault entry
+az keyvault list-deleted --query "[?name=='<vault-name>']"
+
+# If it belongs to the same subscription/resource group/location as this deployment,
+# restore it and rerun bootstrap or rad deploy
+az keyvault recover --name <vault-name> --location <region>
+```
+
+- The scripted bootstrap path already performs this check and restore flow when it is safe to do so.
+- If Azure can only recover the vault into some other resource group or location, do **not** force the Radius app deploy to continue. Purge the deleted vault if you own it, wait for scheduled purge, or switch to a different Radius environment name so the deterministic Key Vault name changes.
 
 ### Services Not Starting
 
@@ -965,6 +1065,40 @@ done
 kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
   -n "$WORKLOAD_NAMESPACE"
 ```
+
+If the failing container is **`daprd`** rather than the app container, switch to sidecar-focused checks:
+
+```bash
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+POD=$(kubectl get pods -n "$WORKLOAD_NAMESPACE" --no-headers | awk '/expense-api/ {print $1; exit}')
+
+kubectl logs -n "$WORKLOAD_NAMESPACE" "$POD" -c daprd --previous --tail=120
+kubectl get component statestore pubsub -n "$WORKLOAD_NAMESPACE" -o yaml
+```
+
+- If the log shows `KeyBasedAuthenticationNotPermitted`, the problem is the **statestore component auth**, not app annotations or env wiring. Confirm with:
+  ```bash
+  az storage account show \
+    --account-name <storage-account-name> \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --query allowSharedKeyAccess -o tsv
+  ```
+  Then repair the component with the Microsoft Entra path the repo now expects:
+  ```bash
+  export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
+  ./scripts/deploy-dapr-components.sh \
+    --resource-group "$AZURE_RESOURCE_GROUP" \
+    --namespace "$WORKLOAD_NAMESPACE"
+  kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc -n "$WORKLOAD_NAMESPACE"
+  ```
+  Shared-key re-enable is not the tenant-safe fix anymore.
+
+- If the pubsub component contains both `namespaceName` and `connectionString`, remove one before restarting. For the current operator path, keep `connectionString` only:
+  ```bash
+  kubectl patch component pubsub -n "$WORKLOAD_NAMESPACE" --type merge \
+    -p '{"spec":{"metadata":[{"name":"connectionString","secretKeyRef":{"name":"pubsub-secrets","key":"connectionString"}},{"name":"disableEntityManagement","value":"true"}]}}'
+  kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc -n "$WORKLOAD_NAMESPACE"
+  ```
 
 ### Namespace Drift During Application Update
 

@@ -87,6 +87,7 @@
 
                     <div class="form-meta">
                         <p class="hint">Tip: keep the employee ID distinct during demos so the list reads like a narrative.</p>
+                        <p class="hint">Runtime note: the hosted UI can render on its own, but live submissions need the expense-api Dapr sidecar and <code>statestore</code>. Workflow telemetry also depends on <code>workflow-engine</code>.</p>
                         <button class="button button--primary" type="submit" id="submit-button">Submit expense</button>
                     </div>
                     <div id="form-feedback" class="feedback" role="status" aria-live="polite"></div>

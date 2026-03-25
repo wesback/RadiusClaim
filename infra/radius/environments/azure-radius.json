@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "17418302257657783474"
+      "templateHash": "13199319407366961464"
     }
   },
   "parameters": {
@@ -36,6 +36,34 @@
         "description": "Azure location for backing resources created by recipes."
       }
     },
+    "daprAzureClientId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Microsoft Entra client ID Dapr components should use for Azure-backed services."
+      }
+    },
+    "daprAzurePrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Microsoft Entra object ID that recipes should grant data-plane RBAC for Dapr runtime access."
+      }
+    },
+    "daprAzureTenantId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Microsoft Entra tenant ID Dapr components should use for Azure-backed services."
+      }
+    },
+    "daprAzurePrincipalType": {
+      "type": "string",
+      "defaultValue": "ServicePrincipal",
+      "metadata": {
+        "description": "Principal type for the Microsoft Entra identity used by Dapr runtime access."
+      }
+    },
     "recipeRegistry": {
       "type": "string",
       "defaultValue": "ghcr.io/wesback/radiusclaim/recipes",
@@ -50,6 +78,9 @@
         "description": "OCI tag used when resolving published Radius recipe artifacts."
       }
     }
+  },
+  "variables": {
+    "stateStoreRecipeParameters": "[union(createObject('location', parameters('location')), if(empty(parameters('daprAzureClientId')), createObject(), createObject('azureClientId', parameters('daprAzureClientId'))), if(empty(parameters('daprAzurePrincipalId')), createObject(), createObject('azurePrincipalId', parameters('daprAzurePrincipalId'))), if(empty(parameters('daprAzureTenantId')), createObject(), createObject('azureTenantId', parameters('daprAzureTenantId'))), if(or(empty(parameters('daprAzurePrincipalId')), empty(parameters('daprAzurePrincipalType'))), createObject(), createObject('azurePrincipalType', parameters('daprAzurePrincipalType'))))]"
   },
   "imports": {
     "radius": {
@@ -79,9 +110,7 @@
               "azure-blob-state": {
                 "templateKind": "bicep",
                 "templatePath": "[format('{0}/state-store:{1}', parameters('recipeRegistry'), parameters('recipeTag'))]",
-                "parameters": {
-                  "location": "[parameters('location')]"
-                }
+                "parameters": "[variables('stateStoreRecipeParameters')]"
               }
             },
             "Applications.Dapr/pubSubBrokers": {
@@ -124,13 +153,14 @@
           "pubsub": "azure-servicebus-pubsub",
           "secretStore": "azure-keyvault-secrets"
         },
+        "stateStoreAuthModel": "[if(not(empty(parameters('daprAzureClientId'))), 'microsoft-entra-rbac', 'recipe-default')]",
         "portabilityNote": "Radius remains the service wiring authority across AKS, Arc-enabled Kubernetes / Azure Local, and self-managed Kubernetes clusters; Azure-specific work stays in recipes and provider scope.",
         "kubernetesTargets": [
           "aks",
           "arc-enabled",
           "self-managed"
         ],
-        "azureSpecificityNote": "Backing services in this environment still come from Azure Blob Storage, Service Bus, and Key Vault recipes."
+        "azureSpecificityNote": "Backing services in this environment still come from Azure Blob Storage, Service Bus, and Key Vault recipes; the statestore path is designed for Microsoft Entra/RBAC instead of shared keys."
       }
     }
   }

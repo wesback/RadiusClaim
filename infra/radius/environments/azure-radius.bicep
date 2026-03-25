@@ -12,11 +12,35 @@ param azureProviderScope string
 @description('Azure location for backing resources created by recipes.')
 param location string
 
+@description('Microsoft Entra client ID Dapr components should use for Azure-backed services.')
+param daprAzureClientId string = ''
+
+@description('Microsoft Entra object ID that recipes should grant data-plane RBAC for Dapr runtime access.')
+param daprAzurePrincipalId string = ''
+
+@description('Microsoft Entra tenant ID Dapr components should use for Azure-backed services.')
+param daprAzureTenantId string = ''
+
+@description('Principal type for the Microsoft Entra identity used by Dapr runtime access.')
+param daprAzurePrincipalType string = 'ServicePrincipal'
+
 @description('OCI registry prefix that stores published Radius recipe artifacts for this repo.')
 param recipeRegistry string = 'ghcr.io/wesback/radiusclaim/recipes'
 
 @description('OCI tag used when resolving published Radius recipe artifacts.')
 param recipeTag string = 'latest'
+
+var stateStoreRecipeParameters = union({
+  location: location
+}, empty(daprAzureClientId) ? {} : {
+  azureClientId: daprAzureClientId
+}, empty(daprAzurePrincipalId) ? {} : {
+  azurePrincipalId: daprAzurePrincipalId
+}, empty(daprAzureTenantId) ? {} : {
+  azureTenantId: daprAzureTenantId
+}, empty(daprAzurePrincipalId) || empty(daprAzurePrincipalType) ? {} : {
+  azurePrincipalType: daprAzurePrincipalType
+})
 
 resource env 'Applications.Core/environments@2023-10-01-preview' = {
   name: environmentName
@@ -36,9 +60,7 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
         'azure-blob-state': {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/state-store:${recipeTag}'
-          parameters: {
-            location: location
-          }
+          parameters: stateStoreRecipeParameters
         }
       }
       'Applications.Dapr/pubSubBrokers': {
@@ -77,11 +99,12 @@ output environmentModel object = {
     pubsub: 'azure-servicebus-pubsub'
     secretStore: 'azure-keyvault-secrets'
   }
+  stateStoreAuthModel: !empty(daprAzureClientId) ? 'microsoft-entra-rbac' : 'recipe-default'
   portabilityNote: 'Radius remains the service wiring authority across AKS, Arc-enabled Kubernetes / Azure Local, and self-managed Kubernetes clusters; Azure-specific work stays in recipes and provider scope.'
   kubernetesTargets: [
     'aks'
     'arc-enabled'
     'self-managed'
   ]
-  azureSpecificityNote: 'Backing services in this environment still come from Azure Blob Storage, Service Bus, and Key Vault recipes.'
+  azureSpecificityNote: 'Backing services in this environment still come from Azure Blob Storage, Service Bus, and Key Vault recipes; the statestore path is designed for Microsoft Entra/RBAC instead of shared keys.'
 }

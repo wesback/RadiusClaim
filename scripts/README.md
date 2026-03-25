@@ -1,25 +1,99 @@
 # RadiusClaim - Scripts
 
-This directory contains operational and validation scripts for RadiusClaim.
+This directory contains operational, setup, and validation scripts for RadiusClaim.
+
+---
+
+## Script Workflow
+
+**For first-time deployment:**
+1. **Cluster Prep** (`prepare-cluster.sh`) — Verifies or creates AKS, sets `kubectl` context, installs/verifies Dapr + Radius, and selects the Radius workspace/group
+2. **App Bootstrap** (`bootstrap.sh`) — Deploys RadiusClaim app and validates on the prepared cluster
+
+**For iterative development or re-deployments:**
+- Use `bootstrap.sh` alone (assumes cluster is already prepared)
 
 ---
 
 ## Available Scripts
 
-### `bootstrap.sh`
+### `prepare-cluster.sh` (First-Time Cluster Setup)
 
-**Purpose:** Orchestrate the full manual RadiusClaim bootstrap path for operators who want the repo's deployable happy path without replaying every walkthrough step by hand.
+**Purpose:** Prepare a Kubernetes cluster for the first deployment boundary (AKS reuse/create, `kubectl` context, Dapr, Radius, and Radius workspace/group).
+
+**What it does:**
+- Verifies Azure login/subscription
+- Reuses or creates the Azure resource group used later by `bootstrap.sh`
+- Reuses or creates an AKS cluster only when explicitly allowed
+- Sets or verifies the `kubectl` context
+- Installs Dapr control plane when requested, otherwise verifies it
+- Installs Radius control plane when requested, otherwise verifies it
+- Selects the Radius workspace and group used by later `rad deploy` commands
+
+**When to use:**
+- First deployment on a new cluster
+- Re-validating cluster readiness before handing the environment to `bootstrap.sh`
+
+**Usage:**
+```bash
+./scripts/prepare-cluster.sh \
+  --resource-group <name> \
+  [--location <azure-region>] \
+  [--aks-cluster-name <name>] \
+  [--create-aks] \
+  [--install-dapr] \
+  [--install-radius] \
+  [--yes]
+```
+
+> **Fresh cluster note:** If the target cluster does not already have Dapr and Radius, include both `--install-dapr` and `--install-radius`. Omitting those flags puts the script in verification-only mode for the control planes, so it will stop instead of installing them.
+
+**Example:**
+```bash
+./scripts/prepare-cluster.sh \
+  --resource-group radiusclaim-rg \
+  --location belgiumcentral \
+  --aks-cluster-name radiusclaim-aks \
+  --create-aks \
+  --install-dapr \
+  --install-radius \
+  --yes
+```
+
+**Notes:**
+- Requires `az`, `kubectl`, `dapr`, `rad`, and `jq`
+- `--resource-group` is required because the same Azure scope is reused by `bootstrap.sh`
+- Defaults to verification/reuse; AKS creation requires the explicit `--create-aks` gate
+- First-time prep on a fresh cluster should include `--install-dapr --install-radius`; otherwise the script only verifies existing control planes
+- Existing Arc-enabled or self-managed clusters can skip AKS flags, but must provide a working current `kubectl` context (or `--kube-context`)
+- Idempotent-safe: reuses existing AKS clusters and control planes instead of recreating them
+- Default location: `belgiumcentral` per team directive
+- AKS creation typically takes 10–15 minutes
+
+**After success:**
+Run `./scripts/bootstrap.sh --resource-group <name>` to deploy the RadiusClaim application.
+
+---
+
+### `bootstrap.sh` (App Deployment & Component Backfill)
+
+**Purpose:** Deploy the RadiusClaim application, Dapr components, and validate the deployment (replaces manual Steps 7–12 of the end-to-end walkthrough). **Assumes cluster is already prepared** with `prepare-cluster.sh` or equivalent manual setup.
+
+**When to use:**
+- After `prepare-cluster.sh` completes (or for re-deployments to an existing cluster)
+- For repeatable application deployments and updates
 
 **What it wraps:**
-- `publish-radius-recipes.sh` for OCI recipe publication when artifacts are missing or stale
-- `deploy-dapr-components.sh` for the post-`rad deploy` Dapr component backfill
-- `validate-deployment.sh` for end-to-end smoke validation
+- `publish-radius-recipes.sh` for OCI recipe publication
+- `deploy-dapr-components.sh` for Dapr component backfill
+- `validate-deployment.sh` for post-deployment smoke testing
 
 **What it adds:**
-- Pre-flight checks for required CLIs, Azure login/subscription, Kubernetes reachability, Dapr/Radius control planes, resource group state, and existing Radius deployment state
+- Pre-flight checks: CLIs, Azure login, prepared Kubernetes cluster health, Dapr/Radius control planes ready
 - Idempotent Radius workspace/environment setup
-- Interactive confirmations before resource-group creation, Azure credential registration, recipe republishing, and in-place reuse of existing Radius app/environment state (`--yes` is the non-interactive override)
-- Rollout restart plus verification after Dapr component backfill so existing pods pick up the components
+- Interactive confirmations before resource creation and credential registration (`--yes` for non-interactive)
+- Truthful Azure Key Vault soft-delete handling for the Azure-backed `platform-secrets` store (restore when safe, fail early when not)
+- Automatic Dapr component backfill and pod restart verification
 
 **Usage:**
 ```bash
@@ -30,14 +104,19 @@ This directory contains operational and validation scripts for RadiusClaim.
 ```bash
 ./scripts/bootstrap.sh \
   --resource-group radiusclaim-rg \
-  --location belgiumcentral \
   --yes
 ```
 
+**Prerequisites:**
+- Cluster prepared with Dapr and Radius (via `prepare-cluster.sh` or manual setup)
+- Azure resource group exists (created by `prepare-cluster.sh` or Step 2 of manual walkthrough)
+- `az`, `kubectl`, `rad` CLIs installed and configured
+
 **Notes:**
-- The script assumes your Kubernetes cluster already has Dapr and Radius installed.
-- By default it derives image and recipe tags from the current git SHA when possible.
-- Use `./scripts/bootstrap.sh --help` for the full option list, including `--skip-recipes`, `--skip-image-push`, `--skip-validation`, `--image-platform`, and `--validation-url`.
+- By default derives image and recipe tags from the current git SHA
+- Use `./scripts/bootstrap.sh --help` for all options: `--skip-recipes`, `--skip-image-push`, `--skip-validation`, `--image-platform`, `--validation-url`
+- Idempotent: safe to re-run for updates
+- If the deterministic `platform-secrets` Key Vault name is still soft-deleted, bootstrap now checks that before `rad deploy infra/radius/app.bicep`; it restores the vault when Azure can safely recover it back into the current resource group, otherwise it stops with actionable guidance instead of letting the app deploy fail unclearly
 
 ### `publish-radius-recipes.sh`
 
@@ -101,15 +180,19 @@ docker login ghcr.io
 
 **What it does:**
 1. Reads Radius resource metadata to find Azure backing-resource names
-2. Fetches Azure credentials (storage account key, Service Bus connection string)
-3. Creates Kubernetes secrets in the workload namespace
-4. Generates and applies Dapr Component manifests (`statestore`, `pubsub`, `platform-secrets`)
+2. Repairs the Azure data-plane RBAC needed by the backfilled Blob/Key Vault components
+3. Fetches runtime credentials (Microsoft Entra client secret when present, Service Bus connection string)
+4. Creates Kubernetes secrets in the workload namespace
+5. Generates and applies Dapr Component manifests (`statestore`, `pubsub`, `platform-secrets`)
 
 **Prerequisites:**
 - `rad` CLI (Radius app must be deployed first)
 - `kubectl` (cluster access)
 - `az` CLI (Azure credentials configured)
 - `jq` (JSON processing)
+- `AZURE_CLIENT_ID` + `AZURE_TENANT_ID` for the Entra statestore path
+- `AZURE_CLIENT_SECRET` as well when using service-principal auth instead of workload identity
+- `AZURE_PRINCIPAL_ID` if you want to skip the `az ad sp show --id "$AZURE_CLIENT_ID"` lookup
 
 **Output:**
 - `dapr-components-generated.yaml` in the repo root (generated manifest for review)
@@ -245,6 +328,20 @@ Validation scripts support phase gate approvals:
 1. Verify deployment completed: `kubectl get deployment expense-api -n <namespace>`
 2. Check service exposure: `kubectl get svc expense-api -n <namespace>` and port-forward if needed
 3. Test health endpoint manually: `curl http://127.0.0.1:8080/healthz` (or your cluster-specific URL)
+
+### bootstrap.sh stops on a soft-deleted `platform-secrets` Key Vault
+
+**Cause:** Azure Key Vault names stay reserved while a vault is in soft-delete. RadiusClaim uses a deterministic vault name for the Azure-backed `platform-secrets` store, so a deleted vault can block repeat deployments.
+
+**What bootstrap does now:**
+1. Resolves the exact Key Vault name Radius will use for `platform-secrets`
+2. Checks whether that vault is active, soft-deleted, or unavailable
+3. Restores it automatically after confirmation when Azure can recover it back into the current subscription/resource-group/location
+4. Fails early with the conflicting scope and purge guidance when Azure can only recover it somewhere else
+
+**If bootstrap still stops:**
+- Restore or purge the deleted vault manually if you own the original scope
+- Or use a different Radius environment name so the deterministic vault name changes
 
 ---
 

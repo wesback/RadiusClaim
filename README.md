@@ -108,6 +108,24 @@ Radius generates the Kubernetes manifests and Dapr component specs — no hand-w
 
 **Idempotent deployment:** The GitHub Actions workflow creates or switches to the target environment name (`azure`) directly rather than using temporary bootstrap environments. This ensures deployments are repeatable: `rad deploy` on the environment Bicep updates the environment configuration in place, and subsequent application deployments work against a stable, well-known environment identity. Manual deployments follow the same pattern: `rad env create <name> || true` then `rad env switch <name>` before deploying the environment Bicep.
 
+**Operator fast path:** Treat cluster prep and app deployment as two separate phases.
+
+```bash
+# First time on a cluster
+./scripts/prepare-cluster.sh \
+  --resource-group radiusclaim-rg \
+  --aks-cluster-name radiusclaim-aks \
+  --create-aks \
+  --install-dapr \
+  --install-radius \
+  --yes
+
+./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
+
+# Later deployments on the same prepared cluster
+./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
+```
+
 **Dapr component backfill (required after first deployment):** Radius may report `Applications.Dapr/*` resources as Succeeded without projecting `components.dapr.io` CRDs into Kubernetes. After `rad deploy infra/radius/app.bicep`, verify components exist in the workload namespace (`kubectl get components.dapr.io -n radiusclaim-azure-radiusclaim`). If missing, run `./scripts/deploy-dapr-components.sh --resource-group <rg> --namespace radiusclaim-azure-radiusclaim` to backfill. See the [end-to-end walkthrough](./docs/end-to-end-setup-walkthrough.md) Step 9a for details.
 
 **Azure credential registration (required):** Before deploying the Radius environment with Azure-backed recipes, register the Azure credential with the Radius control plane using an explicit auth mode such as `rad credential register azure sp --client-id "$AZURE_CLIENT_ID" --client-secret "$AZURE_CLIENT_SECRET" --tenant-id "$AZURE_TENANT_ID"` (or `rad credential register azure wi ...` when workload identity is configured). This step is critical — without it, recipe deployment fails with a missing `azure-azurecloud-default` secret error. The GitHub Actions workflow includes the service principal form automatically; manual deployments must run an explicit `sp` or `wi` registration. See [`docs/radius-validation-checklist.md`](./docs/radius-validation-checklist.md) for details.
@@ -177,6 +195,8 @@ RadiusClaim/
 │   │   └── recipes/azure/                # Azure backing-resource recipes
 │   └── dapr/local/                       # Local-only Dapr component overlays
 ├── scripts/
+│   ├── prepare-cluster.sh                # First-time AKS/Kubernetes cluster preparation
+│   ├── bootstrap.sh                      # Repeatable env + app deployment on a prepared cluster
 │   ├── deploy-dapr-components.sh          # Dapr component backfill after Radius deploy
 │   ├── publish-radius-recipes.sh          # OCI recipe publishing
 │   └── validate-deployment.sh             # End-to-end flow validation
@@ -341,10 +361,10 @@ Store the returned `clientId`, `clientSecret`, and `tenantId` as GitHub secrets 
 
 ### Deployment Path: Kubernetes + Radius
 
+- First-time cluster prep lives in `scripts/prepare-cluster.sh` (AKS reuse/create, `kubectl` context, Dapr, Radius, Radius workspace/group)
 - Builds service images and pushes to GHCR (GitHub Container Registry)
 - Manual `rad deploy` runs must pass a real published image tag; the stale `phase1` fallback was removed so the app model stops pointing at retired GHCR packages
-- Deploys the Radius environment (`azure-radius.bicep`) to the Kubernetes cluster
-- Deploys the application model (`app.bicep`) through Radius
+- `scripts/bootstrap.sh` handles the repeatable deployment layer: Radius environment (`azure-radius.bicep`), application (`app.bicep`), Dapr component backfill, and validation
 - Azure backing resources (Blob Storage, Service Bus, Key Vault) are created by Radius recipes
 - Publishes `expense-api` through a Radius-managed public gateway while keeping the worker services internal
 - Uses the shared end-to-end validation script; CI still uses a Kubernetes port-forward as deterministic fallback while the public endpoint propagates
