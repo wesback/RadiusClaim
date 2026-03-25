@@ -236,4 +236,97 @@ AKS cluster (`radiusclaim-azure-radiusclaim`) has three deployments stuck in `Pe
 
 ---
 
-**Last Updated:** 2026-03-25T11:31:49Z
+## 6. GHCR Pull Secret Sequencing — Eddie
+
+**Date:** 2026-03-25  
+**Owner:** Eddie (Docs/Story)  
+**Status:** Applied  
+**Scope:** Documentation updates for pull secret creation timing
+
+### Problem
+
+Users attempting to follow the setup walkthrough encountered this error:
+```
+error: failed to create secret namespaces "radiusclaim-azure" not found
+```
+
+The docs instructed pull secret creation before the namespace existed.
+
+### Decision
+
+**Pull secrets must be configured AFTER the Radius environment is deployed.**
+
+#### Details
+
+1. **When:** Step 8a (after `rad deploy infra/radius/environments/azure-radius.bicep`), not Step 6
+2. **Why:** The namespace `radiusclaim-azure` is created by the environment deployment itself
+3. **Where:** New optional Step 8a in the walkthrough; added to validation checklist troubleshooting
+4. **Explicit defaults:** Docs now state the actual namespace from the bicep (`radiusclaim-azure`), not imply a derived one
+
+#### Files Updated
+
+- `docs/end-to-end-setup-walkthrough.md`
+  - Step 6: Removed premature pull secret commands; added warning and forward reference
+  - Step 8a: New optional step for configuring pull secrets after environment deploy
+  
+- `docs/radius-validation-checklist.md`
+  - Pull secret troubleshooting: Clarified namespace sequencing and explicit defaults
+
+### Implication for Other Agents
+
+- **Graham (Infrastructure):** No changes to the bicep or environment behavior
+- **Raj (Platform):** No changes to deployment scripts (already ordered correctly)
+- **All:** When docs reference "the namespace," prefer explicit names from the platform (e.g., `radiusclaim-azure` from the bicep) over inferred or fallback names
+
+### Related Context
+
+- `infra/radius/environments/azure-radius.bicep` line 7: `param kubernetesNamespace string = 'radiusclaim-azure'`
+- Earlier decision (2026-03-25): Namespace guidance should be discovery-based, not guessed defaults
+
+---
+
+## 7. Keep Azure Radius namespace default explicit — Graham
+
+**Date:** 2026-03-25  
+**Owner:** Graham (Platform Dev)  
+**Status:** Applied  
+
+### Decision
+
+Keep the Azure Radius environment namespace default explicit as `radiusclaim-azure`.
+
+Do **not** remove the default and do **not** change the docs to describe it as derived from the Radius group name.
+
+### Why
+
+- `infra/radius/environments/azure-radius.bicep` is the authoritative platform contract for the Azure-backed Kubernetes slice, and it already defaults `kubernetesNamespace` to `radiusclaim-azure`.
+- `infra/radius/environments/azure-radius.parameters.json`, `.github/workflows/deploy-azure.yml`, and the broader operator story already align on that explicit default.
+- Our standing platform rule is to keep namespace changes as direct environment-default updates, not add more glue or derive behavior from unrelated concepts such as the Radius group name.
+- The reported failure (`namespaces "radiusclaim-azure" not found`) is an ordering problem in the walkthrough, not evidence that the default is wrong.
+
+### Platform Truth
+
+- The Kubernetes namespace for this environment does **not** exist before the Azure Radius environment deploy runs.
+- The namespace is created by deploying `infra/radius/environments/azure-radius.bicep`, because the environment contract sets `properties.compute.namespace` to `kubernetesNamespace`.
+- Any step that writes Kubernetes objects into that namespace (for example the GHCR pull secret) must happen **after** the environment deployment, unless the step explicitly creates the namespace first.
+
+### Guidance for Eddie / Docs
+
+- Say the optional `RADIUS_KUBERNETES_NAMESPACE` override defaults to `radiusclaim-azure`.
+- Remove wording that says the namespace is derived from the Radius group name.
+- Keep the pull-secret instructions after environment deployment, and explain that the environment deployment is what creates the namespace.
+- If docs show an override example, make it clear the same overridden value must be passed to the environment deploy and then reused for later `kubectl` commands.
+
+### Repo Action
+
+- No infra default change required.
+- The safe fix is documentation/order clarity, not a platform-model change.
+
+### Validation
+
+- `az bicep build --file infra/radius/environments/azure-radius.bicep` ✅
+- `dotnet test RadiusClaim.slnx` ✅
+
+---
+
+**Last Updated:** 2026-03-25T11:40:12Z

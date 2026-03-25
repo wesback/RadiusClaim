@@ -979,3 +979,35 @@ Following Wesley's live deployment report: pubsub fails, expense-api-service and
 **Next step:** Verify Azure Service Bus namespace provisioning succeeded; if yes, troubleshoot Dapr injection or app-level deadlock.
 
 [Orchestration log: `.squad/orchestration-log/20260325-110539-graham.md`]
+
+## Learnings
+
+- 2026-03-25: Keep the Azure Radius namespace default explicit as `radiusclaim-azure`. In this repo, the namespace is owned by the environment model (`infra/radius/environments/azure-radius.bicep`) and is created when that environment deploys; docs should not describe it as Radius-group-derived, and any pull-secret step must happen after environment deployment unless it also creates the namespace itself.
+
+---
+
+## 2026-03-25T11:40:12Z — Namespace-Default Validation (Complete)
+
+Reviewed and validated the namespace-default decision with platform truth check.
+
+**Decision:** Keep `kubernetesNamespace` explicit at `radiusclaim-azure` in Azure Radius environment.
+- No changes to `infra/radius/environments/azure-radius.bicep`
+- No changes to `infra/radius/environments/azure-radius.parameters.json`
+- Infra, params, and deploy flow already align on explicit default
+
+**Platform Truth Validated:**
+- Kubernetes namespace does **not** exist before Radius environment deploy
+- Namespace is created by `rad deploy infra/radius/environments/azure-radius.bicep`
+- Any Kubernetes write operations (pull secrets, etc.) must occur after environment deployment
+- Reported failure (`namespaces "radiusclaim-azure" not found`) is a docs ordering issue, not a platform model issue
+
+**Validation performed:**
+- `az bicep build --file infra/radius/environments/azure-radius.bicep` ✅ (clean build)
+- `dotnet test RadiusClaim.slnx` ✅ (all pass)
+
+**Related:** Eddie updated docs to sequence pull secret creation after environment deploy (Step 8a)
+
+**Decisions merged:**
+- Decision #6: GHCR Pull Secret Sequencing — Eddie's documentation updates
+- Decision #7: Keep Azure Radius namespace default explicit — Graham's platform validation
+

@@ -992,3 +992,61 @@ This reframes from "error state" to "expected workflow for private packages."
 **Files updated:**
 - docs/end-to-end-setup-walkthrough.md (image pull secret section)
 - docs/radius-validation-checklist.md (GitHub Actions variables and cluster verification)
+
+## 2026-XX-XX (latest): Pull Secret Sequencing Fix
+
+**Problem:** GHCR pull secret creation failed with `namespaces "radiusclaim-azure" not found`. The walkthrough instructed users to create the pull secret BEFORE deploying the Radius environment, but the namespace doesn't exist until the environment is deployed by `rad deploy infra/radius/environments/azure-radius.bicep`.
+
+**Root Cause:**
+- Step 6 ("Important: GHCR Packages Are Private by Default") told users to create the secret immediately
+- The namespace `radiusclaim-azure` is created by the Radius environment deployment (Step 8)
+- Attempting to create a secret in a non-existent namespace failed
+
+**Solution (sequencing fix):**
+
+1. **end-to-end-setup-walkthrough.md (lines 343–361):**
+   - Removed the premature pull secret creation script
+   - Added warning: "The Kubernetes namespace does not exist yet. You will configure the pull secret **after** deploying the Radius environment."
+   - Directed users to Step 8a, which runs after the environment is deployed
+   - Kept Option 1 (public packages) as the recommended path for first-timers
+
+2. **New Step 8a (lines 524–551):**
+   - Inserted after the Radius environment deployment ("What this does" explanation)
+   - Explicitly states: "The Radius environment created the namespace `radiusclaim-azure` (as defined in `azure-radius.bicep`)"
+   - Provides copy/paste-safe commands: pull secret creation, service account patching, and verification
+   - Clear UX: "If you chose Option 1, skip this step"
+
+3. **radius-validation-checklist.md (lines 551–575):**
+   - Updated troubleshooting section to clarify namespace sequencing
+   - Added context: "The Radius environment creates the namespace (`radiusclaim-azure` by default, as defined in `azure-radius.bicep`). Configure the pull secret **after** the environment is deployed."
+   - Made variable exports explicit and match the platform's actual defaults
+   - Added verification commands
+
+**Key Learnings:**
+- **Order matters in multi-step platforms.** When a resource must exist before another step, docs must preserve that dependency.
+- **Defaults should match platform truth.** The bicep file declares `kubernetesNamespace = 'radiusclaim-azure'`; docs must reflect that explicitly, not hide it.
+- **Copy/paste safety is a feature.** Removing premature steps and waiting for dependencies eliminates "resource not found" errors for first-timers.
+- **Explicit > implicit.** Instead of "if you created a Radius group, the namespace will be...", state the actual platform default and warn if the user overrides it.
+
+**Files updated:**
+- docs/end-to-end-setup-walkthrough.md (Step 6 and new Step 8a)
+- docs/radius-validation-checklist.md (pull secret troubleshooting)
+
+---
+
+## 2026-03-25T11:40:12Z — Namespace/Secret Sequencing Follow-Up (Complete)
+
+Completed the follow-up requested by Wesley on namespace/secret sequencing.
+
+**Work:**
+- GHCR pull secret creation now sequenced **after** Radius environment deploy (Step 8a, not Step 6)
+- Namespace `radiusclaim-azure` is explicitly stated in docs (from bicep default, not inferred)
+- Updated `end-to-end-setup-walkthrough.md` and `radius-validation-checklist.md`
+- Coordinated with Graham on platform validation
+
+**Decisions merged:**
+- Decision #6: GHCR Pull Secret Sequencing — Documentation updates applied
+- Decision #7: Keep Azure Radius namespace default explicit — Platform validation complete
+
+**Validation by Graham:** `az bicep build` ✅, `dotnet test RadiusClaim.slnx` ✅
+
