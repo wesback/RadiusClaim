@@ -102,3 +102,29 @@
 **Why:** Stock `rad install kubernetes` flow; operator docs already treat `radius-controller-manager` as authoritative Runtime signal.
 **Consequence:** Bootstrap now checks same pod operators inspect manually; should align `docs/radius-validation-checklist.md` to same selector.
 
+### 2026-03-25: Decision — Prepare-Cluster RG Verification Deduplicated
+**By:** Graham (Platform Dev)
+**Status:** CLOSED
+**What:** Remove the duplicate `--resource-group` check from the AKS-specific bootstrap path in `scripts/prepare-cluster.sh`.
+**Why:** The top-level flow already handles group verification, reuse, and creation. Removing the second check eliminates redundant "already exists" log messages while keeping `--resource-group` required and validation behavior intact.
+**Validation:** Behavior tested; direct invocation and help path both work; no change to group availability guarantees.
+
+### 2026-03-25: Decision — Bootstrap Default Azure Location Set to belgiumcentral
+**By:** Graham (Platform Dev)
+**Status:** CLOSED
+**What:** Change `scripts/bootstrap.sh` to default `--location` to `belgiumcentral` instead of `eastus`.
+**Why:** The operator-facing walkthrough already standardizes on Belgium Central; the "easy path" default should agree with the taught path.
+**Affected Files:** `scripts/bootstrap.sh`, `docs/radius-validation-checklist.md` (both updated).
+**Consequence:** Bootstrap now matches operator guidance without broader walkthrough rewrites.
+
+### 2026-03-25: Decision — Cluster Prep Separated from App Deployment
+**By:** Graham (Platform Dev)
+**Status:** CLOSED
+**What:** Treat Kubernetes cluster preparation as a separate operator phase (via `scripts/prepare-cluster.sh`) from repeatable app deployment (via `scripts/bootstrap.sh`).
+**Why:** Cluster lifecycle and app deployment have different cadence. Separation makes platform story clearer and prevents silent AKS creation during repeatable deploy.
+**Operator Rule:**
+- Run `prepare-cluster.sh` once per cluster (or when re-validating cluster-level prerequisites)
+- Run `bootstrap.sh` for each deploy/redeploy once cluster is ready
+- No silent cluster creation/replacement during repeatable deployment without explicit operator opt-in
+**Consequence:** Clear separation of phases; operator controls cluster decisions explicitly.
+

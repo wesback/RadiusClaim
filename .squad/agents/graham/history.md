@@ -407,6 +407,11 @@ Radius `Applications.Core/gateways` is the cleanest fit for publishing Kubernete
 - A tiny publish script is worth it here: platform engineers and CI both need the same three `rad bicep publish` calls, and hiding them in tribal knowledge would make the Radius story look accidental again.
 - Azure Key Vault recipes must treat purge protection as a one-way safety control: `enablePurgeProtection: false` is not a valid deployment setting, so Radius-backed secret-store recipes should default it to `true` for both first deploys and replays.
 - The exact failure signature for this class of issue is `Applications.Dapr/secretStores` → `RecipeDeploymentFailed` → Key Vault `BadRequest` mentioning `enablePurgeProtection`; fix the recipe in `infra/radius/recipes/azure/secrets.bicep` and republish `infra/radius/recipes/azure/secrets.json`.
+- User preference: keep first-time cluster preparation separate from repeatable app deployment so the operator story stays teachable.
+- First-time cluster prep now belongs in `scripts/prepare-cluster.sh`; repeatable environment/app deployment stays in `scripts/bootstrap.sh`.
+- Safe AKS automation should default to verification/reuse and require the explicit `--create-aks` gate before provisioning a cluster.
+- Dapr and Radius installation belong to the cluster-prep boundary, while recipe publication, Radius environment/app deploy, Dapr component backfill, and smoke validation belong to the repeatable bootstrap boundary.
+- Key files for this split: `scripts/prepare-cluster.sh`, `scripts/bootstrap.sh`, `scripts/lib/platform-common.sh`, `scripts/README.md`, `README.md`, `docs/end-to-end-setup-walkthrough.md`, and `docs/radius-validation-checklist.md`.
 
 ## Cross-Agent Update (2026-03-24)
 
@@ -1416,3 +1421,64 @@ Traced Radius-to-Dapr component projection failure. User reported:
 **By:** Wesley Backelant (via Copilot)
 **What:** Bootstrap script should default to `belgiumcentral` as the Azure location.
 **Captured:** For follow-up agent `graham-bootstrap-location-fix`.
+
+## 2026-03-25: Analysis — AKS Cluster Provisioning Script Scope
+
+**Question:** Should there be a script to deploy the AKS cluster?
+
+**Finding:** The current design is **intentionally asymmetric but correct**.
+
+**Current Boundary:**
+- `bootstrap.sh` assumes Kubernetes cluster + Dapr + Radius are already installed
+- `bootstrap.sh` checks reachability (kubectl, dapr status -k, rad workspace) but does NOT create them
+- AKS creation is documented as manual Step 3 in `docs/end-to-end-setup-walkthrough.md` (raw `az aks create` command)
+- Resource group creation IS scripted (bootstrap creates on demand)
+- Azure backing services creation IS scripted (Radius recipes)
+
+**Why This Boundary Makes Sense:**
+1. Cluster lifecycle (provision/scale/patch) is distinct from application deployment
+2. Dapr + Radius installation requires Helm + CLIs, not just `az` CLI
+3. `bootstrap.sh` is the operator fast path *after* compute infrastructure exists
+4. First-time operators need to know they're provisioning a cluster; it's not a hidden step
+
+**Design Precedent:**
+- Bootstrap creates Azure resource group (Step 2) if missing → `bootstrap.sh` owns Azure foundation
+- Bootstrap does NOT install Dapr or Radius → those require interactive CLI sessions and are prerequisites
+- Bootstrap assumes `kubectl` + `dapr` + `rad` CLIs are installed → same as cluster: prerequisite
+
+**Tension Point:**
+Resource group creation is scripted, but AKS creation is manual. This asymmetry is defensible but worth acknowledging: AKS is infrastructure that *might* be reused across multiple deployments, whereas the resource group is more tightly bound to the app environment.
+
+**Recommendation to Wesley:**
+The current design is teachable and intentional. A separate `create-aks-cluster.sh` script *could* exist for first-time operators who want "turn-key setup," but it should:
+- Be optional, not required by `bootstrap.sh`
+- Create AKS *only* (not Dapr/Radius)
+- Not imply that bootstrap creates infrastructure
+
+For now, the walkthrough docs are clear; the boundary is correct. Only add the script if returning operators request "cluster creation + bootstrap in one command."
+
+**Files Inspected:**
+- `scripts/bootstrap.sh` (preflight checks, lines 567–700)
+- `docs/end-to-end-setup-walkthrough.md` (Steps 1–5, AKS section)
+- `.squad/decisions.md` (Bootstrap decision context)
+- `README.md` (Deployment section, prerequisites)
+
+## 2026-03-25: Prepare-Cluster RG Duplicate Check Removed
+
+**Task:** Remove duplicate resource-group check/log from scripts/prepare-cluster.sh  
+**Outcome:** Completed successfully  
+
+### Decision
+Kept `--resource-group` as required at the top-level flow. The AKS-specific bootstrap path now relies on the shared top-level check instead of duplicating the verification and "already exists" log message.
+
+### Changes
+- Removed second resource-group check in AKS bootstrap path
+- Kept central group validation and create/reuse logic intact
+- No change to `--resource-group` requirement or group availability behavior
+
+### Validation
+- Direct invocation of scripts works; help path works
+- Behavior preserved: reuse existing groups, prompt/create missing, fail before bootstrap work
+- Eliminated redundant log output
+
+**Status:** Closed
