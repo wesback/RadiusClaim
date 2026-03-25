@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "16754547499706589791"
+      "templateHash": "13416486747756090361"
     }
   },
   "parameters": {
@@ -87,7 +87,7 @@
       "value": {
         "values": {
           "type": "state.azure.blobstorage",
-          "version": "v1",
+          "version": "v2",
           "metadata": {
             "accountName": {
               "value": "[parameters('storageAccountName')]"

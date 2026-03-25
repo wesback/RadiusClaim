@@ -340,6 +340,44 @@ docker buildx build \
 **What this does:**  
 Packages the three custom Radius recipes (Azure Blob state store, Azure Service Bus pub/sub, Azure Key Vault secrets) as OCI artifacts in GHCR. The Radius environment definition references these URLs, so they must exist before `rad deploy` runs.
 
+### ⚠️ Important: GHCR Packages Are Private by Default
+
+When you push images to GitHub Container Registry (GHCR), they are **private by default**. Before you deploy RadiusClaim, you must either:
+
+**Option 1: Make Packages Public (simpler for first deployment)**
+
+1. Go to your GitHub profile → **Packages** tab
+2. For each package (`radiusclaim/recipes`, `radiusclaim/expense-api`, `radiusclaim/workflow-engine`, `radiusclaim/notification-svc`):
+   - Click the package → **Package settings** → scroll to **Danger zone**
+   - Select **Make public**
+
+This allows Radius and Kubernetes to pull recipes and application images without authentication.
+
+**Option 2: Configure an Image Pull Secret (required for private packages in production)**
+
+If you prefer to keep packages private, create a Kubernetes secret so your cluster can pull private images:
+
+```bash
+# Create the secret in the target namespace
+# Note: Use the same namespace where Radius deploys your app (default: derived from your group name)
+export RADIUS_KUBERNETES_NAMESPACE="${RADIUS_KUBERNETES_NAMESPACE:-default}"
+
+kubectl create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io \
+  --docker-username="$GITHUB_USERNAME" \
+  --docker-password="$GHCR_TOKEN" \
+  -n "$RADIUS_KUBERNETES_NAMESPACE"
+
+# Link the secret to the default service account
+kubectl patch serviceaccount default \
+  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}' \
+  -n "$RADIUS_KUBERNETES_NAMESPACE"
+```
+
+Make sure `$GITHUB_USERNAME` and `$GHCR_TOKEN` are set from your environment (see the token setup section above).
+
+**For first-time deployments, we recommend Option 1** (make packages public). You can switch to private packages with pull secrets once you're familiar with the flow.
+
 ---
 
 ## Step 7: Initialize Radius Workspace and Group (Manual Deployment)
@@ -395,7 +433,7 @@ The environment definition wires Dapr components to Azure backing services.
 
    **Optional Variables:**
    - `RADIUS_KUBERNETES_CONTEXT` — kubectl context name (if not using current context)
-   - `RADIUS_KUBERNETES_NAMESPACE` — Kubernetes namespace (default: `radiusclaim-azure`)
+   - `RADIUS_KUBERNETES_NAMESPACE` — Kubernetes namespace (defaults to your Radius group name; only override if you need a specific namespace)
 
 2. **Create a Service Principal for the Workflow (one-time):**
 
@@ -458,7 +496,10 @@ export AZURE_LOCATION="belgiumcentral"
 export AZURE_TENANT_ID="<azure-tenant-id>"
 export AZURE_PROVIDER_SCOPE="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP"
 export RADIUS_ENVIRONMENT_NAME="azure"
-export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"
+# Note: The Kubernetes namespace is derived from your Radius group name.
+# After `rad group create radiusclaim-group`, Radius deploys to namespace "radiusclaim-group"
+# Only set this if you need to override the default behavior:
+# export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-group"
 export RECIPE_REGISTRY="ghcr.io/$GITHUB_USERNAME/radiusclaim/recipes"
 export RECIPE_TAG="latest"
 
@@ -495,7 +536,7 @@ rad env list
 
 **What this does:**  
 Deploys the Radius environment to your Kubernetes cluster. This creates:
-- A Kubernetes namespace (`radiusclaim-azure`)
+- A Kubernetes namespace (derived from your group name; by default, the namespace is your Radius group name with a `radiusclaim-` prefix)
 - Dapr component definitions (state store, pub/sub, secrets)
 - Azure resource groups and backing services (Blob Storage, Service Bus, Key Vault) via Radius recipes
 
@@ -534,16 +575,18 @@ docker push "$GHCR_PREFIX/workflow-engine:$IMAGE_TAG"
 docker build --file src/notification-svc/Dockerfile --tag "$GHCR_PREFIX/notification-svc:$IMAGE_TAG" .
 docker push "$GHCR_PREFIX/notification-svc:$IMAGE_TAG"
 
-# Deploy the application
+# Deploy the application with the published images
 rad deploy infra/radius/app.bicep \
   --parameters containerRegistry="$GHCR_PREFIX" \
   --parameters imageTag="$IMAGE_TAG" \
   --parameters deploymentTarget='radius'
 
 # Wait for deployments to stabilize
-kubectl rollout status deployment/expense-api -n radiusclaim-azure --timeout=5m
-kubectl rollout status deployment/workflow-engine -n radiusclaim-azure --timeout=5m
-kubectl rollout status deployment/notification-svc -n radiusclaim-azure --timeout=5m
+# Set your namespace (e.g., radiusclaim-group)
+export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-group"
+kubectl rollout status deployment/expense-api -n "$RADIUS_KUBERNETES_NAMESPACE" --timeout=5m
+kubectl rollout status deployment/workflow-engine -n "$RADIUS_KUBERNETES_NAMESPACE" --timeout=5m
+kubectl rollout status deployment/notification-svc -n "$RADIUS_KUBERNETES_NAMESPACE" --timeout=5m
 ```
 
 **What this does:**  
@@ -554,24 +597,27 @@ Deploys the three RadiusClaim services (expense-api, workflow-engine, notificati
 ## Step 10: Verify Deployment and Get the Public Endpoint
 
 ```bash
+# Set your target namespace (use the group name if you created "radiusclaim-group", otherwise check with: kubectl get namespaces | grep radiusclaim)
+export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-group"
+
 # Check that all services are running
-kubectl get deployments -n radiusclaim-azure
+kubectl get deployments -n "$RADIUS_KUBERNETES_NAMESPACE"
 # Expected: 3 deployments in Running state
 
-kubectl get pods -n radiusclaim-azure
+kubectl get pods -n "$RADIUS_KUBERNETES_NAMESPACE"
 # Expected: 3+ pods (one per service)
 
-# Get the public endpoint for expense-api (created by Radius Compute/routes resource)
-kubectl get ingress -n radiusclaim-azure -o wide
+# Get the public endpoint for expense-api (created by the Radius gateway resource)
+kubectl get ingress -n "$RADIUS_KUBERNETES_NAMESPACE" -o wide
 # OR check Radius output from deployment logs
 
 # If using GitHub Actions, the workflow output shows the endpoint
 # If using rad CLI, check for the printed endpoint or extract manually:
-EXPENSE_API_URL=$(kubectl get service expense-api -n radiusclaim-azure -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+EXPENSE_API_URL=$(kubectl get ingress expense-api-gateway -n "$RADIUS_KUBERNETES_NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
 echo "Expense API: http://$EXPENSE_API_URL"
 
 # Fallback: Use port-forward if no external address is assigned
-kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
+kubectl port-forward -n "$RADIUS_KUBERNETES_NAMESPACE" svc/expense-api 8080:8080 &
 echo "Expense API (port-forward): http://127.0.0.1:8080"
 ```
 
@@ -680,21 +726,67 @@ docker pull "$RECIPE_REGISTRY/state-store:$RECIPE_TAG"
 
 ### Services Not Starting
 
-**Symptom:** `kubectl get pods -n radiusclaim-azure` shows pending or crash-looping pods
+**Symptom:** Pods are pending or crash-looping (verify with: `kubectl get pods -n <your-namespace>`)
 
 **Solution:**
 ```bash
+# Set your namespace (e.g., radiusclaim-group)
+export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
+
 # Check pod events
-kubectl describe pod <pod-name> -n radiusclaim-azure
+kubectl describe pod <pod-name> -n "$RADIUS_KUBERNETES_NAMESPACE"
 
 # Check logs
-kubectl logs <pod-name> -n radiusclaim-azure
+kubectl logs <pod-name> -n "$RADIUS_KUBERNETES_NAMESPACE"
 
 # Verify images are accessible
 docker pull "$GHCR_PREFIX/expense-api:$IMAGE_TAG"
 
 # Check resource quotas
-kubectl describe resourcequota -n radiusclaim-azure
+kubectl describe resourcequota -n "$RADIUS_KUBERNETES_NAMESPACE"
+```
+
+If you see `403 Forbidden` or pull errors, the issue is image registry access or authentication:
+
+```bash
+# Either make the image package public in GHCR, or wire a pull secret
+# First, identify your Kubernetes namespace (run: kubectl get namespaces | grep radiusclaim)
+
+export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"  # e.g., radiusclaim-group
+export GHCR_USERNAME="$GITHUB_USERNAME"
+export GHCR_TOKEN='<github-pat-with-read:packages>'
+
+kubectl create secret docker-registry ghcr-pull \
+  --namespace "$RADIUS_KUBERNETES_NAMESPACE" \
+  --docker-server=ghcr.io \
+  --docker-username="$GHCR_USERNAME" \
+  --docker-password="$GHCR_TOKEN"
+
+kubectl patch serviceaccount default \
+  --namespace "$RADIUS_KUBERNETES_NAMESPACE" \
+  --type merge \
+  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+```
+
+### Image Reference Mismatch
+
+**Symptom:** Pod events reference an unexpected registry path or old tag (e.g., a previous environment's registry)
+
+**Solution:**
+
+This can happen if container images were rebuilt with different parameters. Re-run the deployment with your correct registry and tag:
+
+```bash
+rad deploy infra/radius/app.bicep \
+  --parameters containerRegistry="$GHCR_PREFIX" \
+  --parameters imageTag='<published-tag>' \
+  --parameters deploymentTarget='radius'
+```
+
+Verify the corrected images are specified:
+```bash
+export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
+kubectl describe deployment expense-api -n "$RADIUS_KUBERNETES_NAMESPACE" | grep -i image
 ```
 
 ### Public Endpoint Not Assigned
@@ -703,15 +795,17 @@ kubectl describe resourcequota -n radiusclaim-azure
 
 **Solution:**
 ```bash
+export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
+
 # Use port-forward as a temporary alternative
-kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
+kubectl port-forward -n "$RADIUS_KUBERNETES_NAMESPACE" svc/expense-api 8080:8080 &
 # Access via http://127.0.0.1:8080
 
 # Check Radius route resource
-kubectl get route -n radiusclaim-azure
+kubectl get route -n "$RADIUS_KUBERNETES_NAMESPACE"
 
 # Check load balancer status
-kubectl get svc expense-api -n radiusclaim-azure -w  # Watch for address assignment
+kubectl get svc expense-api -n "$RADIUS_KUBERNETES_NAMESPACE" -w  # Watch for address assignment
 ```
 
 ### Validation Script Fails
@@ -729,6 +823,42 @@ jq --version
 
 # Run with verbose output to see which step fails
 bash -x ./scripts/validate-deployment.sh "https://$EXPENSE_API_URL"
+```
+
+### Redeploying After Code Changes
+
+Once you've verified the initial deployment works, you can iterate on the code and redeploy the updated images:
+
+**Rebuild and push images:**
+```bash
+# Use native Docker build (fastest if your local machine matches cluster architecture)
+docker build --file src/expense-api/Dockerfile --tag "$GHCR_PREFIX/expense-api:$NEW_TAG" .
+docker push "$GHCR_PREFIX/expense-api:$NEW_TAG"
+
+docker build --file src/workflow-engine/Dockerfile --tag "$GHCR_PREFIX/workflow-engine:$NEW_TAG" .
+docker push "$GHCR_PREFIX/workflow-engine:$NEW_TAG"
+
+docker build --file src/notification-svc/Dockerfile --tag "$GHCR_PREFIX/notification-svc:$NEW_TAG" .
+docker push "$GHCR_PREFIX/notification-svc:$NEW_TAG"
+```
+
+**For cross-platform builds** (e.g., building on Mac ARM for x86 AKS):
+```bash
+docker buildx build --file src/expense-api/Dockerfile --platform linux/amd64 \
+  --tag "$GHCR_PREFIX/expense-api:$NEW_TAG" --push .
+```
+
+**Redeploy the application:**
+```bash
+rad deploy infra/radius/app.bicep \
+  --parameters containerRegistry="$GHCR_PREFIX" \
+  --parameters imageTag="$NEW_TAG" \
+  --parameters deploymentTarget='radius'
+```
+
+**Or trigger GitHub Actions** by pushing to main:
+```bash
+git push origin main
 ```
 
 ---
@@ -749,12 +879,14 @@ Once the app is open in your browser:
 
 3. **Inspect the workflow logs:**
    ```bash
-   kubectl logs -n radiusclaim-azure -l app=workflow-engine --all-containers=true
+   export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
+   kubectl logs -n "$RADIUS_KUBERNETES_NAMESPACE" -l app=workflow-engine --all-containers=true
    ```
 
 4. **Inspect Dapr state:**
    ```bash
-   kubectl exec -it deployment/expense-api -n radiusclaim-azure -- \
+   export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
+   kubectl exec -it deployment/expense-api -n "$RADIUS_KUBERNETES_NAMESPACE" -- \
      curl -s http://localhost:3500/v1.0/state/statestore | jq .
    ```
 
@@ -764,27 +896,6 @@ Once the app is open in your browser:
 - **See the environment definition:** `infra/radius/environments/azure-radius.bicep`
 - **See the Azure recipes:** `infra/radius/recipes/azure/`
 - **See the service code:** `src/`
-
-### Deploy Changes
-
-To redeploy after code changes:
-
-```bash
-# Rebuild and push images (using native build, which matches your local machine architecture)
-docker build --file src/expense-api/Dockerfile --tag "$GHCR_PREFIX/expense-api:$NEW_TAG" .
-docker push "$GHCR_PREFIX/expense-api:$NEW_TAG"
-
-# Or, if deploying to a different architecture, use docker buildx with --platform:
-# docker buildx build --file src/expense-api/Dockerfile --platform linux/amd64 --tag "$GHCR_PREFIX/expense-api:$NEW_TAG" --push .
-
-# Redeploy the app
-rad deploy infra/radius/app.bicep \
-  --parameters containerRegistry="$GHCR_PREFIX" \
-  --parameters imageTag="$NEW_TAG"
-
-# Or trigger GitHub Actions by pushing to main
-git push origin main
-```
 
 ---
 

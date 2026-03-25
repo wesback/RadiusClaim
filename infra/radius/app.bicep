@@ -6,19 +6,19 @@ param environment string
 @description('Logical Radius application name for the RadiusClaim deployment.')
 param applicationName string = 'radiusclaim'
 
-@description('Container registry/repository prefix for RadiusClaim service images.')
-param containerRegistry string = 'ghcr.io/sovereignapp/radiusclaim'
+@description('Container registry/repository prefix for RadiusClaim service images. Override if you publish the service images somewhere other than the current repository GHCR namespace.')
+param containerRegistry string = 'ghcr.io/wesback/radiusclaim'
 
-@description('Shared image tag for the service images used by the current environment.')
-param imageTag string = 'phase1'
+@description('Published image tag for the service images used by the current environment. No default on purpose: pass the exact tag you pushed (for example the workflow SHA).')
+param imageTag string
 
 @description('Deployment target label kept aligned to the active Radius environment.')
 param deploymentTarget string = 'local'
 
-@description('Requested DNS prefix for generated public hostnames. Radius.Compute/routes does not currently support prefix-based hostname selection, so this is retained only as a compatibility hint.')
+@description('DNS prefix Radius should use when generating the public expense-api gateway hostname.')
 param publicGatewayPrefix string = 'expense'
 
-@description('Optional fully qualified hostname for the public expense-api route. Leave empty to let Radius generate a hostname.')
+@description('Optional fully qualified hostname for the public expense-api gateway. Leave empty to let Radius generate a hostname.')
 param publicGatewayHostname string = ''
 
 @description('Logical Dapr recipe selections. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets.')
@@ -40,13 +40,18 @@ var stateStoreAccountName = toLower('ce${take(uniqueString(applicationName, envi
 var stateStoreContainerName = 'expense-state'
 var pubsubNamespaceName = 'radiusclaim-${take(uniqueString(applicationName, environment, 'pubsub'), 18)}'
 var notificationTopicName = 'expense-notifications'
+var notificationSubscriptionName = 'notification-svc'
 var secretVaultName = 'ce-${take(uniqueString(applicationName, environment, 'platform-secrets'), 20)}'
 var stateStoreBacking = daprBackings.stateStore
 var pubsubBacking = daprBackings.pubsub
 var secretStoreBacking = daprBackings.secretStore
-var publicRouteHostnames = empty(publicGatewayHostname) ? [] : [
-  publicGatewayHostname
-]
+var publicGatewayHost = empty(publicGatewayHostname)
+  ? {
+      prefix: publicGatewayPrefix
+    }
+  : {
+      fullyQualifiedHostname: publicGatewayHostname
+    }
 
 resource app 'Applications.Core/applications@2023-10-01-preview' = {
   name: applicationName
@@ -85,6 +90,7 @@ resource pubsub 'Applications.Dapr/pubSubBrokers@2023-10-01-preview' = {
       parameters: {
         namespaceName: pubsubNamespaceName
         topicName: notificationTopicName
+        subscriptionName: notificationSubscriptionName
       }
     }
   }
@@ -110,7 +116,6 @@ module expenseApi './modules/container-service.bicep' = {
   name: 'expense-api-service'
   params: {
     application: app.id
-    environment: environment
     name: 'expense-api'
     image: '${containerRegistry}/expense-api:${imageTag}'
     containerPort: servicePort
@@ -140,7 +145,6 @@ module workflowEngine './modules/container-service.bicep' = {
   name: 'workflow-engine-service'
   params: {
     application: app.id
-    environment: environment
     name: 'workflow-engine'
     image: '${containerRegistry}/workflow-engine:${imageTag}'
     containerPort: servicePort
@@ -170,7 +174,6 @@ module notificationService './modules/container-service.bicep' = {
   name: 'notification-service'
   params: {
     application: app.id
-    environment: environment
     name: 'notification-svc'
     image: '${containerRegistry}/notification-svc:${imageTag}'
     containerPort: servicePort
@@ -193,29 +196,22 @@ module notificationService './modules/container-service.bicep' = {
   }
 }
 
-resource expenseApiRoute 'Radius.Compute/routes@2025-08-01-preview' = {
-  name: 'expense-api-route'
+resource expenseApiGateway 'Applications.Core/gateways@2023-10-01-preview' = {
+  name: 'expense-api-gateway'
   location: radiusLocation
   properties: {
     application: app.id
-    environment: environment
-    kind: 'HTTP'
-    hostnames: publicRouteHostnames
-    rules: [
+    hostname: publicGatewayHost
+    routes: [
       {
-        matches: [
-          {
-            httpPath: '/'
-          }
-        ]
-        destinationContainer: {
-          resourceId: expenseApi.outputs.id
-          containerName: 'expense-api'
-          containerPort: servicePort
-        }
+        path: '/'
+        destination: 'http://expense-api:${servicePort}'
       }
     ]
   }
+  dependsOn: [
+    expenseApi
+  ]
 }
 
 output deploymentModel object = {
@@ -244,6 +240,7 @@ output deploymentModel object = {
     pubsubNamespaceName: pubsubNamespaceName
     secretVaultName: secretVaultName
     notificationTopicName: notificationTopicName
+    notificationSubscriptionName: notificationSubscriptionName
   }
   exposure: {
     publicService: 'expense-api'
@@ -251,16 +248,14 @@ output deploymentModel object = {
       'workflow-engine'
       'notification-svc'
     ]
-    route: {
-      name: expenseApiRoute.name
-      resourceType: 'Radius.Compute/routes'
-      match: '/'
+    gateway: {
+      name: expenseApiGateway.name
+      resourceType: 'Applications.Core/gateways'
+      route: '/'
       hostnameMode: empty(publicGatewayHostname) ? 'radius-generated' : 'custom-fqdn'
-      requestedHostnamePrefix: empty(publicGatewayHostname) ? publicGatewayPrefix : null
+      hostnamePrefix: empty(publicGatewayHostname) ? publicGatewayPrefix : null
       configuredHostname: empty(publicGatewayHostname) ? null : publicGatewayHostname
-      note: empty(publicGatewayHostname)
-        ? 'rad deploy prints the resolved public endpoint after deployment. Radius.Compute/routes currently leaves generated hostname selection to the active route recipe.'
-        : 'rad deploy prints the resolved public endpoint after deployment.'
+      note: 'rad deploy prints the resolved public endpoint after deployment.'
     }
   }
   recipeStatus: 'phase5-recipes-wired'

@@ -12,6 +12,9 @@ param namespaceName string = 'radiusclaim-${take(uniqueString(context.resource.i
 @description('Topic used by the RadiusClaim notification flow.')
 param topicName string = 'expense-notifications'
 
+@description('Subscription pre-created for the RadiusClaim notification subscriber when entity management stays disabled.')
+param subscriptionName string = 'notification-svc'
+
 @description('Service Bus SKU used for the demo namespace.')
 @allowed([
   'Standard'
@@ -41,6 +44,15 @@ resource topic 'Microsoft.ServiceBus/namespaces/topics@2024-01-01' = {
   }
 }
 
+resource subscription 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
+  parent: topic
+  name: subscriptionName
+  properties: {
+    deadLetteringOnMessageExpiration: true
+    maxDeliveryCount: 10
+  }
+}
+
 resource authRule 'Microsoft.ServiceBus/namespaces/AuthorizationRules@2024-01-01' existing = {
   parent: namespace
   name: 'RootManageSharedAccessKey'
@@ -51,11 +63,11 @@ var authRuleKeys = authRule.listKeys()
 #disable-next-line outputs-should-not-contain-secrets
 output result object = {
   values: {
-    type: 'pubsub.azure.servicebus'
+    type: 'pubsub.azure.servicebus.topics'
     version: 'v1'
     metadata: {
       namespaceName: {
-        value: namespace.name
+        value: '${namespace.name}.servicebus.windows.net'
       }
       disableEntityManagement: {
         value: 'true'

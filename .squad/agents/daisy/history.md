@@ -872,3 +872,40 @@ Coordinated final decision documentation for Dapr namespace research and migrati
 
 **Next Step:** Daisy approves or requests modifications; platform team executes; Daisy validates re-entry to Phase 7.
 
+
+## 2026-03-25T11:30:00Z: Pubsub Failure Triage — Dependency Chain Deadlock Diagnosis
+
+**Request:** Diagnose deployment failure: pubsub fails, services remain stuck in progress indefinitely.
+
+**Analysis Completed:**
+- Reviewed deployment output sequence and Radius dependency chain in app.bicep
+- Identified implicit dependency: workflowEngine and notificationService reference `pubsub.id` in their connection declarations
+- Traced failure cascade: pubsub failure → cannot produce `.id` → downstream service modules cannot resolve dependencies → Bicep evaluation deadlock
+
+**Root Cause Identified:**
+When a recipe resource (pubsub, statestore, or secretStore) fails in Radius:
+1. The resource is marked **failed**, not incomplete
+2. Downstream modules referencing `.id` of failed resource cannot proceed
+3. Radius orchestrator enters wait loop: "waiting for pubsub to complete so I can evaluate workflowEngine connections"
+4. Wait never resolves because pubsub is already failed, not in-progress
+5. **Result:** Services stuck in perpetual "in progress" state
+
+**Most Likely Pubsub Failure Cause:** Recipe output contract mismatch, parameter passthrough failure, or recipe OCI artifact inaccessible/unpublished.
+
+**Decision Document Created:** `.squad/decisions/inbox/daisy-pubsub-triage.md` — comprehensive diagnosis, practical implications, and immediate action sequence.
+
+**Key Learnings:**
+- Recipe failures are **not idempotent** — `rad deploy` cannot recover via retry if the recipe itself is broken
+- OCI recipe artifacts create a **critical path dependency**: single failed recipe blocks entire app deployment
+- Local validation (Phase 5) cannot catch Azure recipe failures because output contracts differ between local and Azure recipes
+- Failure mode (deadlock) exposes a Radius orchestration gap: failed dependencies should fail loudly, not hang downstream services
+
+**Architectural Confirmation:**
+- Radius dependency tracking through `.id` references is **correct**
+- Service-to-Dapr-component wiring pattern is **sound**
+- Operational lesson: pre-deployment recipe validation (compilation + type checking) should be a CI/CD gate
+
+**Status:** Awaiting Graham verification of pubsub recipe health and isolation test. Daisy gates Phase 7 re-run until pubsub succeeds in isolation.
+
+---
+

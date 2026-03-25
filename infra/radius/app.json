@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "12487632827259118688"
+      "templateHash": "13091756079362920305"
     }
   },
   "parameters": {
@@ -25,16 +25,15 @@
     },
     "containerRegistry": {
       "type": "string",
-      "defaultValue": "ghcr.io/sovereignapp/radiusclaim",
+      "defaultValue": "ghcr.io/wesback/radiusclaim",
       "metadata": {
-        "description": "Container registry/repository prefix for RadiusClaim service images."
+        "description": "Container registry/repository prefix for RadiusClaim service images. Override if you publish the service images somewhere other than the current repository GHCR namespace."
       }
     },
     "imageTag": {
       "type": "string",
-      "defaultValue": "phase1",
       "metadata": {
-        "description": "Shared image tag for the service images used by the current environment."
+        "description": "Published image tag for the service images used by the current environment. No default on purpose: pass the exact tag you pushed (for example the workflow SHA)."
       }
     },
     "deploymentTarget": {
@@ -48,14 +47,14 @@
       "type": "string",
       "defaultValue": "expense",
       "metadata": {
-        "description": "Requested DNS prefix for generated public hostnames. Radius.Compute/routes does not currently support prefix-based hostname selection, so this is retained only as a compatibility hint."
+        "description": "DNS prefix Radius should use when generating the public expense-api gateway hostname."
       }
     },
     "publicGatewayHostname": {
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Optional fully qualified hostname for the public expense-api route. Leave empty to let Radius generate a hostname."
+        "description": "Optional fully qualified hostname for the public expense-api gateway. Leave empty to let Radius generate a hostname."
       }
     },
     "daprBackings": {
@@ -83,11 +82,12 @@
     "stateStoreContainerName": "expense-state",
     "pubsubNamespaceName": "[format('radiusclaim-{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'pubsub'), 18))]",
     "notificationTopicName": "expense-notifications",
+    "notificationSubscriptionName": "notification-svc",
     "secretVaultName": "[format('ce-{0}', take(uniqueString(parameters('applicationName'), parameters('environment'), 'platform-secrets'), 20))]",
     "stateStoreBacking": "[parameters('daprBackings').stateStore]",
     "pubsubBacking": "[parameters('daprBackings').pubsub]",
     "secretStoreBacking": "[parameters('daprBackings').secretStore]",
-    "publicRouteHostnames": "[if(empty(parameters('publicGatewayHostname')), createArray(), createArray(parameters('publicGatewayHostname')))]"
+    "publicGatewayHost": "[if(empty(parameters('publicGatewayHostname')), createObject('prefix', parameters('publicGatewayPrefix')), createObject('fullyQualifiedHostname', parameters('publicGatewayHostname')))]"
   },
   "imports": {
     "radius": {
@@ -144,7 +144,8 @@
             "name": "[variables('pubsubBacking').recipeName]",
             "parameters": {
               "namespaceName": "[variables('pubsubNamespaceName')]",
-              "topicName": "[variables('notificationTopicName')]"
+              "topicName": "[variables('notificationTopicName')]",
+              "subscriptionName": "[variables('notificationSubscriptionName')]"
             }
           }
         }
@@ -175,30 +176,22 @@
         "app"
       ]
     },
-    "expenseApiRoute": {
-      "type": "Radius.Compute/routes",
-      "apiVersion": "2025-08-01-preview",
-      "name": "expense-api-route",
-      "location": "[variables('radiusLocation')]",
+    "expenseApiGateway": {
+      "import": "radius",
+      "type": "Applications.Core/gateways@2023-10-01-preview",
       "properties": {
-        "application": "[reference('app').id]",
-        "environment": "[parameters('environment')]",
-        "kind": "HTTP",
-        "hostnames": "[variables('publicRouteHostnames')]",
-        "rules": [
-          {
-            "matches": [
-              {
-                "httpPath": "/"
-              }
-            ],
-            "destinationContainer": {
-              "resourceId": "[reference('expenseApi').outputs.id.value]",
-              "containerName": "expense-api",
-              "containerPort": "[variables('servicePort')]"
+        "name": "expense-api-gateway",
+        "location": "[variables('radiusLocation')]",
+        "properties": {
+          "application": "[reference('app').id]",
+          "hostname": "[variables('publicGatewayHost')]",
+          "routes": [
+            {
+              "path": "/",
+              "destination": "[format('http://expense-api:{0}', variables('servicePort'))]"
             }
-          }
-        ]
+          ]
+        }
       },
       "dependsOn": [
         "app",
@@ -217,9 +210,6 @@
         "parameters": {
           "application": {
             "value": "[reference('app').id]"
-          },
-          "environment": {
-            "value": "[parameters('environment')]"
           },
           "name": {
             "value": "expense-api"
@@ -262,7 +252,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "14113154134570579214"
+              "templateHash": "18031099517849231755"
             }
           },
           "parameters": {
@@ -270,12 +260,6 @@
               "type": "string",
               "metadata": {
                 "description": "The Radius application ID that owns this container."
-              }
-            },
-            "environment": {
-              "type": "string",
-              "metadata": {
-                "description": "The Radius environment ID that owns this container."
               }
             },
             "name": {
@@ -348,17 +332,33 @@
           },
           "resources": {
             "service": {
-              "type": "Radius.Compute/containers",
-              "apiVersion": "2025-08-01-preview",
-              "name": "[parameters('name')]",
-              "location": "[parameters('location')]",
-              "properties": "[union(createObject('environment', parameters('environment'), 'application', parameters('application'), 'containers', createObject(format('{0}', parameters('name')), createObject('image', parameters('image'), 'env', parameters('env'), 'ports', createObject('http', createObject('containerPort', parameters('containerPort'), 'protocol', 'TCP')))), 'connections', parameters('connections')), if(parameters('enableDapr'), createObject('extensions', createObject('daprSidecar', createObject('appId', parameters('daprAppId'), 'appPort', parameters('daprAppPort')))), createObject()))]"
+              "import": "radius",
+              "type": "Applications.Core/containers@2023-10-01-preview",
+              "properties": {
+                "name": "[parameters('name')]",
+                "location": "[parameters('location')]",
+                "properties": {
+                  "application": "[parameters('application')]",
+                  "container": {
+                    "image": "[parameters('image')]",
+                    "env": "[parameters('env')]",
+                    "ports": {
+                      "http": {
+                        "containerPort": "[parameters('containerPort')]",
+                        "protocol": "TCP"
+                      }
+                    }
+                  },
+                  "connections": "[parameters('connections')]",
+                  "extensions": "[if(parameters('enableDapr'), createArray(createObject('kind', 'daprSidecar', 'appId', parameters('daprAppId'), 'appPort', parameters('daprAppPort'))), createArray())]"
+                }
+              }
             }
           },
           "outputs": {
             "id": {
               "type": "string",
-              "value": "[resourceId('Radius.Compute/containers', parameters('name'))]"
+              "value": "[reference('service').id]"
             }
           }
         }
@@ -381,9 +381,6 @@
         "parameters": {
           "application": {
             "value": "[reference('app').id]"
-          },
-          "environment": {
-            "value": "[parameters('environment')]"
           },
           "name": {
             "value": "workflow-engine"
@@ -426,7 +423,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "14113154134570579214"
+              "templateHash": "18031099517849231755"
             }
           },
           "parameters": {
@@ -434,12 +431,6 @@
               "type": "string",
               "metadata": {
                 "description": "The Radius application ID that owns this container."
-              }
-            },
-            "environment": {
-              "type": "string",
-              "metadata": {
-                "description": "The Radius environment ID that owns this container."
               }
             },
             "name": {
@@ -512,17 +503,33 @@
           },
           "resources": {
             "service": {
-              "type": "Radius.Compute/containers",
-              "apiVersion": "2025-08-01-preview",
-              "name": "[parameters('name')]",
-              "location": "[parameters('location')]",
-              "properties": "[union(createObject('environment', parameters('environment'), 'application', parameters('application'), 'containers', createObject(format('{0}', parameters('name')), createObject('image', parameters('image'), 'env', parameters('env'), 'ports', createObject('http', createObject('containerPort', parameters('containerPort'), 'protocol', 'TCP')))), 'connections', parameters('connections')), if(parameters('enableDapr'), createObject('extensions', createObject('daprSidecar', createObject('appId', parameters('daprAppId'), 'appPort', parameters('daprAppPort')))), createObject()))]"
+              "import": "radius",
+              "type": "Applications.Core/containers@2023-10-01-preview",
+              "properties": {
+                "name": "[parameters('name')]",
+                "location": "[parameters('location')]",
+                "properties": {
+                  "application": "[parameters('application')]",
+                  "container": {
+                    "image": "[parameters('image')]",
+                    "env": "[parameters('env')]",
+                    "ports": {
+                      "http": {
+                        "containerPort": "[parameters('containerPort')]",
+                        "protocol": "TCP"
+                      }
+                    }
+                  },
+                  "connections": "[parameters('connections')]",
+                  "extensions": "[if(parameters('enableDapr'), createArray(createObject('kind', 'daprSidecar', 'appId', parameters('daprAppId'), 'appPort', parameters('daprAppPort'))), createArray())]"
+                }
+              }
             }
           },
           "outputs": {
             "id": {
               "type": "string",
-              "value": "[resourceId('Radius.Compute/containers', parameters('name'))]"
+              "value": "[reference('service').id]"
             }
           }
         }
@@ -546,9 +553,6 @@
         "parameters": {
           "application": {
             "value": "[reference('app').id]"
-          },
-          "environment": {
-            "value": "[parameters('environment')]"
           },
           "name": {
             "value": "notification-svc"
@@ -588,7 +592,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.41.2.15936",
-              "templateHash": "14113154134570579214"
+              "templateHash": "18031099517849231755"
             }
           },
           "parameters": {
@@ -596,12 +600,6 @@
               "type": "string",
               "metadata": {
                 "description": "The Radius application ID that owns this container."
-              }
-            },
-            "environment": {
-              "type": "string",
-              "metadata": {
-                "description": "The Radius environment ID that owns this container."
               }
             },
             "name": {
@@ -674,17 +672,33 @@
           },
           "resources": {
             "service": {
-              "type": "Radius.Compute/containers",
-              "apiVersion": "2025-08-01-preview",
-              "name": "[parameters('name')]",
-              "location": "[parameters('location')]",
-              "properties": "[union(createObject('environment', parameters('environment'), 'application', parameters('application'), 'containers', createObject(format('{0}', parameters('name')), createObject('image', parameters('image'), 'env', parameters('env'), 'ports', createObject('http', createObject('containerPort', parameters('containerPort'), 'protocol', 'TCP')))), 'connections', parameters('connections')), if(parameters('enableDapr'), createObject('extensions', createObject('daprSidecar', createObject('appId', parameters('daprAppId'), 'appPort', parameters('daprAppPort')))), createObject()))]"
+              "import": "radius",
+              "type": "Applications.Core/containers@2023-10-01-preview",
+              "properties": {
+                "name": "[parameters('name')]",
+                "location": "[parameters('location')]",
+                "properties": {
+                  "application": "[parameters('application')]",
+                  "container": {
+                    "image": "[parameters('image')]",
+                    "env": "[parameters('env')]",
+                    "ports": {
+                      "http": {
+                        "containerPort": "[parameters('containerPort')]",
+                        "protocol": "TCP"
+                      }
+                    }
+                  },
+                  "connections": "[parameters('connections')]",
+                  "extensions": "[if(parameters('enableDapr'), createArray(createObject('kind', 'daprSidecar', 'appId', parameters('daprAppId'), 'appPort', parameters('daprAppPort'))), createArray())]"
+                }
+              }
             }
           },
           "outputs": {
             "id": {
               "type": "string",
-              "value": "[resourceId('Radius.Compute/containers', parameters('name'))]"
+              "value": "[reference('service').id]"
             }
           }
         }
@@ -724,7 +738,8 @@
           "stateStoreAccountName": "[variables('stateStoreAccountName')]",
           "pubsubNamespaceName": "[variables('pubsubNamespaceName')]",
           "secretVaultName": "[variables('secretVaultName')]",
-          "notificationTopicName": "[variables('notificationTopicName')]"
+          "notificationTopicName": "[variables('notificationTopicName')]",
+          "notificationSubscriptionName": "[variables('notificationSubscriptionName')]"
         },
         "exposure": {
           "publicService": "expense-api",
@@ -732,14 +747,14 @@
             "workflow-engine",
             "notification-svc"
           ],
-          "route": {
-            "name": "expense-api-route",
-            "resourceType": "Radius.Compute/routes",
-            "match": "/",
+          "gateway": {
+            "name": "[reference('expenseApiGateway').name]",
+            "resourceType": "Applications.Core/gateways",
+            "route": "/",
             "hostnameMode": "[if(empty(parameters('publicGatewayHostname')), 'radius-generated', 'custom-fqdn')]",
-            "requestedHostnamePrefix": "[if(empty(parameters('publicGatewayHostname')), parameters('publicGatewayPrefix'), null())]",
+            "hostnamePrefix": "[if(empty(parameters('publicGatewayHostname')), parameters('publicGatewayPrefix'), null())]",
             "configuredHostname": "[if(empty(parameters('publicGatewayHostname')), null(), parameters('publicGatewayHostname'))]",
-            "note": "[if(empty(parameters('publicGatewayHostname')), 'rad deploy prints the resolved public endpoint after deployment. Radius.Compute/routes currently leaves generated hostname selection to the active route recipe.', 'rad deploy prints the resolved public endpoint after deployment.')]"
+            "note": "rad deploy prints the resolved public endpoint after deployment."
           }
         },
         "recipeStatus": "phase5-recipes-wired"

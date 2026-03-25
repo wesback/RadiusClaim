@@ -130,6 +130,7 @@ az bicep build --file infra/radius/recipes/azure/secrets.bicep
 If validation fails, check:
 - Bicep CLI version: `az bicep version` (should be v0.30.0+)
 - Radius extension version in Bicep files matches installed Radius version
+- `infra/radius/app.bicep` should compile without `Radius.Compute/*` `BCP081` warnings on stock Radius 0.55
 - Recipe parameter types match what `infra/radius/app.bicep` provides
 
 ---
@@ -307,6 +308,8 @@ rad deploy infra/radius/app.bicep \
   --parameters deploymentTarget='radius'
 ```
 
+**Important:** Use the same published tag you just verified or pushed. `infra/radius/app.bicep` intentionally no longer falls back to the retired `phase1` tag, because that default was sending clusters to stale GHCR packages.
+
 **Expected output:**
 ```
 Building infra/radius/app.bicep...
@@ -367,7 +370,10 @@ kubectl get components -n radiusclaim-azure
 kubectl describe component statestore -n radiusclaim-azure
 kubectl describe component pubsub -n radiusclaim-azure
 kubectl describe component platform-secrets -n radiusclaim-azure
-# Expected: Correct component type and metadata
+# Expected:
+# - statestore => state.azure.blobstorage / v2
+# - pubsub => pubsub.azure.servicebus.topics / v1
+# - platform-secrets => secretstores.azure.keyvault / v1
 ```
 
 ### ✅ Azure Backing Resources
@@ -380,6 +386,11 @@ az storage account list --resource-group <your-resource-group> --query "[?contai
 # Verify Service Bus namespace for pub/sub
 az servicebus namespace list --resource-group <your-resource-group> --query "[].{name:name,location:location}" -o table
 # Expected: Service Bus namespace (created by recipe)
+
+# Verify the topic and subscriber-specific subscription used by the demo
+az servicebus topic list --resource-group <your-resource-group> --namespace-name <service-bus-namespace> --query "[].name" -o table
+az servicebus topic subscription list --resource-group <your-resource-group> --namespace-name <service-bus-namespace> --topic-name expense-notifications --query "[].name" -o table
+# Expected: topic expense-notifications and subscription notification-svc
 
 # Verify Key Vault for secrets
 az keyvault list --resource-group <your-resource-group> --query "[].{name:name,location:location}" -o table
@@ -494,6 +505,25 @@ rad deploy infra/radius/environments/azure-radius.bicep \
 
 **Critical:** This step must be completed before deploying the Radius environment when using Azure-backed recipes. The GitHub Actions workflow includes this step automatically after environment creation.
 
+### Issue: `rad deploy` fails with `InvalidResourceNamespace` for `Radius.Compute/containers`
+
+**Cause:** The target Radius control plane is running the stock 0.55 application catalog, which expects `Applications.Core/containers` and `Applications.Core/gateways` for app services and ingress. Preview `Radius.Compute/*` resources are not registered there.
+
+**Solution:**
+```bash
+# Verify the application model uses stock resource types
+az bicep build --file infra/radius/app.bicep
+# Expected: no Radius.Compute namespace warnings
+
+# Then redeploy the application model
+rad deploy infra/radius/app.bicep \
+  --parameters containerRegistry='ghcr.io/<your-org>/radiusclaim' \
+  --parameters imageTag='<your-tag>' \
+  --parameters deploymentTarget='radius'
+```
+
+**Exact pivot:** `Applications.Core/containers` ↔ `Radius.Compute/containers` and `Applications.Core/gateways` ↔ `Radius.Compute/routes`. On stock Radius 0.55, stay on the `Applications.Core/*` side unless your platform team has explicitly installed a preview catalog that documents the `Radius.Compute/*` types.
+
 ### Issue: Pods remain in `Pending` state
 
 **Cause:** Kubernetes cluster lacks resources or image pull fails.
@@ -507,6 +537,33 @@ kubectl describe pod <pod-name> -n radiusclaim-azure
 # Verify images are accessible
 kubectl run test-pull --image=ghcr.io/<your-org>/radiusclaim/expense-api:<tag> --command -- sleep 3600
 kubectl delete pod test-pull
+```
+
+If the pod event shows `ghcr.io/sovereignapp/radiusclaim/*:phase1`, redeploy with the current repo namespace and a tag you actually pushed:
+
+```bash
+rad deploy infra/radius/app.bicep \
+  --parameters containerRegistry='ghcr.io/wesback/radiusclaim' \
+  --parameters imageTag='<published-tag>' \
+  --parameters deploymentTarget='radius'
+```
+
+If the image reference already points at `ghcr.io/wesback/...` and Kubernetes still reports `403 Forbidden`, the remaining blocker is GHCR package visibility or pull auth rather than Radius wiring. Either make the package public in GHCR, or wire a pull secret on the namespace:
+
+```bash
+export GHCR_USERNAME='wesback'
+export GHCR_TOKEN='<github-pat-with-read:packages>'
+
+kubectl create secret docker-registry ghcr-pull \
+  --namespace radiusclaim-azure \
+  --docker-server=ghcr.io \
+  --docker-username="$GHCR_USERNAME" \
+  --docker-password="$GHCR_TOKEN"
+
+kubectl patch serviceaccount default \
+  --namespace radiusclaim-azure \
+  --type merge \
+  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
 ```
 
 ### Issue: Dapr components not registering

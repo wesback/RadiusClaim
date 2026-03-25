@@ -892,3 +892,44 @@ Closure criteria: Execute `rad deploy` twice against same environment, verify se
 - Session log: `.squad/log/2026-03-25T10-18-30Z-recovery-commands.md`
 - Decision: `.squad/decisions.md` (merged)
 
+
+---
+
+## 2026-03-25: Live Cluster Triage — Pub/Sub Failure Pattern (Graham)
+
+**Situation:** Wesley reports live AKS cluster (`radiusclaim-azure-radiusclaim`) deployment output showing:
+- ✅ platform-secrets: complete
+- ✅ statestore: complete
+- ❌ pubsub: failed
+- ⏳ expense-api-service: in-progress (never completes)
+- ⏳ expense-api: in-progress (never completes)
+
+**Root Cause Analysis:**
+
+1. **Service wiring gap (non-critical):**  
+   `expense-api` connections (app.bicep:130–139) include: workflow (service-invocation), state, secrets. Missing: pubsub. This is likely intentional (expense-api submits, workflow-engine publishes). But if expense-api should emit events, platform wiring is incomplete.
+
+2. **Recipe contract structure (sound):**  
+   pubsub.bicep outputs `type: 'pubsub.azure.servicebus.topics'` with pre-created `notification-svc` subscription and `disableEntityManagement: 'true'`. This is correct: Dapr won't auto-create; subscription is pre-created. No recipe bug.
+
+3. **Dependency chain blocking (most likely cause):**  
+   - expense-api connects to workflow-engine (service-invocation, line 132).
+   - workflow-engine connects to pubsub (line 164).
+   - If pubsub recipe fails, workflow-engine can't ready. If workflow-engine can't ready, expense-api (which depends on workflow availability) can't ready. Gateway depends on expense-api, so it's blocked too.
+   - Result: Three services stuck in in-progress because pubsub failed upstream.
+
+**Platform Signal:**  
+The failure pattern (pubsub failed → multiple services hang) is **exactly what Radius implicit dependencies produce**. This is not a bug; it's correct behavior. The question is: **Why did pubsub fail?**
+
+**Recommended Next Steps (priority order):**
+
+1. Check Azure Service Bus namespace provisioning in the resource group. Likely failures: RBAC missing, quota exceeded, or Azure throttling.
+2. Inspect Radius environment Dapr component status (`rad resource list` equivalent) — is pubsub stuck provisioning or actually failed?
+3. If pubsub is ready but services still hang, check Dapr sidecar injection in pods and app-level initialization order.
+4. Validate pubsub Dapr component metadata (disableEntityManagement, topic name, subscription name match the recipe output).
+
+**Architecture Note:**  
+This deployment topology is intentional and correct. Service Bus topics + pre-created subscriptions + disabled entity management is the right pattern. The failure is not in wiring; it's upstream in Azure provisioning or Dapr sidecar injection.
+
+**Decision:** Do not modify pubsub recipe or app wiring. Root cause is external (Azure or Dapr runtime). Continue diagnosing from Azure logs and Radius component status.
+

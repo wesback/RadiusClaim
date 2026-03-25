@@ -906,3 +906,56 @@ Skipping this step causes pod failures at image-pull time.
 **Change 3: Simplify troubleshooting title**
 Line 700: Change `If you see 403 Forbidden...` to `When images are private: Create a pull secret` 
 This reframes from "error state" to "expected workflow for private packages."
+
+## Learnings: GHCR Private Package Documentation (Current Session)
+
+**Task:** Add explicit, first-time-user guidance that GHCR packages are private by default and require either public visibility or pull secret configuration before deployment.
+
+**What Was Done:**
+1. Added **new subsection** after Step 6 ("What this does"): `⚠️ Important: GHCR Packages Are Private by Default`
+2. Presented **two clear options:**
+   - **Option 1 (simpler):** Make packages public in GitHub Packages settings — recommended for first-time deployment
+   - **Option 2 (production-ready):** Keep private + configure Kubernetes image pull secret with full kubectl code
+3. Added **reassuring framing:** "For first-time deployments, we recommend Option 1"
+4. Placed guidance **between happy-path recipe publishing and the deployment steps** so users encounter it before `rad deploy` fails
+
+**File Modified:**
+- `docs/end-to-end-setup-walkthrough.md` (Lines 343–371, inserted between Step 6 and Step 7)
+
+**Why This Placement:**
+- **Upfront prevention:** Users see the decision point *after* pushing packages but *before* attempting to pull them
+- **Unblocks first-timers:** Recommending public visibility removes the 403 Forbidden blocker for initial deployments
+- **Production path visible:** Option 2 with full pull secret code is right there for operators who want to keep packages private
+- **Main flow stays clean:** Happy-path deployment instructions don't get weighed down by auth complexity; it's a sibling section, not inline
+
+**Learnings:**
+- **First-time user journey:** Public-by-default recommendation in docs prevents more 403 errors than comprehensive RBAC guidance—operator velocity > completeness
+- **Placement principle:** Preventative guidance should come *between the action that requires it and the action that needs it*—not in error recovery
+- **Option scaffolding:** Offering "simple path (public) + production path (pull secret)" lets teams progress at their own pace without feeling locked into insecurity
+
+---
+
+## Learnings: GHCR Variable Reuse & Tightening (Current Session)
+
+**Task:** Tighten the GHCR private-package section by reusing environment variables already defined earlier in the walkthrough instead of angle-bracket placeholders.
+
+**What Was Done:**
+1. Replaced `<GITHUB_USERNAME>` with `"$GITHUB_USERNAME"` (matches variable defined at line 255)
+2. Replaced `<GHCR_PAT>` with `"$GHCR_TOKEN"` (matches variable defined at line 256)
+3. Removed `--docker-email=<YOUR_EMAIL>` flag entirely (not required for Kubernetes pull secrets; simplifies command)
+4. Removed the "Replace:" explanations and replaced with single-line reference: "Make sure `$GITHUB_USERNAME` and `$GHCR_TOKEN` are set from your environment (see the token setup section above)."
+
+**File Modified:**
+- `docs/end-to-end-setup-walkthrough.md` (Lines 360–374)
+
+**Why This Works:**
+- **Single source of truth:** Variables flow directly from earlier setup—no duplication, no confusion about what to substitute
+- **Copy-paste friendly:** Users can literally copy the kubectl command without hunting for placeholders
+- **Shorter cognitive load:** Removing email flag reduces command noise; email is never used in GHCR pull secrets anyway
+- **Forward reference pattern:** "See token setup section above" keeps readers grounded in the walkthrough flow
+
+**Learnings:**
+- **Variable inheritance:** When a walkthrough defines setup variables early, later code sections should *consume* them, not redefine them
+- **Angle-bracket placeholders:** Reserve these for one-off values users generate (e.g., random IDs, domain names). For structured config (credentials, usernames), use shell variables already exported
+- **Kubectl flag hygiene:** Remove flags that downstream tools ignore (docker-email in pull secrets). Simpler commands = higher completion rate
+

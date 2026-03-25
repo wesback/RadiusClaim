@@ -23,7 +23,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
   packages: write
 
 concurrency:
@@ -172,6 +171,8 @@ jobs:
       - name: Register Azure provider credentials with Radius
         run: |
           export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          # The runner does not need azure/login here. Radius uses the service principal
+          # we register below when the control plane provisions Azure-backed recipes.
           # Register Azure service principal credentials with the Radius control plane
           # This enables Radius to authenticate with Azure when provisioning backing services
           ./rad credential register azure sp \

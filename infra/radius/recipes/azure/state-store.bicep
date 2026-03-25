@@ -49,7 +49,7 @@ var storageAccountKeys = storageAccount.listKeys()
 output result object = {
   values: {
     type: 'state.azure.blobstorage'
-    version: 'v1'
+    version: 'v2'
     metadata: {
       accountName: {
         value: storageAccount.name

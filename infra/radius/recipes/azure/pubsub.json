@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "2269085676151578895"
+      "templateHash": "12021420559950196974"
     }
   },
   "parameters": {
@@ -34,6 +34,13 @@
       "defaultValue": "expense-notifications",
       "metadata": {
         "description": "Topic used by the RadiusClaim notification flow."
+      }
+    },
+    "subscriptionName": {
+      "type": "string",
+      "defaultValue": "notification-svc",
+      "metadata": {
+        "description": "Subscription pre-created for the RadiusClaim notification subscriber when entity management stays disabled."
       }
     },
     "skuName": {
@@ -74,6 +81,18 @@
       "dependsOn": [
         "[resourceId('Microsoft.ServiceBus/namespaces', parameters('namespaceName'))]"
       ]
+    },
+    {
+      "type": "Microsoft.ServiceBus/namespaces/topics/subscriptions",
+      "apiVersion": "2024-01-01",
+      "name": "[format('{0}/{1}/{2}', parameters('namespaceName'), parameters('topicName'), parameters('subscriptionName'))]",
+      "properties": {
+        "deadLetteringOnMessageExpiration": true,
+        "maxDeliveryCount": 10
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ServiceBus/namespaces/topics', parameters('namespaceName'), parameters('topicName'))]"
+      ]
     }
   ],
   "outputs": {
@@ -81,11 +100,11 @@
       "type": "object",
       "value": {
         "values": {
-          "type": "pubsub.azure.servicebus",
+          "type": "pubsub.azure.servicebus.topics",
           "version": "v1",
           "metadata": {
             "namespaceName": {
-              "value": "[parameters('namespaceName')]"
+              "value": "[format('{0}.servicebus.windows.net', parameters('namespaceName'))]"
             },
             "disableEntityManagement": {
               "value": "true"

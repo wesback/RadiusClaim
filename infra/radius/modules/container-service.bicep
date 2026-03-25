@@ -3,9 +3,6 @@ extension radius
 @description('The Radius application ID that owns this container.')
 param application string
 
-@description('The Radius environment ID that owns this container.')
-param environment string
-
 @description('Logical service name and Radius container resource name.')
 param name string
 
@@ -33,35 +30,32 @@ param daprAppId string = name
 @description('Port exposed to the Dapr sidecar.')
 param daprAppPort int = containerPort
 
-resource service 'Radius.Compute/containers@2025-08-01-preview' = {
+resource service 'Applications.Core/containers@2023-10-01-preview' = {
   name: name
   location: location
-  properties: union({
-    environment: environment
+  properties: {
     application: application
-    containers: {
-      '${name}': {
-        image: image
-        env: env
-        ports: {
-          http: {
-            containerPort: containerPort
-            protocol: 'TCP'
-          }
+    container: {
+      image: image
+      env: env
+      ports: {
+        http: {
+          containerPort: containerPort
+          protocol: 'TCP'
         }
       }
     }
     connections: connections
-  }, enableDapr
-    ? {
-        extensions: {
-          daprSidecar: {
+    extensions: enableDapr
+      ? [
+          {
+            kind: 'daprSidecar'
             appId: daprAppId
             appPort: daprAppPort
           }
-        }
-      }
-    : {})
+        ]
+      : []
+  }
 }
 
 output id string = service.id
