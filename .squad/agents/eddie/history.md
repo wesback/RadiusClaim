@@ -1334,3 +1334,47 @@ Added explicit component validation checkpoints to catch missing or failed Radiu
   - Fix C5: Add deploy-dapr-components.sh to scripts/README.md
   - Fix M1–M7: Minor documentation cleanup
 
+
+## 2026-03-25: Operator Docs Updated for Component Projection Gap + Two-Path Structure
+
+### Delivered
+
+**Documentation sweep across 4 files implementing all queued fixes (C1–C5, M1–M7):**
+
+1. **docs/end-to-end-setup-walkthrough.md**
+   - Added "Two Ways to Use This Guide" table (manual walkthrough vs bootstrap path)
+   - Fixed Step 8 "What this does" to acknowledge component projection gap
+   - Fixed Step 9 prerequisite check (removed incorrect env-namespace component check, replaced with env-show + gap explanation)
+   - Added **Step 9a: Verify and Backfill Dapr Components** — complete with diagnostic, backfill script, and verification commands
+   - Fixed namespace reference in troubleshooting (environment namespace comment)
+
+2. **docs/radius-validation-checklist.md**
+   - Added "Understanding Namespace Roles" section with `ENVIRONMENT_NAMESPACE` and `WORKLOAD_NAMESPACE` variable definitions
+   - Fixed ALL pod/log/component/port-forward commands to use `$WORKLOAD_NAMESPACE`
+   - Added **Step 5a: Verify and Backfill Dapr Components** in deployment steps
+   - Fixed pull-secret troubleshooting to patch named SAs (not `default`)
+   - Fixed "Dapr components not registering" to explain projection gap and point to backfill
+   - Fixed "Services return 500 errors" with sidecar diagnostic guidance
+
+3. **README.md**
+   - Fixed `sovereignapp/` → `RadiusClaim/` in project layout
+   - Added `scripts/` tree to project layout (deploy-dapr-components.sh, publish-radius-recipes.sh, validate-deployment.sh)
+   - Added "Dapr component backfill" paragraph to deployment story
+
+4. **scripts/README.md**
+   - Added full `deploy-dapr-components.sh` documentation (purpose, usage, options table, examples, prerequisites)
+   - Fixed port-forward example namespace from `radiusclaim-azure` → `radiusclaim-azure-radiusclaim`
+
+### Learnings
+
+- **Component projection gap is the single most common first-deploy failure.** Documenting it as a required step (not just troubleshooting) saves operators from a runtime crash that looks like a Dapr config bug but is actually a Radius control-plane limitation.
+- **Two-path framing prevents docs from fighting themselves.** A walkthrough that teaches AND serves as a runbook fails at both. Splitting "learning path" from "just make it work" means the bootstrap script can land without rewriting the walkthrough.
+- **Named service accounts require named patches.** Radius creates per-container SAs (expense-api, workflow-engine, notification-svc). Patching `default` is a no-op. This was wrong in the checklist and would have caused real pull-secret debugging pain.
+- **Namespace confusion is the second most common operator mistake.** Explicit variable definitions (`ENVIRONMENT_NAMESPACE`, `WORKLOAD_NAMESPACE`) with role comments at the top of the checklist prevent copy-paste accidents across sections.
+
+### Key File Paths
+- `docs/end-to-end-setup-walkthrough.md` — primary operator guide
+- `docs/radius-validation-checklist.md` — preflight/troubleshooting reference
+- `scripts/deploy-dapr-components.sh` — component backfill script
+- `scripts/README.md` — script inventory
+- `.squad/decisions/inbox/eddie-bootstrap-docs.md` — team decision filed

@@ -4,6 +4,10 @@
 
 ---
 
+> **Note:** This is sample code for learning and reference. It is not production-ready. Use it to understand patterns; adapt it for your production requirements, security posture, and testing standards.
+
+---
+
 ## The Problem
 
 Teams building distributed apps face two hard questions:
@@ -59,6 +63,8 @@ The sample now includes a lightweight web UI hosted by `expense-api` at **`/app`
 
 This keeps the demo teachable: no extra Node-based toolchain, no CORS setup, and no new platform story to explain before the core Radius + Dapr narrative lands.
 
+> `/app` can load before the full backend is ready. For local runs, start `expense-api` with its Dapr sidecar and the configured `statestore`; workflow telemetry also needs `workflow-engine` reachable through Dapr. A plain `dotnet run` only brings up the ASP.NET shell.
+
 ### Dapr's Role: Portability
 
 The **app code** uses Dapr abstractions:
@@ -101,6 +107,8 @@ Radius generates the Kubernetes manifests and Dapr component specs — no hand-w
 **Stock Radius 0.55 alignment:** This repo keeps the deployable application surface on `Applications.Core/applications@2023-10-01-preview`, `Applications.Core/environments@2023-10-01-preview`, `Applications.Core/containers@2023-10-01-preview`, and `Applications.Core/gateways@2023-10-01-preview`, while the Dapr building blocks remain on [`Applications.Dapr/stateStores@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/statestore), [`Applications.Dapr/pubSubBrokers@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/pubsub/), and [`Applications.Dapr/secretStores@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/secretstore). That matches the first-party 0.55 docs and avoids the live `InvalidResourceNamespace` failure reported for `Radius.Compute/containers`. If you later target a custom preview catalog, the exact compute/ingress pivot is `Applications.Core/containers` → `Radius.Compute/containers` and `Applications.Core/gateways` → `Radius.Compute/routes`, plus the accompanying schema move from `properties.container` to a `properties.containers` map and from an `extensions[]` array to `extensions.daprSidecar`.
 
 **Idempotent deployment:** The GitHub Actions workflow creates or switches to the target environment name (`azure`) directly rather than using temporary bootstrap environments. This ensures deployments are repeatable: `rad deploy` on the environment Bicep updates the environment configuration in place, and subsequent application deployments work against a stable, well-known environment identity. Manual deployments follow the same pattern: `rad env create <name> || true` then `rad env switch <name>` before deploying the environment Bicep.
+
+**Dapr component backfill (required after first deployment):** Radius may report `Applications.Dapr/*` resources as Succeeded without projecting `components.dapr.io` CRDs into Kubernetes. After `rad deploy infra/radius/app.bicep`, verify components exist in the workload namespace (`kubectl get components.dapr.io -n radiusclaim-azure-radiusclaim`). If missing, run `./scripts/deploy-dapr-components.sh --resource-group <rg> --namespace radiusclaim-azure-radiusclaim` to backfill. See the [end-to-end walkthrough](./docs/end-to-end-setup-walkthrough.md) Step 9a for details.
 
 **Azure credential registration (required):** Before deploying the Radius environment with Azure-backed recipes, register the Azure credential with the Radius control plane using an explicit auth mode such as `rad credential register azure sp --client-id "$AZURE_CLIENT_ID" --client-secret "$AZURE_CLIENT_SECRET" --tenant-id "$AZURE_TENANT_ID"` (or `rad credential register azure wi ...` when workload identity is configured). This step is critical — without it, recipe deployment fails with a missing `azure-azurecloud-default` secret error. The GitHub Actions workflow includes the service principal form automatically; manual deployments must run an explicit `sp` or `wi` registration. See [`docs/radius-validation-checklist.md`](./docs/radius-validation-checklist.md) for details.
 
@@ -154,7 +162,7 @@ graph LR
 ## Project Layout
 
 ```
-sovereignapp/
+RadiusClaim/
 ├── src/
 │   ├── RadiusClaim.Contracts/           # Shared DTOs and events
 │   ├── expense-api/                      # Minimal API for submission + hosted web UI
@@ -168,6 +176,10 @@ sovereignapp/
 │   │   │   └── azure-radius.bicep        # Kubernetes + Radius Azure-backed environment
 │   │   └── recipes/azure/                # Azure backing-resource recipes
 │   └── dapr/local/                       # Local-only Dapr component overlays
+├── scripts/
+│   ├── deploy-dapr-components.sh          # Dapr component backfill after Radius deploy
+│   ├── publish-radius-recipes.sh          # OCI recipe publishing
+│   └── validate-deployment.sh             # End-to-end flow validation
 ├── RadiusClaim.slnx
 └── README.md
 ```

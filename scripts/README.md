@@ -6,6 +6,39 @@ This directory contains operational and validation scripts for RadiusClaim.
 
 ## Available Scripts
 
+### `bootstrap.sh`
+
+**Purpose:** Orchestrate the full manual RadiusClaim bootstrap path for operators who want the repo's deployable happy path without replaying every walkthrough step by hand.
+
+**What it wraps:**
+- `publish-radius-recipes.sh` for OCI recipe publication when artifacts are missing or stale
+- `deploy-dapr-components.sh` for the post-`rad deploy` Dapr component backfill
+- `validate-deployment.sh` for end-to-end smoke validation
+
+**What it adds:**
+- Pre-flight checks for required CLIs, Azure login/subscription, Kubernetes reachability, Dapr/Radius control planes, resource group state, and existing Radius deployment state
+- Idempotent Radius workspace/environment setup
+- Interactive confirmations before resource-group creation, Azure credential registration, recipe republishing, and in-place reuse of existing Radius app/environment state (`--yes` is the non-interactive override)
+- Rollout restart plus verification after Dapr component backfill so existing pods pick up the components
+
+**Usage:**
+```bash
+./scripts/bootstrap.sh --resource-group <name> [options]
+```
+
+**Example:**
+```bash
+./scripts/bootstrap.sh \
+  --resource-group radiusclaim-rg \
+  --location belgiumcentral \
+  --yes
+```
+
+**Notes:**
+- The script assumes your Kubernetes cluster already has Dapr and Radius installed.
+- By default it derives image and recipe tags from the current git SHA when possible.
+- Use `./scripts/bootstrap.sh --help` for the full option list, including `--skip-recipes`, `--skip-image-push`, `--skip-validation`, `--image-platform`, and `--validation-url`.
+
 ### `publish-radius-recipes.sh`
 
 **Purpose:** Publish the repo's custom Radius recipes to an OCI registry before deploying an environment that references them.
@@ -26,6 +59,63 @@ docker login ghcr.io
 - The script keeps the three custom recipes (`state-store`, `pubsub`, `secrets`) published under one teachable command
 - GitHub Actions reuses the same script before deploying `infra/radius/environments/azure-radius.bicep`
 
+### `deploy-dapr-components.sh`
+
+**Purpose:** Backfill Dapr Component CRDs into Kubernetes after a Radius app deployment when the component projection gap leaves sidecars without `statestore`, `pubsub`, or `platform-secrets`.
+
+**When to use:**
+- After `rad deploy infra/radius/app.bicep` completes
+- When `kubectl get components.dapr.io -n <workload-namespace>` returns "No resources found"
+- When Dapr sidecars log `state store statestore is not configured`
+
+**Usage:**
+```bash
+./scripts/deploy-dapr-components.sh --resource-group <rg> [OPTIONS]
+```
+
+**Options:**
+| Flag | Description | Default |
+|------|-------------|---------|
+| `--resource-group <name>` | Azure resource group (required) | — |
+| `--app-name <name>` | Radius application name | `radiusclaim` |
+| `--env-name <name>` | Radius environment name | `azure` |
+| `--namespace <name>` | Kubernetes workload namespace | Auto-detected |
+| `--dry-run` | Generate YAML without applying | `false` |
+
+**Example:**
+```bash
+# Auto-detect workload namespace from Radius environment
+./scripts/deploy-dapr-components.sh --resource-group radiusclaim-rg
+
+# Explicit namespace
+./scripts/deploy-dapr-components.sh \
+  --resource-group radiusclaim-rg \
+  --namespace radiusclaim-azure-radiusclaim
+
+# Dry run (review YAML before applying)
+./scripts/deploy-dapr-components.sh \
+  --resource-group radiusclaim-rg \
+  --dry-run
+# Then review: cat dapr-components-generated.yaml
+```
+
+**What it does:**
+1. Reads Radius resource metadata to find Azure backing-resource names
+2. Fetches Azure credentials (storage account key, Service Bus connection string)
+3. Creates Kubernetes secrets in the workload namespace
+4. Generates and applies Dapr Component manifests (`statestore`, `pubsub`, `platform-secrets`)
+
+**Prerequisites:**
+- `rad` CLI (Radius app must be deployed first)
+- `kubectl` (cluster access)
+- `az` CLI (Azure credentials configured)
+- `jq` (JSON processing)
+
+**Output:**
+- `dapr-components-generated.yaml` in the repo root (generated manifest for review)
+- Dapr Component CRDs applied to the workload namespace
+- Exit code 0 on success, non-zero on failure (see script header for codes)
+
 ### `validate-deployment.sh`
 
 **Purpose:** End-to-end validation script for deployed RadiusClaim instances on Kubernetes.
@@ -44,8 +134,8 @@ docker login ghcr.io
 
 **Example (local port-forward for Kubernetes):**
 ```bash
-# Set up port-forward to expense-api
-kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
+# Set up port-forward to expense-api (use WORKLOAD namespace, not environment namespace)
+kubectl port-forward -n radiusclaim-azure-radiusclaim svc/expense-api 8080:8080 &
 
 # Run validation against the forwarded port
 ./scripts/validate-deployment.sh http://127.0.0.1:8080

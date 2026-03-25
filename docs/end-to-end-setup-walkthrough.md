@@ -10,6 +10,15 @@
 
 This guide walks you through the entire RadiusClaim deployment pipeline from initial Azure setup to opening the application in a web browser. It covers both **what this repository automates** and **what you must do manually**.
 
+### Two Ways to Use This Guide
+
+| Path | Who It's For | What It Does |
+|------|-------------|-------------|
+| **Manual walkthrough** (Steps 1–12) | Learning how Radius, Dapr, and Kubernetes fit together | Walks through every step with explanations so you understand the deployment model |
+| **Bootstrap** (`scripts/bootstrap.sh`, when available) | "Just make it work" for returning operators | Automates prerequisite checks, recipe publishing, environment + app deployment, and component backfill in one command |
+
+If a bootstrap script is present in `scripts/`, start there. This walkthrough remains the reference when you need to understand *why* each step exists, troubleshoot a failure, or customize a deployment.
+
 ### What's Automated
 - Kubernetes cluster detection/validation (via Radius)
 - Dapr and Radius control plane prerequisites checks (via CLI scripts)
@@ -340,43 +349,33 @@ docker buildx build \
 **What this does:**  
 Packages the three custom Radius recipes (Azure Blob state store, Azure Service Bus pub/sub, Azure Key Vault secrets) as OCI artifacts in GHCR. The Radius environment definition references these URLs, so they must exist before `rad deploy` runs.
 
-### ⚠️ Important: GHCR Packages Are Private by Default
+⚠️ **Critical:** Radius downloads recipe artifacts during the `rad deploy` step, independent of Kubernetes image pulls. If a recipe artifact is private and lacks OCI authentication in Radius's credential config, the deployment fails with a 401 error at recipe-download time — **this is NOT fixed by Kubernetes imagePullSecrets**, which only apply to app container image pulls. The current recommended approach is to **make recipe artifacts public**. (For private recipes, Radius requires explicit OCI auth configuration in the Radius credential store, which is beyond the scope of this guide.)
 
-When you push images to GitHub Container Registry (GHCR), they are **private by default**. Before you deploy RadiusClaim, you must either:
+### ⚠️ Important: Package Visibility in GHCR
 
-**Option 1: Make Packages Public (simpler for first deployment)**
+Package visibility in GitHub Container Registry depends on your publish settings and linked repository. Before you deploy RadiusClaim, verify and configure package visibility. The recommended approach for first-time deployment is to make packages public:
 
+**Option 1: Make All Packages Public (recommended for first deployment)**
+
+Make public all four package groups in GHCR:
+1. `radiusclaim/recipes` — **Make this public.** Radius downloads recipes during `rad deploy`.
+2. `radiusclaim/expense-api` — **Make this public.** Kubernetes pulls this from the workload namespace.
+3. `radiusclaim/workflow-engine` — **Make this public.** Kubernetes pulls this from the workload namespace.
+4. `radiusclaim/notification-svc` — **Make this public.** Kubernetes pulls this from the workload namespace.
+
+To make a package public:
 1. Go to your GitHub profile → **Packages** tab
-2. For each package (`radiusclaim/recipes`, `radiusclaim/expense-api`, `radiusclaim/workflow-engine`, `radiusclaim/notification-svc`):
+2. For each package:
    - Click the package → **Package settings** → scroll to **Danger zone**
    - Select **Make public**
 
-This allows Radius and Kubernetes to pull recipes and application images without authentication.
+This allows Radius to download recipes and Kubernetes to pull application images without authentication. **This is the current supported happy path.**
 
-**Option 2: Configure an Image Pull Secret (required for private packages in production)**
+**Option 2: Configure an Image Pull Secret for Private Packages (advanced)**
 
-If you prefer to keep packages private, create a Kubernetes secret so your cluster can pull private images:
+If you keep packages private, you can add a Kubernetes imagePullSecret in the workload namespace to allow Kubernetes to pull app images. However, **this does NOT help with recipe artifacts**. Recipe artifacts must be public or require explicit Radius OCI auth (not covered in this guide).
 
-```bash
-# Create the secret in the target namespace
-# Note: Use the same namespace where Radius deploys your app (default: derived from your group name)
-export RADIUS_KUBERNETES_NAMESPACE="${RADIUS_KUBERNETES_NAMESPACE:-default}"
-
-kubectl create secret docker-registry ghcr-pull \
-  --docker-server=ghcr.io \
-  --docker-username="$GITHUB_USERNAME" \
-  --docker-password="$GHCR_TOKEN" \
-  -n "$RADIUS_KUBERNETES_NAMESPACE"
-
-# Link the secret to the default service account
-kubectl patch serviceaccount default \
-  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}' \
-  -n "$RADIUS_KUBERNETES_NAMESPACE"
-```
-
-Make sure `$GITHUB_USERNAME` and `$GHCR_TOKEN` are set from your environment (see the token setup section above).
-
-**For first-time deployments, we recommend Option 1** (make packages public). You can switch to private packages with pull secrets once you're familiar with the flow.
+**For first-time deployments, we strongly recommend Option 1** (make all packages public). This is the tested, working path. Skip ahead to Step 7.
 
 ---
 
@@ -433,7 +432,7 @@ The environment definition wires Dapr components to Azure backing services.
 
    **Optional Variables:**
    - `RADIUS_KUBERNETES_CONTEXT` — kubectl context name (if not using current context)
-   - `RADIUS_KUBERNETES_NAMESPACE` — Kubernetes namespace (defaults to your Radius group name; only override if you need a specific namespace)
+    - `RADIUS_KUBERNETES_NAMESPACE` — Kubernetes namespace where Radius deploys the environment (optional; if not set, defaults to current cluster context)
 
 2. **Create a Service Principal for the Workflow (one-time):**
 
@@ -485,6 +484,8 @@ The environment definition wires Dapr components to Azure backing services.
 
 ### Option B: Manual Deployment with `rad` CLI
 
+If you prefer the scripted operator path, `./scripts/bootstrap.sh --resource-group "$AZURE_RESOURCE_GROUP"` wraps the manual flow below after the same prerequisites are in place. The commands that follow remain the detailed, step-by-step reference.
+
 ```bash
 # Set environment variables
 export GITHUB_USERNAME="your-github-username"
@@ -496,10 +497,10 @@ export AZURE_LOCATION="belgiumcentral"
 export AZURE_TENANT_ID="<azure-tenant-id>"
 export AZURE_PROVIDER_SCOPE="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP"
 export RADIUS_ENVIRONMENT_NAME="azure"
-# Note: The Kubernetes namespace is derived from your Radius group name.
-# After `rad group create radiusclaim-group`, Radius deploys to namespace "radiusclaim-group"
-# Only set this if you need to override the default behavior:
-# export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-group"
+# The Kubernetes namespace is explicitly configured in azure-radius.bicep as "radiusclaim-azure".
+# This is the environment namespace where Radius deploys infrastructure resources.
+# Application workloads are deployed to a separate workload namespace (radiusclaim-azure-radiusclaim).
+export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"
 export RECIPE_REGISTRY="ghcr.io/$GITHUB_USERNAME/radiusclaim/recipes"
 export RECIPE_TAG="latest"
 
@@ -536,9 +537,82 @@ rad env list
 
 **What this does:**  
 Deploys the Radius environment to your Kubernetes cluster. This creates:
-- A Kubernetes namespace (derived from your group name; by default, the namespace is your Radius group name with a `radiusclaim-` prefix)
-- Dapr component definitions (state store, pub/sub, secrets)
+- A Kubernetes namespace: **`radiusclaim-azure`** (the *environment* namespace, as defined in `azure-radius.bicep`)
+  - This is a logical container for the Radius environment and backing service definitions.
+  - **Do NOT create imagePullSecrets here** — the recipes themselves don't pull container images.
+- A separate *workload* namespace for deployed applications: **`radiusclaim-azure-radiusclaim`** (created when you deploy the RadiusClaim app in Step 9)
+  - This is where your three services (expense-api, workflow-engine, notification-svc) actually run.
+  - If you need private GHCR package access, imagePullSecrets go in the *workload* namespace.
 - Azure resource groups and backing services (Blob Storage, Service Bus, Key Vault) via Radius recipes
+- Radius `Applications.Dapr/*` resources that *describe* the Dapr components (state store, pub/sub, secrets)
+
+> **⚠️ Component projection gap:** Radius may report the `Applications.Dapr/*` resources as `Succeeded` even though no Kubernetes `components.dapr.io` CRDs were actually projected into the cluster. After deploying the application in Step 9, you **must** verify that Dapr Component objects exist in the workload namespace. If they are missing, run the backfill step in **Step 9a**.
+
+### (Optional) Step 8a: Understanding Namespace Roles
+
+Before Step 8b, understand the difference between the two namespaces:
+
+- **Environment namespace** (`radiusclaim-azure`): Created by `rad deploy infra/radius/environments/azure-radius.bicep`. Holds the Radius environment definition and backing-service specs. Does NOT run application workloads or Dapr sidecars.
+- **Workload namespace** (`radiusclaim-azure-radiusclaim`): Created automatically when you deploy the RadiusClaim app in Step 9. Holds the three running services (expense-api, workflow-engine, notification-svc) and their Dapr sidecars.
+
+**imagePullSecrets belong in the workload namespace** (Step 8b, if needed). The environment namespace does not pull container images, so it doesn't need a pull secret.
+
+### (Optional) Step 8b: Configure Image Pull Secret for Private GHCR Packages
+
+**This step is optional.** If you made your GHCR recipe and app packages public (Option 1 in Step 6), you can skip to Step 9.
+
+If you chose **Option 2** (private GHCR packages), you must configure the pull secret **in the workload namespace after deploying the app in Step 9**, not before. For now, proceed to Step 9 and return to this step afterward.
+
+**To be completed after Step 9:**
+
+```bash
+# After deploying the app, the workload namespace exists: radiusclaim-azure-radiusclaim
+# Kubernetes automatically creates this namespace when the app deploys
+
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+export GITHUB_USERNAME="your-github-username"
+export GHCR_TOKEN="ghp_xxxxxxxxxxxx"  # Your personal access token
+
+# Confirm which service accounts the deployments actually use before patching.
+# RadiusClaim pods use named service accounts, not 'default'.
+kubectl get deploy -n "$WORKLOAD_NAMESPACE" \
+  -o custom-columns='NAME:.metadata.name,SA:.spec.template.spec.serviceAccountName'
+# Expected output:
+# NAME               SA
+# expense-api        expense-api
+# workflow-engine    workflow-engine
+# notification-svc   notification-svc
+
+# Create the pull secret in the WORKLOAD namespace
+# (The env namespace radiusclaim-azure does not run app containers; the secret goes here.)
+kubectl create secret docker-registry ghcr-pull \
+  --docker-server=ghcr.io \
+  --docker-username="$GITHUB_USERNAME" \
+  --docker-password="$GHCR_TOKEN" \
+  --namespace "$WORKLOAD_NAMESPACE"
+
+# Patch each named service account to include the pull secret.
+# RadiusClaim deployments use named service accounts (not 'default'),
+# so patching 'default' alone has no effect on these pods.
+for SA in expense-api workflow-engine notification-svc; do
+  kubectl patch serviceaccount "$SA" \
+    --namespace "$WORKLOAD_NAMESPACE" \
+    --type merge \
+    -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+done
+
+# Verify the secret exists and each service account references it
+kubectl get secrets -n "$WORKLOAD_NAMESPACE" | grep ghcr-pull
+for SA in expense-api workflow-engine notification-svc; do
+  echo -n "$SA imagePullSecrets: "
+  kubectl get serviceaccount "$SA" -n "$WORKLOAD_NAMESPACE" \
+    -o jsonpath='{.imagePullSecrets[*].name}' && echo
+done
+```
+
+This allows Kubernetes to pull your application images from a private GHCR repository.
+
+> **Why named service accounts?** Radius creates a dedicated service account for each `Applications.Core/containers` resource it deploys. Pods inherit `imagePullSecrets` from the service account named in `spec.serviceAccountName`, so patching only `default` leaves the named accounts — and therefore the pods — without pull credentials.
 
 ---
 
@@ -582,42 +656,136 @@ rad deploy infra/radius/app.bicep \
   --parameters deploymentTarget='radius'
 
 # Wait for deployments to stabilize
-# Set your namespace (e.g., radiusclaim-group)
-export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-group"
-kubectl rollout status deployment/expense-api -n "$RADIUS_KUBERNETES_NAMESPACE" --timeout=5m
-kubectl rollout status deployment/workflow-engine -n "$RADIUS_KUBERNETES_NAMESPACE" --timeout=5m
-kubectl rollout status deployment/notification-svc -n "$RADIUS_KUBERNETES_NAMESPACE" --timeout=5m
+# Set your workload namespace (where app pods actually run, NOT the environment namespace)
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+kubectl rollout status deployment/expense-api -n "$WORKLOAD_NAMESPACE" --timeout=5m
+kubectl rollout status deployment/workflow-engine -n "$WORKLOAD_NAMESPACE" --timeout=5m
+kubectl rollout status deployment/notification-svc -n "$WORKLOAD_NAMESPACE" --timeout=5m
 ```
 
 **What this does:**  
 Deploys the three RadiusClaim services (expense-api, workflow-engine, notification-svc) to the Kubernetes cluster with Dapr sidecars injected. The Radius app model wires them to the Dapr components created in Step 8.
+
+> **⚠️ Critical Prerequisite:** Before running this step, verify that **Step 8 succeeded** and the Radius environment was created:
+> ```bash
+> rad env show azure
+> # Expected: Shows compute kind as kubernetes, namespace, and Azure provider scope
+> ```
+> Dapr Component CRDs may **not** exist yet — that is expected. Radius reports `Applications.Dapr/*` resources as Succeeded even when no Kubernetes `components.dapr.io` objects were projected. After this step completes, **Step 9a** verifies and backfills the components.
+
+---
+
+## Step 9a: Verify and Backfill Dapr Components
+
+After the Radius app deployment, Dapr sidecars need `components.dapr.io` CRDs in the **workload** namespace. Radius may have reported `Applications.Dapr/*` as Succeeded without actually projecting these objects — this is a known component projection gap.
+
+### Check for existing components
+
+```bash
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+
+kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
+# Expected: statestore, pubsub, platform-secrets
+#
+# If you see all three components listed, skip to Step 10.
+# If the command returns "No resources found", continue below.
+```
+
+### Confirm the gap (optional diagnostic)
+
+```bash
+# Radius reports success...
+rad resource list -a radiusclaim
+# Expected: Applications.Dapr/* resources show Succeeded
+
+# ...but Kubernetes has no component CRDs anywhere
+kubectl get components.dapr.io -A
+# If empty: the projection gap is confirmed
+
+# Sidecar logs confirm the runtime impact
+kubectl logs -n "$WORKLOAD_NAMESPACE" deployment/expense-api -c daprd --tail=20 2>/dev/null | grep -i "component"
+# Expected (broken): Only loads kubernetes secretstore, never loads statestore/pubsub
+```
+
+### Run the backfill script
+
+```bash
+./scripts/deploy-dapr-components.sh \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --namespace "$WORKLOAD_NAMESPACE"
+```
+
+The script:
+1. Reads Azure backing-resource details from Radius resource metadata
+2. Fetches credentials (storage account key, Service Bus connection string)
+3. Creates Kubernetes secrets in the workload namespace
+4. Generates and applies `components.dapr.io` manifests for `statestore`, `pubsub`, and `platform-secrets`
+
+**Dry run first** (generates YAML without applying):
+
+```bash
+./scripts/deploy-dapr-components.sh \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --namespace "$WORKLOAD_NAMESPACE" \
+  --dry-run
+# Review dapr-components-generated.yaml before applying
+```
+
+### Verify the backfill
+
+```bash
+# Components should now exist
+kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
+# Expected: statestore, pubsub, platform-secrets
+
+# Restart pods so sidecars pick up the new components
+kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
+  -n "$WORKLOAD_NAMESPACE"
+
+kubectl rollout status deployment/expense-api -n "$WORKLOAD_NAMESPACE" --timeout=5m
+
+# Confirm sidecar loads the components
+kubectl logs -n "$WORKLOAD_NAMESPACE" deployment/expense-api -c daprd --tail=20 | grep "Component loaded"
+# Expected: Lines showing statestore, pubsub loaded
+```
+
+**What this does:**  
+Bridges the gap between Radius's logical Dapr resource model and the Kubernetes runtime. Without this step, services start with Dapr sidecars that cannot find `statestore` or `pubsub`, causing all expense operations to fail.
 
 ---
 
 ## Step 10: Verify Deployment and Get the Public Endpoint
 
 ```bash
-# Set your target namespace (use the group name if you created "radiusclaim-group", otherwise check with: kubectl get namespaces | grep radiusclaim)
-export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-group"
+# Set your workload namespace (where app pods actually run, NOT the environment namespace)
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
 
 # Check that all services are running
-kubectl get deployments -n "$RADIUS_KUBERNETES_NAMESPACE"
+kubectl get deployments -n "$WORKLOAD_NAMESPACE"
 # Expected: 3 deployments in Running state
 
-kubectl get pods -n "$RADIUS_KUBERNETES_NAMESPACE"
+kubectl get pods -n "$WORKLOAD_NAMESPACE"
 # Expected: 3+ pods (one per service)
 
-# Get the public endpoint for expense-api (created by the Radius gateway resource)
-kubectl get ingress -n "$RADIUS_KUBERNETES_NAMESPACE" -o wide
-# OR check Radius output from deployment logs
+# Get the public endpoint for expense-api via Radius.
+# Radius creates an Applications.Core/gateways resource — there is NO Kubernetes Ingress.
+# kubectl get ingress returns nothing and is not the right tool here.
 
-# If using GitHub Actions, the workflow output shows the endpoint
-# If using rad CLI, check for the printed endpoint or extract manually:
-EXPENSE_API_URL=$(kubectl get ingress expense-api-gateway -n "$RADIUS_KUBERNETES_NAMESPACE" -o jsonpath='{.spec.rules[0].host}')
-echo "Expense API: http://$EXPENSE_API_URL"
+# Option A: read the URL from the rad deploy output — look for a line such as:
+#   Public endpoint http://expense.radiusclaim.<ip>.nip.io/
 
-# Fallback: Use port-forward if no external address is assigned
-kubectl port-forward -n "$RADIUS_KUBERNETES_NAMESPACE" svc/expense-api 8080:8080 &
+# Option B: query the gateway resource directly
+rad resource show Applications.Core/gateways expense-api-gateway \
+  -g radiusclaim-group -o json | jq -r '.properties.url // .properties.hostname'
+# Expected: http://expense.radiusclaim.<ip>.nip.io
+
+export EXPENSE_API_URL="http://expense.radiusclaim.<ip>.nip.io"  # replace <ip> with your cluster IP
+
+# Optional: inspect the underlying Contour HTTPProxy objects Radius created
+kubectl get httpproxy -n "$WORKLOAD_NAMESPACE"
+
+# Fallback: Use port-forward if the gateway is not yet reachable from your workstation
+kubectl port-forward -n "$WORKLOAD_NAMESPACE" svc/expense-api 8080:8080 &
 echo "Expense API (port-forward): http://127.0.0.1:8080"
 ```
 
@@ -634,7 +802,7 @@ RadiusClaim includes a lightweight web UI for submitting expenses and viewing hi
 # Open the app in your default browser
 # Use the endpoint from Step 10
 
-open "https://$EXPENSE_API_URL/app"
+open "$EXPENSE_API_URL/app"        # EXPENSE_API_URL already includes the scheme (http://)
 # or
 open "http://127.0.0.1:8080/app"  # if using port-forward
 ```
@@ -645,6 +813,23 @@ open "http://127.0.0.1:8080/app"  # if using port-forward
 - Workflow correlation IDs and telemetry information
 - Live updates as the workflow processes expenses
 
+> **Reality check:** loading `/app` only proves the shell is reachable. It does **not** prove the full local submission path is ready. Plain `dotnet run --project src/expense-api/ExpenseApi.csproj` starts the ASP.NET app, but real `/expenses` reads and submissions still fail until `expense-api` runs with a Dapr sidecar and the local `statestore` component. Workflow telemetry has one extra dependency: `workflow-engine` must also be reachable through Dapr.
+
+If you're reproducing the same flow locally, use the Dapr-backed startup path:
+
+```bash
+docker compose -f infra/dapr/local/docker-compose.yaml up -d
+
+# Match --app-port to the current launch profile in src/workflow-engine/Properties/launchSettings.json
+dapr run --app-id workflow-engine --app-port 5299 --resources-path ./infra/dapr/local -- \
+  dotnet run --project src/workflow-engine/WorkflowEngine.csproj
+
+dapr run --app-id expense-api --app-port 5062 --resources-path ./infra/dapr/local -- \
+  dotnet run --project src/expense-api/ExpenseApi.csproj
+```
+
+After both services are running, open `http://localhost:5062/app`.
+
 ---
 
 ## Step 12: Validate the Deployment
@@ -653,7 +838,7 @@ Use the included validation script to confirm the full flow works:
 
 ```bash
 # Run the validation script
-./scripts/validate-deployment.sh "https://$EXPENSE_API_URL"
+./scripts/validate-deployment.sh "$EXPENSE_API_URL"
 # or
 ./scripts/validate-deployment.sh "http://127.0.0.1:8080"  # if using port-forward
 
@@ -730,43 +915,101 @@ docker pull "$RECIPE_REGISTRY/state-store:$RECIPE_TAG"
 
 **Solution:**
 ```bash
-# Set your namespace (e.g., radiusclaim-group)
-export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
+# App pods run in the WORKLOAD namespace (radiusclaim-azure-radiusclaim), not the environment namespace.
+# Always use the workload namespace for pod inspection:
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
 
 # Check pod events
-kubectl describe pod <pod-name> -n "$RADIUS_KUBERNETES_NAMESPACE"
+kubectl describe pod <pod-name> -n "$WORKLOAD_NAMESPACE"
 
 # Check logs
-kubectl logs <pod-name> -n "$RADIUS_KUBERNETES_NAMESPACE"
+kubectl logs <pod-name> -n "$WORKLOAD_NAMESPACE"
 
 # Verify images are accessible
 docker pull "$GHCR_PREFIX/expense-api:$IMAGE_TAG"
 
 # Check resource quotas
-kubectl describe resourcequota -n "$RADIUS_KUBERNETES_NAMESPACE"
+kubectl describe resourcequota -n "$WORKLOAD_NAMESPACE"
 ```
 
-If you see `403 Forbidden` or pull errors, the issue is image registry access or authentication:
+If you see `401 Unauthorized` or `403 Forbidden` pull errors, the issue is image registry access or authentication:
 
 ```bash
-# Either make the image package public in GHCR, or wire a pull secret
-# First, identify your Kubernetes namespace (run: kubectl get namespaces | grep radiusclaim)
+# Confirm the two namespaces:
+kubectl get namespaces | grep radiusclaim
+# radiusclaim-azure              — environment namespace (Radius environment, no app pods)
+# radiusclaim-azure-radiusclaim  — workload namespace (expense-api, workflow-engine, notification-svc, Dapr components)
 
-export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"  # e.g., radiusclaim-group
+# Pull secrets belong in the WORKLOAD namespace only:
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
 export GHCR_USERNAME="$GITHUB_USERNAME"
 export GHCR_TOKEN='<github-pat-with-read:packages>'
 
+# Create the pull secret in the workload namespace
 kubectl create secret docker-registry ghcr-pull \
-  --namespace "$RADIUS_KUBERNETES_NAMESPACE" \
+  --namespace "$WORKLOAD_NAMESPACE" \
   --docker-server=ghcr.io \
   --docker-username="$GHCR_USERNAME" \
   --docker-password="$GHCR_TOKEN"
 
-kubectl patch serviceaccount default \
-  --namespace "$RADIUS_KUBERNETES_NAMESPACE" \
-  --type merge \
-  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+# RadiusClaim pods use named service accounts, not 'default'.
+# Patch each one individually — patching 'default' alone will not resolve ErrImagePull.
+for SA in expense-api workflow-engine notification-svc; do
+  kubectl patch serviceaccount "$SA" \
+    --namespace "$WORKLOAD_NAMESPACE" \
+    --type merge \
+    -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+done
+
+# Restart pods so they pick up the updated pull credentials
+kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
+  -n "$WORKLOAD_NAMESPACE"
 ```
+
+### Namespace Drift During Application Update
+
+**Symptom:** Error when running `rad deploy infra/radius/app.bicep`:
+```
+Updating an application's Kubernetes namespace from 'radiusclaim-azure-radiusclaim' 
+to 'radiusclaim-azure-radiusclaim-radiusclaim' requires the application to be deleted and redeployed.
+```
+
+**Cause:** Radius has detected a mismatch in the workload namespace. This can occur when re-deploying the application against an environment that already has a previous application deployment in place. Radius computes the workload namespace by appending the application name to the environment's namespace parameter, and when internal state becomes inconsistent, it cannot safely re-reconcile the namespace.
+
+**Recovery:**
+
+1. **Delete the existing Radius application** to clear the stale workload namespace:
+   ```bash
+   ./rad app delete radiusclaim
+   ```
+
+2. **Delete the workload namespace** if Kubernetes resources linger:
+   ```bash
+   kubectl delete namespace radiusclaim-azure-radiusclaim --ignore-not-found
+   ```
+
+3. **Re-deploy the environment and application** from scratch:
+   ```bash
+   export KUBECONFIG="/path/to/kubeconfig"
+   export AZURE_PROVIDER_SCOPE="/subscriptions/<id>/resourceGroups/<rg>"
+   export AZURE_LOCATION="<location>"
+   
+   # Deploy environment
+   ./rad deploy infra/radius/environments/azure-radius.bicep \
+     --parameters kubernetesNamespace="radiusclaim-azure" \
+     --parameters azureProviderScope="$AZURE_PROVIDER_SCOPE" \
+     --parameters location="$AZURE_LOCATION"
+   
+   # Deploy application
+   ./rad deploy infra/radius/app.bicep \
+     --parameters containerRegistry="$GHCR_PREFIX" \
+     --parameters imageTag="$IMAGE_TAG" \
+     --parameters deploymentTarget='radius'
+   ```
+
+**Why deletion is required:** Radius's idempotency for Kubernetes namespaces cannot self-heal once the mismatch is detected. The application resource must be deleted and recreated with a fresh namespace computation.
+
+**Note:** This is not a configuration error in the repository. The bicep files are correct. The namespace mismatch is a Radius operator reconciliation issue that requires a clean redeploy.
 
 ### Image Reference Mismatch
 
@@ -785,28 +1028,50 @@ rad deploy infra/radius/app.bicep \
 
 Verify the corrected images are specified:
 ```bash
-export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
-kubectl describe deployment expense-api -n "$RADIUS_KUBERNETES_NAMESPACE" | grep -i image
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+kubectl describe deployment expense-api -n "$WORKLOAD_NAMESPACE" | grep -i image
 ```
 
-### Public Endpoint Not Assigned
+### Public Endpoint Not Accessible
 
-**Symptom:** `kubectl get ingress/svc` shows `<pending>` for external IP/hostname
+**Symptom:** The Radius gateway URL from `rad deploy` output is not reachable, or you need to confirm the URL.
 
 **Solution:**
 ```bash
-export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
 
-# Use port-forward as a temporary alternative
-kubectl port-forward -n "$RADIUS_KUBERNETES_NAMESPACE" svc/expense-api 8080:8080 &
+# Confirm the gateway URL via Radius (Applications.Core/gateways — not a Kubernetes Ingress)
+rad resource show Applications.Core/gateways expense-api-gateway \
+  -g radiusclaim-group -o json | jq -r '.properties.url // .properties.hostname'
+# Expected: http://expense.radiusclaim.<ip>.nip.io
+
+# Inspect the underlying Contour HTTPProxy objects if needed
+kubectl get httpproxy -n "$WORKLOAD_NAMESPACE"
+
+# Use port-forward as a temporary fallback
+kubectl port-forward -n "$WORKLOAD_NAMESPACE" svc/expense-api 8080:8080 &
 # Access via http://127.0.0.1:8080
-
-# Check Radius route resource
-kubectl get route -n "$RADIUS_KUBERNETES_NAMESPACE"
-
-# Check load balancer status
-kubectl get svc expense-api -n "$RADIUS_KUBERNETES_NAMESPACE" -w  # Watch for address assignment
 ```
+
+### `/app` Loads, but Local Expense Submission Fails
+
+**Symptom:** The browser renders `/app`, but local loads or submissions fail. The UI typically shows one of these truthful runtime messages:
+
+- `Loading and submitting expenses requires the expense-api Dapr sidecar plus the configured statestore. Workflow telemetry also needs workflow-engine to be reachable through Dapr.`
+- `The expense record is available, but workflow telemetry needs workflow-engine to be reachable through Dapr.`
+
+**Solution:**
+```bash
+docker compose -f infra/dapr/local/docker-compose.yaml up -d
+
+dapr run --app-id workflow-engine --app-port 5299 --resources-path ./infra/dapr/local -- \
+  dotnet run --project src/workflow-engine/WorkflowEngine.csproj
+
+dapr run --app-id expense-api --app-port 5062 --resources-path ./infra/dapr/local -- \
+  dotnet run --project src/expense-api/ExpenseApi.csproj
+```
+
+Do **not** rely on plain `dotnet run` for `expense-api` when validating submission behavior. That only brings up the ASP.NET host; the real write path still needs the Dapr sidecar plus the configured `statestore`. Workflow telemetry stays unavailable until `workflow-engine` is also up through Dapr.
 
 ### Validation Script Fails
 
@@ -815,14 +1080,14 @@ kubectl get svc expense-api -n "$RADIUS_KUBERNETES_NAMESPACE" -w  # Watch for ad
 **Solution:**
 ```bash
 # Verify the URL is reachable
-curl "https://$EXPENSE_API_URL/healthz"
+curl "http://$EXPENSE_API_URL/healthz"
 
 # Check if jq is installed
 jq --version
 # If not: brew install jq (or apt-get install jq)
 
 # Run with verbose output to see which step fails
-bash -x ./scripts/validate-deployment.sh "https://$EXPENSE_API_URL"
+bash -x ./scripts/validate-deployment.sh "$EXPENSE_API_URL"
 ```
 
 ### Redeploying After Code Changes
@@ -879,14 +1144,14 @@ Once the app is open in your browser:
 
 3. **Inspect the workflow logs:**
    ```bash
-   export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
-   kubectl logs -n "$RADIUS_KUBERNETES_NAMESPACE" -l app=workflow-engine --all-containers=true
+   export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+   kubectl logs -n "$WORKLOAD_NAMESPACE" -l app=workflow-engine --all-containers=true
    ```
 
 4. **Inspect Dapr state:**
    ```bash
-   export RADIUS_KUBERNETES_NAMESPACE="<your-radiusclaim-namespace>"
-   kubectl exec -it deployment/expense-api -n "$RADIUS_KUBERNETES_NAMESPACE" -- \
+   export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+   kubectl exec -it deployment/expense-api -n "$WORKLOAD_NAMESPACE" -- \
      curl -s http://localhost:3500/v1.0/state/statestore | jq .
    ```
 

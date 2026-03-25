@@ -107,6 +107,24 @@ Map the response to GitHub secrets as follows:
 
 ---
 
+## Understanding Namespace Roles
+
+Before running any deployment or validation commands, know the two namespaces:
+
+```bash
+# Environment namespace — holds the Radius environment and backing-service definitions.
+# Do NOT run kubectl pod/log/component commands here; workloads don't live here.
+export ENVIRONMENT_NAMESPACE="radiusclaim-azure"
+
+# Workload namespace — holds the three services, Dapr sidecars, and Dapr Component CRDs.
+# ALL pod, log, component, and port-forward commands target this namespace.
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+```
+
+> Radius creates the workload namespace automatically by appending the application name (`radiusclaim`) to the environment namespace (`radiusclaim-azure`). If you used a different environment namespace, adjust `WORKLOAD_NAMESPACE` accordingly.
+
+---
+
 ## Bicep Validation
 
 Validate all Radius Bicep files parse correctly:
@@ -230,6 +248,8 @@ rad credential register azure wi \
 
 ## Deployment Steps
 
+For the scripted operator path, use `./scripts/bootstrap.sh --resource-group <your-resource-group>`. The steps below are the explicit equivalent when you want to inspect or troubleshoot each Radius action individually.
+
 ### Step 1: Create Target Environment (Idempotent)
 
 Create or switch to the target environment name directly:
@@ -332,13 +352,44 @@ The `Public endpoint ...` line is the preferred base URL for the hosted `/app` U
 
 **Validation:**
 ```bash
-# Check Kubernetes resources were created
-kubectl get pods -n radiusclaim-azure
+# Check Kubernetes resources were created in the WORKLOAD namespace
+kubectl get pods -n "$WORKLOAD_NAMESPACE"
 # Expected: expense-api, workflow-engine, notification-svc pods in Running state
 
-# Check Dapr components exist
-kubectl get components -n radiusclaim-azure
+# Check Dapr components exist in the WORKLOAD namespace (where sidecars can see them)
+kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
 # Expected: statestore, pubsub, platform-secrets components
+#
+# ⚠️ If "No resources found": Radius reported success but did not project Dapr Component CRDs.
+# This is the component projection gap. Run the backfill (Step 5a below).
+```
+
+### Step 5a: Verify and Backfill Dapr Components
+
+Radius may report `Applications.Dapr/*` as Succeeded without projecting `components.dapr.io` CRDs into Kubernetes. This step confirms components exist and backfills if needed.
+
+```bash
+kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
+# Expected: statestore, pubsub, platform-secrets
+#
+# If "No resources found" → run the backfill:
+
+./scripts/deploy-dapr-components.sh \
+  --resource-group <your-resource-group> \
+  --namespace "$WORKLOAD_NAMESPACE"
+
+# After backfill, restart pods so sidecars pick up the new components:
+kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
+  -n "$WORKLOAD_NAMESPACE"
+```
+
+**Verification:**
+```bash
+kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
+# Expected: statestore, pubsub, platform-secrets
+
+kubectl logs -n "$WORKLOAD_NAMESPACE" deployment/expense-api -c daprd --tail=20 | grep "Component loaded"
+# Expected: Lines showing statestore and pubsub loaded
 ```
 
 ---
@@ -348,32 +399,34 @@ kubectl get components -n radiusclaim-azure
 ### ✅ Pod Health
 
 ```bash
-# Check all pods are Running
-kubectl get pods -n radiusclaim-azure
+# Check all pods are Running (use WORKLOAD namespace, not environment namespace)
+kubectl get pods -n "$WORKLOAD_NAMESPACE"
 # Expected: 3 pods with STATUS = Running
 
 # Check pod logs for startup errors
-kubectl logs -n radiusclaim-azure -l app=expense-api --tail=50
-kubectl logs -n radiusclaim-azure -l app=workflow-engine --tail=50
-kubectl logs -n radiusclaim-azure -l app=notification-svc --tail=50
+kubectl logs -n "$WORKLOAD_NAMESPACE" -l app=expense-api --tail=50
+kubectl logs -n "$WORKLOAD_NAMESPACE" -l app=workflow-engine --tail=50
+kubectl logs -n "$WORKLOAD_NAMESPACE" -l app=notification-svc --tail=50
 # Expected: No error messages, Dapr sidecar initialized
 ```
 
 ### ✅ Dapr Component Registration
 
 ```bash
-# Verify Dapr components are registered
-kubectl get components -n radiusclaim-azure
+# Verify Dapr components are registered in the WORKLOAD namespace
+kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
 # Expected: statestore, pubsub, platform-secrets
 
 # Check component configuration
-kubectl describe component statestore -n radiusclaim-azure
-kubectl describe component pubsub -n radiusclaim-azure
-kubectl describe component platform-secrets -n radiusclaim-azure
+kubectl describe component statestore -n "$WORKLOAD_NAMESPACE"
+kubectl describe component pubsub -n "$WORKLOAD_NAMESPACE"
+kubectl describe component platform-secrets -n "$WORKLOAD_NAMESPACE"
 # Expected:
 # - statestore => state.azure.blobstorage / v2
 # - pubsub => pubsub.azure.servicebus.topics / v1
 # - platform-secrets => secretstores.azure.keyvault / v1
+#
+# If "No resources found": Run the backfill step (Step 5a above).
 ```
 
 ### ✅ Azure Backing Resources
@@ -407,11 +460,12 @@ curl https://<expense-api-base-url>/healthz
 # Expected: {"status":"ok"}
 
 # Fallback if the cluster does not yet have a public address:
-kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
+kubectl port-forward -n "$WORKLOAD_NAMESPACE" svc/expense-api 8080:8080 &
 FORWARD_PID=$!
 
 curl http://localhost:8080/healthz
 # Expected: {"status":"ok"}
+# If connection refused: pods may not be running yet. Check: kubectl get pods -n "$WORKLOAD_NAMESPACE"
 
 # Stop port-forward
 kill $FORWARD_PID
@@ -429,12 +483,12 @@ If a live environment is available, run the shared validation script against the
 ./scripts/validate-deployment.sh https://<expense-api-base-url>
 
 # Fallback when the gateway address is unavailable or still propagating:
-kubectl port-forward -n radiusclaim-azure svc/expense-api 8080:8080 &
+kubectl port-forward -n "$WORKLOAD_NAMESPACE" svc/expense-api 8080:8080 &
 FORWARD_PID=$!
 ./scripts/validate-deployment.sh http://127.0.0.1:8080
 kill $FORWARD_PID
 
-kubectl logs -n radiusclaim-azure deployment/notification-svc -c notification-svc --tail=200
+kubectl logs -n "$WORKLOAD_NAMESPACE" deployment/notification-svc -c notification-svc --tail=200
 ```
 
 Then confirm the same observable outcomes described in the [Phase 7 Demo Walkthrough](./phase-7-demo-walkthrough.md):
@@ -530,8 +584,8 @@ rad deploy infra/radius/app.bicep \
 
 **Solution:**
 ```bash
-# Check pod events
-kubectl describe pod <pod-name> -n radiusclaim-azure
+# Check pod events (use WORKLOAD namespace)
+kubectl describe pod <pod-name> -n "$WORKLOAD_NAMESPACE"
 # Look for ImagePullBackOff, resource limits, or scheduling failures
 
 # Verify images are accessible
@@ -548,38 +602,59 @@ rad deploy infra/radius/app.bicep \
   --parameters deploymentTarget='radius'
 ```
 
-If the image reference already points at `ghcr.io/wesback/...` and Kubernetes still reports `403 Forbidden`, the remaining blocker is GHCR package visibility or pull auth rather than Radius wiring. Either make the package public in GHCR, or wire a pull secret on the namespace:
+If the image reference already points at `ghcr.io/wesback/...` and Kubernetes still reports `403 Forbidden`, the remaining blocker is GHCR package visibility or pull auth rather than Radius wiring. Either make the package public in GHCR, or wire a pull secret on the workload namespace:
 
 ```bash
 export GHCR_USERNAME='wesback'
 export GHCR_TOKEN='<github-pat-with-read:packages>'
 
+# Pull secrets belong in the WORKLOAD namespace, not the environment namespace
 kubectl create secret docker-registry ghcr-pull \
-  --namespace radiusclaim-azure \
+  --namespace "$WORKLOAD_NAMESPACE" \
   --docker-server=ghcr.io \
   --docker-username="$GHCR_USERNAME" \
   --docker-password="$GHCR_TOKEN"
 
-kubectl patch serviceaccount default \
-  --namespace radiusclaim-azure \
-  --type merge \
-  -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+# RadiusClaim pods use NAMED service accounts, not 'default'.
+# Patch each one individually — patching 'default' alone will not resolve ErrImagePull.
+for SA in expense-api workflow-engine notification-svc; do
+  kubectl patch serviceaccount "$SA" \
+    --namespace "$WORKLOAD_NAMESPACE" \
+    --type merge \
+    -p '{"imagePullSecrets":[{"name":"ghcr-pull"}]}'
+done
 ```
 
 ### Issue: Dapr components not registering
 
-**Cause:** Recipe provisioning failed or Azure credentials invalid.
+**Cause:** Radius may report `Applications.Dapr/*` resources as Succeeded without projecting `components.dapr.io` CRDs to Kubernetes. This is a known component projection gap.
 
-**Solution:**
+**First Check — Do components exist in the workload namespace?**
 ```bash
-# Check recipe execution logs
-rad recipe show azure-blob-state
-rad recipe show azure-servicebus-pubsub
-rad recipe show azure-keyvault-secrets
-
-# Verify Azure provider scope is correct
-rad env show azure --query 'properties.providers.azure.scope'
+# Components must be in the WORKLOAD namespace (where sidecars run), not the environment namespace
+kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
+# Expected: statestore, pubsub, platform-secrets
+#
+# If "No resources found": the projection gap is confirmed. Run the backfill below.
+# If components exist but sidecars still fail: check sidecar logs (see "Services return 500 errors").
 ```
+
+**Fix — Run the component backfill script:**
+```bash
+./scripts/deploy-dapr-components.sh \
+  --resource-group <your-resource-group> \
+  --namespace "$WORKLOAD_NAMESPACE"
+
+# Restart pods so sidecars pick up the new components
+kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
+  -n "$WORKLOAD_NAMESPACE"
+```
+
+**Alternative manual fix — If the backfill script prerequisites are not met:**
+1. Ensure the Radius environment and app are deployed (`rad env list`, `rad app list`)
+2. Ensure Azure credentials are registered (`rad credential list`)
+3. Re-run `rad deploy infra/radius/app.bicep ...` once to rule out staleness
+4. If `kubectl get components.dapr.io -A` is still empty, run the backfill script
 
 ### Issue: Services return 500 errors
 
@@ -587,13 +662,57 @@ rad env show azure --query 'properties.providers.azure.scope'
 
 **Solution:**
 ```bash
-# Check Dapr sidecar logs
-kubectl logs -n radiusclaim-azure <pod-name> -c daprd
+# Check Dapr sidecar logs (use WORKLOAD namespace)
+kubectl logs -n "$WORKLOAD_NAMESPACE" <pod-name> -c daprd
 
-# Verify Dapr is enabled
-kubectl get pod <pod-name> -n radiusclaim-azure -o jsonpath='{.spec.containers[*].name}'
-# Expected: Container name includes "daprd"
+# Verify Dapr sidecar is present in the pod
+kubectl get pod <pod-name> -n "$WORKLOAD_NAMESPACE" -o jsonpath='{.spec.containers[*].name}'
+# Expected: Container names include "daprd"
+#
+# If daprd only loads "kubernetes (secretstores.kubernetes/v1)" and never loads statestore/pubsub,
+# the issue is missing Dapr Component CRDs. Run the backfill (Step 5a in Deployment Steps).
 ```
+
+### Issue: Deployment fails: "a vault with the same name already exists in deleted state"
+
+**Cause:** Azure Key Vault soft-delete collision. When a Key Vault is deleted, Azure reserves the name for 7 days before automatic purge. Our Radius recipe generates vault names **deterministically** using `uniqueString()`, so the same environment always tries to create the same vault name.
+
+**Diagnosis:**
+```bash
+# List soft-deleted vaults
+az keyvault list-deleted
+
+# Find your vault and note the scheduledPurgeDate
+# Expected output shows a vault like "ce-ghhsgdsk4etcc" with a future purge date
+```
+
+**Solution — Option A (Recommended: Wait for Auto-Purge)**
+1. Note the `scheduledPurgeDate` from `az keyvault list-deleted`
+2. Wait until that date passes (typically 7 days)
+3. Retry `rad deploy`
+4. Azure automatically frees the vault name after purge
+
+**Solution — Option B (Immediate: Use New Environment)**
+1. Create a new Radius environment with a different name:
+   ```bash
+   rad env create <new-environment-name> --namespace radiusclaim-azure
+   rad env switch <new-environment-name>
+   ```
+2. Deploy using the new environment — `uniqueString()` will generate a new vault name
+3. Update team runbooks to reference the new environment name
+
+**Solution — Option C (High Risk: Force Purge)**
+Only use if timeline-critical and Option A/B are blocked:
+```bash
+# ⚠️ WARNING: Permanently deletes the vault and all secrets
+az keyvault purge --name ce-<vault-suffix> --location <region>
+
+# Then retry deployment
+rad deploy ...
+```
+Do not use this unless you understand the risk.
+
+**Prevention:** This is normal Azure behavior and not a code bug. Document any custom environment names in your runbooks so future operators understand the soft-delete window.
 
 ---
 
