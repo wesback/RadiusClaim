@@ -1378,3 +1378,41 @@ Traced Radius-to-Dapr component projection failure. User reported:
 - Integrate `deploy-dapr-components.sh` into bootstrap.sh Phase 6
 - Validate corrected recipe on fresh deployment
 
+
+## Learnings
+- 2026-03-25: A `daprd` crashloop in `radiusclaim-azure-radiusclaim` can be caused by **live Dapr component auth drift** even when `Applications.Dapr/*` resources succeeded and app annotations look correct. The fastest discriminator is `kubectl logs <pod> -c daprd --previous`.
+- 2026-03-25: In this incident, the live `statestore` component was configured with `accountKey`, but the backing storage account (`ceai2sjlriwjy3a`) had `allowSharedKeyAccess=false`, producing `KeyBasedAuthenticationNotPermitted` and terminating the sidecar before app startup.
+- 2026-03-25: The manual backfill path must validate the backing Azure policy before applying manifests. `scripts/deploy-dapr-components.sh` should fail fast when shared-key auth is disabled instead of creating a broken statestore component.
+- 2026-03-25: The manual Service Bus backfill path should emit exactly one auth mode. `pubsub.azure.servicebus.topics` with both `namespaceName` and `connectionString` is invalid and becomes the next blocker once statestore is repaired.
+- Key file paths: `scripts/deploy-dapr-components.sh`, `infra/kubernetes/dapr-components.yaml`, `docs/end-to-end-setup-walkthrough.md`, `docs/radius-validation-checklist.md`.
+
+## Learnings
+
+### 2026-03-25: Bootstrap Path Orchestration
+- The clean operator path for this repo is an orchestrator script, not another long walkthrough. `scripts/bootstrap.sh` should stay an honest wrapper around `scripts/publish-radius-recipes.sh`, `scripts/deploy-dapr-components.sh`, and `scripts/validate-deployment.sh` so the repo keeps one source of truth for recipe publication, Dapr component backfill, and end-to-end validation.
+- Safe idempotency for RadiusClaim means reusing stable names (`radiusclaim-workspace`, `radiusclaim-group`, `azure`, `radiusclaim`) and prompting before identity-affecting reuse of an existing environment/app. The repo convention for non-interactive override is `--yes`; anything more destructive should still require an explicit operator decision outside the bootstrap happy path.
+- The bootstrap preflight needs to prove five layers before mutating anything: local tooling (`az`, `kubectl`, `rad`, `dapr`, `jq`, `docker`, `curl`), Azure subscription context, Kubernetes control-plane reachability, Radius workspace/group selection, and live deployment state (resource group, existing env/app, Dapr components, recipe artifact accessibility).
+- The Dapr component projection gap is now part of the teachable platform story: the Kubernetes workload namespace (`radiusclaim-azure-radiusclaim`) is the place to backfill components, restart `expense-api` / `workflow-engine` / `notification-svc`, and verify sidecar logs for `Component loaded: ...` after the backfill.
+- User preference: the platform path should feel deliberate and low-glue. A bootstrap script is acceptable only when it keeps the walkthrough as explanation and keeps platform decisions visible rather than hiding them behind tribal knowledge.
+- Key file paths for this pattern: `scripts/bootstrap.sh`, `scripts/deploy-dapr-components.sh`, `scripts/publish-radius-recipes.sh`, `scripts/validate-deployment.sh`, `scripts/README.md`, `docs/end-to-end-setup-walkthrough.md`, `docs/radius-validation-checklist.md`, `infra/radius/app.bicep`, and `infra/radius/environments/azure-radius.bicep`.
+- 2026-03-25: The smallest tenant-compliant Radius fix was to reuse the same Microsoft Entra principal Radius already registers for Azure recipes as the Dapr Blob runtime identity, then pass its client/tenant IDs through `infra/radius/environments/azure-radius.bicep` into `infra/radius/recipes/azure/state-store.bicep` and repair Blob RBAC where needed.
+- 2026-03-25: `scripts/deploy-dapr-components.sh` should backfill the statestore with `azureTenantId`, `azureClientId`, `azureClientSecret` (only for service-principal mode), plus a Blob `Storage Blob Data Contributor` assignment instead of ever reaching for storage keys in this tenant.
+- 2026-03-25: Directly coupled operator surfaces for the Entra statestore redesign are `infra/radius/recipes/azure/state-store.bicep`, `infra/radius/environments/azure-radius.bicep`, `scripts/bootstrap.sh`, `scripts/deploy-dapr-components.sh`, `infra/kubernetes/dapr-components.yaml`, `docs/end-to-end-setup-walkthrough.md`, and `docs/radius-validation-checklist.md`.
+- 2026-03-25: For the stock `rad install kubernetes` path this repo teaches, the bootstrap readiness check should key off the Radius controller-manager label (`app.kubernetes.io/name=radius-controller-manager`) rather than an assumed control-plane label such as `control-plane=radius`; the docs already treat controller-manager as the authoritative Radius signal.
+- 2026-03-25: When a bootstrap preflight depends on control-plane health, align the script selector with the exact troubleshooting/logging command the docs teach. In this repo that keeps `scripts/bootstrap.sh`, `docs/radius-validation-checklist.md`, and `docs/end-to-end-setup-walkthrough.md` talking about the same Radius pod.
+- 2026-03-25: Operator defaults are part of the platform contract. If `scripts/bootstrap.sh` is the teachable happy path, its built-in Azure region should match the documented operator region (`belgiumcentral`) rather than silently drifting back to `eastus`.
+- 2026-03-25: The smallest truthful-doc update for a bootstrap default change is the nearest variable guidance, not a walkthrough rewrite. In this repo that means `docs/radius-validation-checklist.md` needed its `AZURE_LOCATION` example aligned, while `docs/end-to-end-setup-walkthrough.md` was already consistent.
+- User preference: keep platform changes surgical and truthful—fix the default, fix the closest operator hint, and avoid extra glue edits when the broader walkthrough already tells the same story.
+- Key file paths for this change: `scripts/bootstrap.sh`, `docs/radius-validation-checklist.md`, `docs/end-to-end-setup-walkthrough.md`.
+## 2026-03-25: Bootstrap Preflight Radius Selector Fixed
+
+**By:** Scribe (team documentation)
+**What:** Bootstrap pre-flight checks now use `app.kubernetes.io/name=radius-controller-manager` selector instead of `control-plane=radius`.
+**Why:** Aligns with operator docs and stock Radius install path. Previous selector could reject healthy documented installs.
+**Validation:** Bash syntax check, help text verification, local selector simulation.
+
+## 2026-03-25: User Directive — Bootstrap Default Azure Location
+
+**By:** Wesley Backelant (via Copilot)
+**What:** Bootstrap script should default to `belgiumcentral` as the Azure location.
+**Captured:** For follow-up agent `graham-bootstrap-location-fix`.
