@@ -933,3 +933,49 @@ This deployment topology is intentional and correct. Service Bus topics + pre-cr
 
 **Decision:** Do not modify pubsub recipe or app wiring. Root cause is external (Azure or Dapr runtime). Continue diagnosing from Azure logs and Radius component status.
 
+
+---
+
+## 2026-03-25 Phase 7 Triage — Pubsub Recipe Diagnosis
+
+### Three-Layer Diagnosis Delivered
+
+Following Wesley's live deployment report: pubsub fails, expense-api-service and expense-api hang indefinitely.
+
+**Layer 1 — Design Gap (Low-Impact):**
+- expense-api lacks pubsub connection in app.bicep (line 115–142)
+- Likely intentional: expense-api is submission boundary, not event publisher
+- Recommendation: Add pubsub to connections if expense-api should emit ExpenseSubmitted events
+
+**Layer 2 — Recipe Contract Drift (Medium-Impact):**
+- pubsub.bicep outputs `disableEntityManagement: 'true'` (Dapr won't auto-create subscription)
+- BUT also pre-creates `notification-svc` subscription (line 47–54)
+- Design is correct, but metadata contract may have version skew with Azure Service Bus or Dapr binding
+- Signal from history: "queue-style vs. topic-style" contract drift detected
+
+**Layer 3 — Implicit Ordering Deadlock (Critical Root Cause):**
+- Dapr components (statestore, pubsub, platform-secrets) are top-level resources
+- Services reference these via `connections` (implicit ordering dependency)
+- When pubsub recipe fails, output never materializes
+- Downstream modules cannot resolve `pubsub.id` → remain in-progress indefinitely
+- workflowEngine waits for pubsub; expense-api-service waits for workflow-engine; entire chain blocks
+
+### Verification Checklist
+
+**Priority order:**
+1. **Azure Service Bus deployment status** — Verify namespace provisioning succeeded (`az servicebus namespace list`); check ARM template error in Radius logs
+2. **Dapr component injection state** — `rad resource list`: expect statestore, pubsub, platform-secrets all Ready/Provisioning
+3. **Service deployment trace** — Check expense-api-service pod logs for connection errors or Dapr sidecar failure
+4. **Recipe contract validation** — If pubsub exists but services hang, validate Dapr component config matches recipe output
+
+### Platform-Level Decision
+
+**Keep pubsub recipe as-is** (topics + pre-created subscription with entity management disabled).
+
+**Failure attribution:**
+- pubsub deployment fails → Azure provisioning issue, not Radius wiring
+- Services hang post-provisioning → Dapr sidecar injection or app-level initialization, not recipe structure
+
+**Next step:** Verify Azure Service Bus namespace provisioning succeeded; if yes, troubleshoot Dapr injection or app-level deadlock.
+
+[Orchestration log: `.squad/orchestration-log/20260325-110539-graham.md`]

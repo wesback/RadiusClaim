@@ -909,3 +909,34 @@ When a recipe resource (pubsub, statestore, or secretStore) fails in Radius:
 
 ---
 
+
+---
+
+## 2026-03-25 Phase 7 Triage — Pubsub Deployment Deadlock
+
+### Diagnosis Delivered
+
+Identified critical-path dependency blockage in live `rad deploy`: pubsub resource failure blocks downstream service modules (expense-api-service, expense-api) via unresolvable reference deadlock.
+
+**Observed sequence:**
+- ✅ platform-secrets, statestore, radiusclaim complete
+- ❌ pubsub FAILED
+- 🔄 expense-api-service, expense-api stuck in progress
+
+**Root cause:** workflowEngine and notificationService reference `pubsub.id` in connection declarations. When pubsub fails, modules cannot resolve `.id` → Radius orchestrator enters unresolvable wait loop.
+
+**Pattern confirmed:** Radius dependency tracking through `.id` references is correct and necessary. Failure mode (deadlock on failed dependency) is an operational lesson, not design flaw.
+
+### Leadership Decision
+
+**Status:** BLOCKING Phase 7 re-validation until Graham verifies pubsub recipe health in isolation.
+
+**Approval gate:** Daisy gates Phase 7 re-run after verification of:
+1. Recipe OCI image accessibility
+2. Bicep compilation success
+3. Output contract matches Dapr pubsub type
+4. Isolated pubsub deployment succeeds
+
+**Future pattern:** Single failed recipe can block entire application deployment. Pre-deployment recipe validation (compilation + type checking) must be CI gate before `rad deploy`.
+
+[Orchestration log: `.squad/orchestration-log/20260325-110539-daisy.md`]

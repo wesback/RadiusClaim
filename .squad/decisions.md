@@ -1449,3 +1449,59 @@ Live AKS cluster `radiusclaim-azure-radiusclaim` has three deployments stuck in 
 
 [See detailed commands: `.squad/orchestration-log/2026-03-25T10-18-30Z-graham.md`]
 
+
+### 2026-03-25T10:59:02Z: User directive — GHCR visibility
+**By:** Wesley Backelant (via Copilot)
+**Status:** Captured
+**What:** Do not describe GHCR visibility as a blanket default rule. A container package can be private or public; effective default depends on how it was published and whether it inherits access from linked repository.
+**Why:** User correction — captured for team memory.
+
+### 2026-03-25T11:30:00Z: Pubsub Failure → Service Startup Chain Deadlock (Diagnosis)
+**By:** Daisy (Lead) & Graham (Platform Dev)
+**Status:** BLOCKING Phase 7 validation
+**Severity:** Critical-path dependency blockage
+
+**Observed Symptom:**
+- ✅ platform-secrets — complete
+- ✅ statestore — complete
+- ✅ radiusclaim (app resource) — complete
+- ❌ pubsub — **FAILED**
+- 🔄 expense-api-service — **stuck in progress**
+- 🔄 expense-api — **stuck in progress**
+
+**Root Cause (Daisy):** Failed dependency deadlock
+- pubsub resource enters FAILED state (recipe execution error)
+- Failed resource cannot produce `.id` output
+- workflowEngine and notificationService modules reference `pubsub.id` → unresolvable reference
+- Radius orchestrator enters unresolvable wait loop
+- Services remain in-progress forever (waiting for pubsub to succeed, but pubsub has failed)
+
+**Diagnosis Layers (Graham):**
+1. **Design gap (low-impact):** expense-api lacks pubsub connection — likely intentional (submission boundary, not event publisher)
+2. **Recipe contract drift (medium-impact):** pubsub.bicep output/Dapr metadata version skew — disableEntityManagement: 'true' with pre-created notification-svc subscription shows signal
+3. **Implicit ordering deadlock (critical):** pubsub recipe failure blocks downstream services via unresolvable reference chain
+
+**Why Pubsub Fails (Most Likely):**
+1. Recipe output contract mismatch — azure-servicebus-pubsub outputs wrong Dapr component type
+2. Parameter passthrough failure — namespaceName, topicName, subscriptionName malformed
+3. Recipe template not found/unpublished — OCI artifact inaccessible
+
+**Architectural Pattern Confirmed:**
+- Radius dependency tracking through `.id` references is **correct**
+- Service-to-Dapr-component wiring is **architecturally sound**
+- Failure mode (deadlock on failed dependency) is **operational lesson**, not design flaw
+
+**Immediate Actions:**
+1. Verify pubsub recipe health: Check OCI image accessibility, Bicep compilation, output contract
+2. If recipe healthy but fails: Check Radius logs, confirm parameter passthrough
+3. Isolate failure: Deploy pubsub in isolation (skip service modules)
+4. Gate re-validation: Do NOT re-attempt full `rad deploy` until pubsub succeeds in isolation
+
+**Decision:** BLOCKING Phase 7 validation until Graham verifies pubsub recipe health and confirms execution succeeds in isolation. Daisy gates Phase 7 re-run after verification.
+
+**For Future Reference:**
+- Recipe failures are **NOT idempotent**
+- Single failed recipe can block entire application deployment
+- Pre-deployment recipe validation (compilation + type checking) must be CI gate before `rad deploy`
+
+[See detailed triages: `.squad/orchestration-log/20260325-110539-daisy.md` and `.squad/orchestration-log/20260325-110539-graham.md`]
