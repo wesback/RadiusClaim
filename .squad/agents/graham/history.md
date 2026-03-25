@@ -1482,3 +1482,30 @@ Kept `--resource-group` as required at the top-level flow. The AKS-specific boot
 - Eliminated redundant log output
 
 **Status:** Closed
+
+## 2026-03-25T18:21:03Z: Prepare-Cluster Dapr Readiness Fix
+
+**Task:** Fix prepare-cluster Dapr readiness failure after successful install  
+**Outcome:** Completed successfully; changed the install path to use the native Dapr wait behavior and revalidated readiness.
+
+### Decision
+Update `scripts/prepare-cluster.sh` to install Dapr with `dapr init -k --wait` instead of `dapr init -k`. The `dapr init -k` returns success once the install request is accepted, not when the Dapr control plane is actually healthy. Using the CLI's built-in wait semantics ensures readiness before the script's post-install verification runs.
+
+### Changes
+- Updated Dapr install command: `dapr init -k --wait`
+- Preserved existing `verify_dapr_ready` check as final safety gate
+- No arbitrary sleeps; leverages platform's documented behavior
+
+### Validation
+- Fresh-cluster prep becomes deterministic for the Dapr install step
+- Control-plane boundary stays explicit: install when asked, then verify readiness
+
+**Status:** Closed
+
+## Learnings
+- 2026-03-25: In bash-based platform scripts, a helper used inside `$(...)` must be stdout-clean and return only the data the caller wants to capture. If the helper also performs side effects such as `kubectl config use-context`, split that into a separate step so log/chatty CLI output cannot corrupt the captured value or the next execution step.
+- 2026-03-25: `scripts/prepare-cluster.sh` now treats context switching and context resolution as two separate concerns: `select_kubectl_context` handles the optional `kubectl config use-context` side effect, while `resolve_kubectl_context` stays a pure lookup/validation helper for the active context name.
+- 2026-03-25: Key file paths for this runtime-fix pattern: `scripts/prepare-cluster.sh`, `scripts/lib/platform-common.sh`, `scripts/README.md`, `docs/end-to-end-setup-walkthrough.md`.
+- 2026-03-25: `scripts/prepare-cluster.sh` failing with `Dapr control plane is not ready` is expected when `--install-dapr` was omitted. The platform boundary stays intentional if Dapr/Radius installs remain explicit, but first-time docs and help text must state that omission means verify-only mode on a fresh cluster. Key files: `scripts/prepare-cluster.sh`, `scripts/README.md`, `docs/end-to-end-setup-walkthrough.md`, `docs/radius-validation-checklist.md`, `.squad/skills/radius-cluster-prep-boundary/SKILL.md`.
+- 2026-03-25: `dapr init -k` reports installation success before the control plane is actually ready unless `--wait` is supplied. For cluster-prep automation, prefer the CLI's native readiness gate (`dapr init -k --wait`) over ad hoc sleeps, then keep the script's existing post-install verification as the final guard.
+- 2026-03-25: Key files for this install-readiness pattern are `scripts/prepare-cluster.sh`, `.squad/decisions.md` (merged decision entry), and `.squad/log/20260325T182103Z-dapr-readiness-fix.md` (session log).

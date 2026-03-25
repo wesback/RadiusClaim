@@ -158,3 +158,18 @@
 - The captured `KUBECTL_CONTEXT` value stays a clean context name
 - Future platform helpers should keep command-substitution functions stdout-clean
 
+### 2026-03-25T18:21:03Z: Decision — Prepare-Cluster Must Use Dapr CLI Wait Semantics
+**By:** Graham (Platform Dev)
+**Status:** COMPLETED
+**What:** Update `scripts/prepare-cluster.sh` to install Dapr with `dapr init -k --wait` instead of `dapr init -k`.
+**Why:** `dapr init -k` returns success once the install request is accepted, not when the Dapr control plane is actually healthy. The script immediately runs its readiness check after install, so the current behavior can fail on a fresh cluster even though Dapr is still converging normally.
+
+Using the CLI's built-in wait semantics is the smallest correct repair:
+1. It matches Dapr's documented contract for Kubernetes installs.
+2. It avoids teaching arbitrary sleeps into platform automation.
+3. It preserves the script's existing `verify_dapr_ready` check as the final guard.
+
+**Consequence:**
+- Fresh-cluster prep becomes deterministic for the Dapr install step.
+- The control-plane boundary stays explicit: install when asked, then verify readiness before proceeding.
+
