@@ -128,3 +128,33 @@
 - No silent cluster creation/replacement during repeatable deployment without explicit operator opt-in
 **Consequence:** Clear separation of phases; operator controls cluster decisions explicitly.
 
+### 2026-03-25: Decision — Prepare-Cluster Control-Plane Gates Stay Explicit
+**By:** Graham (Platform Dev)
+**Status:** PROPOSED
+**What:** Keep `scripts/prepare-cluster.sh` in verify-by-default mode for Dapr and Radius, but document more explicitly that first-time prep on a fresh cluster must include `--install-dapr --install-radius`.
+**Why:** The explicit gates are deliberate safety rails for cluster-level mutations, but the operator story only stays teachable if the first-time path says that plainly instead of letting the readiness stop feel accidental.
+
+**Operator Rule:**
+- Fresh cluster or newly created AKS: run `prepare-cluster.sh` with both install flags
+- Reused cluster with Dapr/Radius already present: install flags may be omitted for verification-only preflight
+
+**Affected Files:**
+- `scripts/prepare-cluster.sh`
+- `scripts/README.md`
+- `docs/end-to-end-setup-walkthrough.md`
+- `docs/radius-validation-checklist.md`
+
+### 2026-03-25: Decision — Prepare-Cluster kubectl Context Must Stay Stdout-Clean
+**By:** Graham (Platform Dev)
+**Status:** PROPOSED
+**What:** Split the `prepare-cluster.sh` kubectl-context step into:
+1. `select_kubectl_context` for the optional `kubectl config use-context` side effect
+2. `resolve_kubectl_context` for the pure "what context is active and is it reachable?" lookup
+
+**Why:** The old shape mixed side effects and value capture inside `KUBECTL_CONTEXT="$(resolve_kubectl_context)"`. That makes the control-flow fragile because any human-facing stdout from a context-switch command can leak into the captured value or the surrounding runtime path.
+
+**Consequence:**
+- Cluster-prep logging remains operator-friendly
+- The captured `KUBECTL_CONTEXT` value stays a clean context name
+- Future platform helpers should keep command-substitution functions stdout-clean
+
