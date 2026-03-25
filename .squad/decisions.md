@@ -1410,3 +1410,42 @@ export GITHUB_USERNAME="your-github-username"
 **Architecture Impact:** Radius + Dapr recipe boundary remains sound. Failures are infrastructure maturity, not design flaws.
 
 [See detailed analysis in orchestration log: `.squad/orchestration-log/20260324T170937Z-graham.md`]
+
+### 2026-03-25: Live Cluster Recovery Commands — Image Auth & Dapr Components
+**By:** Graham (Platform Dev)
+**Date:** 2026-03-25T10:30:00Z
+**Phase:** 7 (Azure Deployment - in-progress)
+**Decision:** recovery-commands-for-live-cluster
+**Status:** RECOMMENDED (review-only; ready for execution)
+**Owner:** Graham (Platform Dev) → Execution: Platform Team / Operations
+
+**Summary:**
+Live AKS cluster `radiusclaim-azure-radiusclaim` has three deployments stuck in Pending due to:
+1. Image pull failures (403 Forbidden on private `ghcr.io/sovereignapp/radiusclaim` packages)
+2. Missing Dapr components (statestore, pubsub, platform-secrets)
+
+**Recommended Recovery Path:**
+1. **Add GHCR pull auth:** Create `imagePullSecret` for `ghcr.io/wesback/radiusclaim` in namespace
+2. **Redeploy services:** Update expense-api, workflow-engine, notification-svc with explicit image tags (prefer semver or git SHA, not `:latest`)
+3. **Verify/repair Dapr:** Check components exist; if missing, redeploy Radius environment
+
+**Key Decisions:**
+- **Explicit tags over :latest:** Prevents ambiguity; enables rollback traceability
+- **GHCR auth pattern:** Use `imagePullSecret` (production-ready); alternative: make packages public for samples
+- **Dapr ownership:** Components are created and managed by Radius (via `rad deploy`), not manual K8s manifests
+- **Scale-down before redeploy:** Ensures old pods don't linger; forces fresh image pull
+
+**Validation:**
+- All three deployments running and Ready (1/1)
+- Dapr components present in namespace
+- daprd sidecars Ready
+- Services accessible via endpoints
+
+**Handoff:**
+- **Approver:** Daisy (QA Lead) gates Phase 7 re-validation
+- **Executor:** Platform team or operations
+- **Duration:** ~30 minutes end-to-end
+- **Rollback:** Revert images to previous tag if failures occur
+
+[See detailed commands: `.squad/orchestration-log/2026-03-25T10-18-30Z-graham.md`]
+

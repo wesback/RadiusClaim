@@ -856,3 +856,39 @@ Closure criteria: Execute `rad deploy` twice against same environment, verify se
 
 **For team:** Documented in `.squad/decisions/inbox/graham-recovery-commands.md` for Coordinator review and approval before execution.
 
+
+## 2026-03-25: Live Cluster Recovery Command Handoff
+
+**Phase:** 7 (Azure Deployment - in-progress)  
+**Status:** Review-only commands documented; ready for team execution
+
+**Outcome:** Produced detailed review-only recovery command set for live AKS cluster.
+
+**Problem Diagnosed:**
+- Namespace `radiusclaim-azure-radiusclaim` has three deployments stuck in Pending
+- Image pull failures (403 Forbidden) on private `ghcr.io/sovereignapp/radiusclaim` packages
+- No Dapr components (statestore, pubsub, platform-secrets) in namespace
+- daprd sidecars failing due to app image unavailability
+
+**Recovery Path (Three Steps):**
+1. Add GHCR pull auth via `imagePullSecret` for `ghcr.io/wesback/radiusclaim`
+2. Redeploy expense-api, workflow-engine, notification-svc with explicit tags (semver/SHA, not :latest)
+3. Verify/redeploy Dapr components via Radius (components are Radius-owned)
+
+**Key Design Decisions:**
+- Explicit tags > :latest (prevents silent stale-image pulls; enables rollback)
+- imagePullSecret pattern (production-ready; alternative: public GHCR for samples)
+- Radius ownership of Dapr components (not manual K8s manifests; rad deploy is idempotent)
+- Scale-down → redeploy → scale-up (ensures old pods don't linger)
+
+**Handoff Notes:**
+- Approver: Daisy (QA Lead)
+- Executor: Platform team / operations
+- Duration: ~30 minutes
+- Rollback: Revert images if failures occur
+
+**Artifacts:**
+- Orchestration log: `.squad/orchestration-log/2026-03-25T10-18-30Z-graham.md`
+- Session log: `.squad/log/2026-03-25T10-18-30Z-recovery-commands.md`
+- Decision: `.squad/decisions.md` (merged)
+

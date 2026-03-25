@@ -849,3 +849,26 @@ Coordinated final decision documentation for Dapr namespace research and migrati
 **Inbox Cleared:** graham-daisy-followups.md, karen-radius-compute-review.md removed and directory purged.
 
 **Next Phase:** Recipe artifact republishing + GHCR image pull auth resolution required before live demo resumption.
+
+## 2026-03-25: Phase 7 Re-validation Gate — Recovery Commands Ready
+
+**Date:** 2026-03-25T10:30:00Z  
+**From:** Graham (Platform Dev)  
+**Status:** Review-only commands submitted for approval
+
+**What:** Graham produced detailed recovery commands for live AKS cluster recovery. Three-step approach:
+1. Add GHCR pull auth in `radiusclaim-azure-radiusclaim` namespace
+2. Redeploy expense-api, workflow-engine, notification-svc with explicit tags
+3. Verify/repair Dapr components (Radius-owned)
+
+**Decision Points for QA Lead:**
+- Approve recovery execution path
+- Gate Phase 7 re-validation after recovery completes
+- Validate all three deployments Running, Dapr components healthy, endpoints accessible
+
+**Artifacts:**
+- Orchestration log: `.squad/orchestration-log/2026-03-25T10-18-30Z-graham.md`
+- Decision merged: `.squad/decisions.md`
+
+**Next Step:** Daisy approves or requests modifications; platform team executes; Daisy validates re-entry to Phase 7.
+
