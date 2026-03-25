@@ -825,6 +825,17 @@ Closure criteria: Execute `rad deploy` twice against same environment, verify se
 
 ## Learnings
 
+### 2026-03-25: GHCR Recipe Pull Auth Gap
+
+**Situation:** `rad deploy infra/radius/environments/azure-radius.bicep` failed with `DeploymentFailed` / `RecipeDownloadFailed` / `401 unauthorized: authentication required` while Radius tried to pull `ghcr.io/wesback/radiusclaim/recipes/...`.
+
+**Findings:**
+- `infra/radius/environments/azure-radius.bicep` points recipes at GHCR via `templatePath`, but does **not** configure `properties.recipeConfig.bicep.authentication` or any Radius secret store for private OCI registry access.
+- Anonymous GHCR token probes for the repo's three recipe artifacts (`state-store`, `pubsub`, `secrets`) returned `401`, so the current published recipe artifacts are not anonymously pullable.
+- Radius **does** support private OCI recipe pulls, but only when the environment is wired for it (private-registry auth via `recipeConfig.bicep.authentication` + a referenced secret store). Kubernetes `imagePullSecrets` are for app images and do not help the Radius control plane download recipe artifacts.
+
+**Rule for this repo:** In the current happy path, recipe packages need to be public. If the team wants private recipe artifacts, add explicit Radius registry-auth config first, then document that path.
+
 ### 2026-03-25: Live Cluster Recovery (Review Phase)
 
 **Situation:** Live AKS cluster (`radiusclaim-azure-radiusclaim`) stuck with three deployments failing due to stale and unauthorized image sources (sovereignapp/phase1 private images + wesback/latest 401 errors).
@@ -1010,4 +1021,3 @@ Reviewed and validated the namespace-default decision with platform truth check.
 **Decisions merged:**
 - Decision #6: GHCR Pull Secret Sequencing — Eddie's documentation updates
 - Decision #7: Keep Azure Radius namespace default explicit — Graham's platform validation
-

@@ -940,3 +940,57 @@ Identified critical-path dependency blockage in live `rad deploy`: pubsub resour
 **Future pattern:** Single failed recipe can block entire application deployment. Pre-deployment recipe validation (compilation + type checking) must be CI gate before `rad deploy`.
 
 [Orchestration log: `.squad/orchestration-log/20260325-110539-daisy.md`]
+
+---
+
+## 2026-03-25 Afternoon: RecipeDownloadFailed 401 — Diagnosis and Decision
+
+**Request:** Diagnose deployment error: `DeploymentFailed ... RecipeDownloadFailed ... ghcr.io/wesback/radiusclaim/recipes/secrets:latest response status code 401: unauthorized: authentication required`
+
+**Context Observed:**
+- `radiusclaim` application resource created successfully ✅
+- `statestore`, `pubsub`, `platform-secrets` Dapr components fail at 401 during recipe download ❌
+- Kubernetes app image pulls (if reached) would use `imagePullSecrets` configured in Step 8a
+- But recipe pulls happen **before** service pod startup — at Radius reconciliation time
+
+**Root Cause:**
+The Kubernetes `imagePullSecrets` (ghcr-pull docker-registry secret) only authenticates **application container image pulls inside Kubernetes**. Radius recipe OCI artifact downloads happen in the Radius control plane (likely outside the app namespace), before service pods are created, and do not have access to the Kubernetes secret. The 401 happens when Radius tries to pull the private recipe OCI image from GHCR and the Radius control plane has no credentials.
+
+**Classification:**
+- **Not a Radius bug** — Radius correctly enforces authentication for private OCI artifacts
+- **Not a package visibility bug** — The recipes exist and are correctly referenced
+- **Documentation gap** — The walkthrough does not clarify that Kubernetes `imagePullSecrets` are insufficient for recipe artifacts; it recommends "make recipes public" (Option 1) but does not explain why private recipes fail even after Step 8a
+
+**Why Radiusclaim Shows OK But Dapr Recipes Fail:**
+The app resource itself is declared in Bicep and doesn't require external downloads. The Dapr component resources reference recipes via OCI artifact URLs, which must be downloaded and validated. Private GHCR packages require authentication at that download point, which is outside Kubernetes RBAC scope.
+
+**Next Steps (in order):**
+1. **Immediate (user choice):** Make recipe artifacts public in GHCR (fastest safe path) — go to GitHub Packages, select `radiusclaim/recipes`, open settings, make public. Then retry `rad deploy`.
+2. **If recipes must stay private:** Radius would need to authenticate at the OCI layer. This is not currently addressed in the walkthrough and may require:
+   - Radius CLI/environment support for OCI credentials (check Radius documentation for `.radius/` credential config)
+   - Or, post-deployment image registry secret configuration (not standard Kubernetes pattern for Radius recipes)
+   - Team should verify Radius version and OCI auth capability before choosing this path
+
+**Decision & Documentation Update Needed:**
+- Update `docs/end-to-end-setup-walkthrough.md` Step 6 to clarify that **Option 1 (make packages public) is the only working path today**. The Kubernetes pull secret (Step 8a) does NOT apply to recipe artifacts.
+- Add a note that private Radius recipes require Radius-native OCI credential setup (link to Radius docs once verified).
+
+**Key Learning for Future Reference Samples:**
+Recipe artifacts and application container images follow different authentication paths. Kubernetes secrets are not transitive to the Radius control plane's OCI layer.
+
+
+## 2026-03-25: Expense Submission Failure Triage
+
+- Triaged the user-facing "The expense could not be submitted." report end-to-end across `src/expense-api/Program.cs`, `src/expense-api/wwwroot/app/app.js`, `src/shared/RadiusClaim.Contracts/ExpenseSubmission.cs`, and `src/workflow-engine/Program.cs`.
+- Verified the most likely failing layer is backend runtime dependency, not a frontend contract mismatch: the hosted `/app` shell can load without Dapr, but `GET /expenses` and `POST /expenses` fail when the `expense-api` Dapr sidecar or `statestore` component is unavailable.
+- Confirmed the browser payload shape is not the primary failure here; posting the current four-field submission reaches the Dapr state call and fails there before workflow startup.
+- Added a low-risk UX/runtime fix: `expense-api` now turns Dapr dependency failures into `503` problem details, and the browser error path now prefers problem-details text over the generic submission fallback.
+- **Decision:** [Daisy: Expense submission failure triage](../decisions/decisions.md) — treat as Dapr/statestore readiness issue, surface truthful 503s with dependency context
+- **Coordination:** Aligned with Warren's standardization of submission error payloads (RFC 7807 problem details + persisted-expense recovery)
+- **Routing:** Any remaining Dapr-aware readiness guidance or local runbook improvements routed to Graham for follow-up
+
+## Learnings
+
+- In this sample, a healthy `/healthz` plus a rendered `/app` shell does **not** prove expense submission is ready. Submission and list/history endpoints depend on the `expense-api` Dapr sidecar and the configured `statestore` component.
+- When users report the exact generic string "The expense could not be submitted." with no validation detail, the first suspect should be backend runtime/dependency failure rather than the `ExpenseSubmission` contract. Key file paths: `src/expense-api/Program.cs`, `src/expense-api/wwwroot/app/app.js`, `src/shared/RadiusClaim.Contracts/ExpenseSubmission.cs`, `src/workflow-engine/Program.cs`.
+- Truthful distributed-demo failure handling should return RFC 7807 problem details for dependency outages and let the browser extract `errors`, `detail`, `title`, or legacy `message` fields before falling back to a generic string.

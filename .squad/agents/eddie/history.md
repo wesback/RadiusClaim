@@ -1050,3 +1050,75 @@ Completed the follow-up requested by Wesley on namespace/secret sequencing.
 
 **Validation by Graham:** `az bicep build` ✅, `dotnet test RadiusClaim.slnx` ✅
 
+
+---
+
+## 2026-03-25T12:15:00Z — Documentation Updates: Namespace Clarity, GHCR Recipe Auth, Happy Path
+
+**Live Facts Confirmed (by platform validation):**
+1. Radius environment `azure` uses namespace `radiusclaim-azure` (environment namespace)
+2. Radius app `radiusclaim` synthesizes workload namespace `radiusclaim-azure-radiusclaim` (app/workload namespace)
+3. These two namespaces serve different purposes and both exist at deployment time
+4. Kubernetes imagePullSecrets belong in the *workload* namespace only (for app image pulls)
+5. GHCR recipe artifact 401 failures happen at Radius recipe download time (not at app image pull time)
+6. Kubernetes imagePullSecrets do NOT fix recipe artifact auth failures
+7. Current supported happy path: recipe artifacts must be public at `ghcr.io/wesback/radiusclaim/recipes/*`
+
+**Updates Made:**
+
+### 1. **docs/end-to-end-setup-walkthrough.md**
+
+**Step 6 (Publish Radius Recipe Artifacts):**
+- Added critical warning block explaining when and why recipe artifact auth fails
+- Explicitly states: GHCR recipe artifact 401s happen during `rad deploy` environment step, NOT during app image pulls
+- Clarified that Kubernetes imagePullSecrets do NOT help with recipe artifacts
+- Renamed section "GHCR Packages Are Private by Default" to "Recipe and App Packages Are Private by Default"
+- Updated Option 1 guidance to emphasize "make all four package groups public" (recipes, expense-api, workflow-engine, notification-svc)
+- Streamlined Option 2 warning and called it "advanced"
+- Marked public packages as "recommended for first deployment" and "the tested, working path"
+
+**Step 8 (Environment Deployment):**
+- Expanded "What this does" explanation to distinguish environment namespace (`radiusclaim-azure`) from workload namespace (`radiusclaim-azure-radiusclaim`)
+- Added note: "Do NOT create imagePullSecrets here — the recipes themselves don't pull container images"
+- Explained both namespaces serve different purposes
+
+**New Step 8a/8b (Understanding Namespaces and Configuring Image Pull Secrets):**
+- Inserted "Understanding Namespace Roles" subsection before pull secret configuration
+- Explicitly clarified: environment namespace != workload namespace
+- Added: "imagePullSecrets belong in the workload namespace"
+- Moved pull secret configuration to **after Step 9 (app deployment)** since the workload namespace doesn't exist until then
+- Updated pull secret script to target workload namespace `radiusclaim-azure-radiusclaim`, not environment namespace
+- Added explanatory text: "After deploying the app, the workload namespace exists..."
+- Clarified this step is optional and only needed for private app packages
+
+### 2. **docs/radius-validation-checklist.md**
+
+**Image Pull Failures Section (Pre-Deployment):**
+- Updated the pull secret troubleshooting section to clarify it applies to *workload* namespace, not environment namespace
+- Changed export from `RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"` (environment) to `WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"` (workload)
+- Explained the distinction explicitly: "when you deploy the app in Step 9..., Radius creates a separate workload namespace"
+
+**New Troubleshooting Section: "Issue: `rad deploy` fails with '401 Unauthorized' during recipe download"**
+- Placed immediately after the Azure credential registration section
+- Explained the critical distinction: recipe artifact pulls ≠ app image pulls
+- Clarified that recipe artifact failures happen at Radius step, before the app workload namespace exists
+- Provided two solutions:
+  1. **Option 1 (recommended):** Make `radiusclaim/recipes` public in GHCR
+  2. **Option 2 (advanced):** Configure explicit Radius OCI auth with `rad credential register oci`
+- Added note: "Kubernetes imagePullSecrets apply only to app container image pulls, not recipe artifact pulls"
+
+**Key Changes (Philosophy):**
+- **From:** Implicit defaults and assumed understanding
+- **To:** Explicit namespace names, clear role distinction, and documented happy path
+- **Tone:** Operator-friendly troubleshooting with recipe-artifact-specific guidance
+
+**Files Updated:**
+- docs/end-to-end-setup-walkthrough.md (Steps 6, 8, 8a–8b, and Step 9)
+- docs/radius-validation-checklist.md (pull secret section and new 401 troubleshooting)
+
+**Signal to First-Time Users:**
+- Public packages = supported happy path
+- Private packages = requires recipe OCI auth (advanced)
+- imagePullSecrets = for app images in workload namespace only
+- Environment and workload namespaces are separate and serve different purposes
+
