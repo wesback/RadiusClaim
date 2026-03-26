@@ -412,7 +412,10 @@ If you're using GitHub Container Registry (GHCR) to publish recipes, you need a 
 export GITHUB_USERNAME="your-github-username"
 export GHCR_TOKEN="ghp_your_token_here"
 
-# Verify it works
+# Option 1: Let publish script authenticate automatically
+# (The script will detect GHCR_TOKEN and GITHUB_USERNAME and perform docker login)
+
+# Option 2: Authenticate manually first, then run the script
 echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_USERNAME" --password-stdin
 ```
 
@@ -427,20 +430,23 @@ echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_USERNAME" --passwo
 ### If Using GitHub Container Registry (GHCR)
 
 ```bash
-# Log in to GHCR
+# Set authentication credentials
 # Use the PAT created in the "Create a GitHub Personal Access Token" section above
 export GITHUB_USERNAME="your-github-username"
 export GHCR_TOKEN="ghp_xxxxxxxxxxxx"  # Your personal access token
 
-echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_USERNAME" --password-stdin
-
+# Option 1: The publish script will use GHCR_TOKEN/GITHUB_USERNAME automatically
 # Clone or navigate to the RadiusClaim repository
 cd /path/to/RadiusClaim
 
-# Publish the recipes
+# Publish the recipes (script auto-authenticates with GHCR_TOKEN)
 export RECIPE_REGISTRY="ghcr.io/$GITHUB_USERNAME/radiusclaim/recipes"
 export RECIPE_TAG="latest"
 
+./scripts/publish-radius-recipes.sh "$RECIPE_REGISTRY" "$RECIPE_TAG"
+
+# Option 2: Pre-authenticate with docker login, then publish
+echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_USERNAME" --password-stdin
 ./scripts/publish-radius-recipes.sh "$RECIPE_REGISTRY" "$RECIPE_TAG"
 
 # Verify publication (you should see recipe images in GHCR)
@@ -1068,10 +1074,15 @@ kubectl rollout restart deployment/controller -n radius-system
 
 **Solution:**
 ```bash
-# Verify GHCR login
-docker login ghcr.io --username "$GITHUB_USERNAME"
+# Set credentials (if not already set)
+export GITHUB_USERNAME="your-github-username"
+export GHCR_TOKEN="ghp_xxxxxxxxxxxx"
 
-# Manually publish recipes
+# Option 1: Use environment variables (publish script auto-authenticates)
+./scripts/publish-radius-recipes.sh "$RECIPE_REGISTRY" "$RECIPE_TAG"
+
+# Option 2: Pre-authenticate, then publish
+echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_USERNAME" --password-stdin
 ./scripts/publish-radius-recipes.sh "$RECIPE_REGISTRY" "$RECIPE_TAG"
 
 # Verify images exist in GHCR

@@ -187,7 +187,13 @@ docker push ghcr.io/<your-org>/radiusclaim/notification-svc:local
 Publish the custom recipe Bicep files before deploying the Radius environment:
 
 ```bash
-docker login ghcr.io
+# Set GHCR credentials (publish script will auto-authenticate)
+export GHCR_TOKEN="ghp_your_token_here"
+export GITHUB_USERNAME="your-github-username"
+
+# Or pre-authenticate manually
+# docker login ghcr.io
+
 ./scripts/publish-radius-recipes.sh ghcr.io/<your-org>/radiusclaim/recipes <your-tag>
 ```
 
@@ -292,7 +298,13 @@ If your tenant blocks directory reads for the current operator identity, set `AZ
 ### Step 3: Publish Radius Recipe Artifacts
 
 ```bash
-docker login ghcr.io
+# Set GHCR credentials (publish script will auto-authenticate)
+export GHCR_TOKEN="ghp_your_token_here"
+export GITHUB_USERNAME="your-github-username"
+
+# Or pre-authenticate manually
+# docker login ghcr.io
+
 ./scripts/publish-radius-recipes.sh ghcr.io/<your-org>/radiusclaim/recipes <your-tag>
 ```
 

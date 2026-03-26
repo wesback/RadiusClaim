@@ -146,6 +146,9 @@ jobs:
           ./rad --version
 
       - name: Publish Radius recipe artifacts to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USERNAME: ${{ github.actor }}
         run: |
           RAD_BIN=./rad ./scripts/publish-radius-recipes.sh "$GHCR_PREFIX/recipes" "$IMAGE_TAG"
 

@@ -148,14 +148,54 @@ See the `deploy-dapr-components.sh` prerequisites section for more detail on sup
 
 **Example:**
 ```bash
+# For GHCR with explicit auth (either variable name works)
+export GHCR_TOKEN="your_github_pat_with_write_packages_scope"
+export GHCR_USERNAME="your-github-username"  # or GITHUB_USERNAME
+
+# If already authenticated via docker login
 docker login ghcr.io
-./scripts/publish-radius-recipes.sh ghcr.io/<your-org>/radiusclaim/recipes local
+./scripts/publish-radius-recipes.sh ghcr.io/your-username/radiusclaim/recipes local
 ```
+
+**Authentication:**
+
+For **ghcr.io** registries, the script supports three authentication modes:
+
+1. **Environment variables** (recommended for automation):
+   ```bash
+   export GHCR_TOKEN="ghp_..."  # GitHub PAT with 'write:packages' scope
+   export GHCR_USERNAME="your-github-username"  # or use GITHUB_USERNAME
+   ```
+   Username fallback order: `GHCR_USERNAME` → `GITHUB_USERNAME` → `GITHUB_ACTOR` → `git config user.name`
+
+2. **Pre-authenticated docker** (manual workflow):
+   ```bash
+   echo "$TOKEN" | docker login ghcr.io --username YOUR_USERNAME --password-stdin
+   # Then run publish script
+   ```
+
+3. **Interactive docker login**:
+   ```bash
+   docker login ghcr.io  # Prompts for credentials
+   ```
+
+For **non-GHCR registries**, set:
+```bash
+export REGISTRY_USERNAME="..."
+export REGISTRY_PASSWORD="..."
+```
+
+**Error Handling:**
+
+If publishing fails with a 403 error, the script provides actionable diagnostics:
+- Missing or invalid authentication
+- Insufficient token permissions (needs 'write:packages')
+- Namespace mismatch (package path doesn't match your GitHub username/org)
 
 **Why it exists:**
 - Radius recipe `templatePath` values must resolve to OCI-backed artifacts, not local relative files
 - The script keeps the three custom recipes (`state-store`, `pubsub`, `secrets`) published under one teachable command
-- GitHub Actions reuses the same script before deploying `infra/radius/environments/azure-radius.bicep`
+- GitHub Actions reuses the same script with `GHCR_TOKEN` and `GHCR_USERNAME` from workflow secrets
 
 ### `deploy-dapr-components.sh`
 

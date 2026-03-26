@@ -161,7 +161,7 @@ echo ""
 
 echo "→ Validating Azure access required for backfill..."
 STORAGE_ACCOUNT_ID=$(az storage account show \
-  --account-name "$STORAGE_ACCOUNT" \
+  --name "$STORAGE_ACCOUNT" \
   --resource-group "$RESOURCE_GROUP" \
   --query id \
   -o tsv 2>/dev/null || echo "")
