@@ -91,6 +91,9 @@ Required Azure auth env vars when bootstrap must register Radius credentials:
   Workload identity mode: AZURE_CLIENT_ID, AZURE_TENANT_ID
 Optional override for data-plane RBAC:
   AZURE_PRINCIPAL_ID (Microsoft Entra object ID for the client ID above)
+Optional GHCR pull secret (required for private GHCR images on AKS):
+  GHCR_USERNAME  GitHub username for the pull secret (e.g. wesback)
+  GHCR_TOKEN     GitHub PAT with read:packages scope
 
 Behavior note:
   For Azure-backed platform-secrets, bootstrap preflights the deterministic Key Vault
@@ -666,6 +669,11 @@ if [ "$RESOURCE_GROUP_EXISTS" != "true" ]; then
   fi
 fi
 
+AZURE_PRINCIPAL_ID_FOR_RBAC="$(resolve_azure_principal_id)"
+if [ -n "$AZURE_PRINCIPAL_ID_FOR_RBAC" ]; then
+  ensure_radius_recipe_rbac "$AZURE_SUBSCRIPTION_ID" "$RESOURCE_GROUP" "$AZURE_PRINCIPAL_ID_FOR_RBAC"
+fi
+
 if radius_azure_credential_registered; then
   AZURE_CREDENTIAL_REGISTERED=true
 else
@@ -817,6 +825,25 @@ if [ "$SKIP_APP_DEPLOY" = false ] && [ "$SKIP_IMAGE_PUSH" = false ]; then
 fi
 
 if [ "$SKIP_APP_DEPLOY" = false ]; then
+  section "Ensuring GHCR image pull secret"
+  wait_for_namespace "$WORKLOAD_NAMESPACE"
+  if kubectl get secret ghcr-pull-secret -n "$WORKLOAD_NAMESPACE" >/dev/null 2>&1; then
+    echo "  ✓ ghcr-pull-secret already exists in $WORKLOAD_NAMESPACE"
+  elif [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USERNAME:-}" ]; then
+    run_cmd kubectl create secret docker-registry ghcr-pull-secret \
+      --docker-server=ghcr.io \
+      --docker-username="${GHCR_USERNAME}" \
+      --docker-password="${GHCR_TOKEN}" \
+      -n "$WORKLOAD_NAMESPACE"
+    echo "  ✓ ghcr-pull-secret created in $WORKLOAD_NAMESPACE"
+  else
+    echo "  ⚠ ghcr-pull-secret not found and GHCR_USERNAME/GHCR_TOKEN not set."
+    echo "    Private GHCR images may fail to pull. Set GHCR_USERNAME and GHCR_TOKEN and re-run, or create the secret manually:"
+    echo "    kubectl create secret docker-registry ghcr-pull-secret --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT> -n $WORKLOAD_NAMESPACE"
+  fi
+fi
+
+if [ "$SKIP_APP_DEPLOY" = false ]; then
   section "Deploying Radius application"
   APP_DEPLOY_ARGS=(
     deploy
@@ -825,6 +852,8 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
     --parameters "containerRegistry=${CONTAINER_REGISTRY}"
     --parameters "imageTag=${IMAGE_TAG}"
     --parameters "deploymentTarget=${DEPLOYMENT_TARGET}"
+    --parameters "useWorkloadIdentity=true"
+    --parameters "ghcrImagePullRef=ghcr-pull-secret"
   )
   run_cmd "$RAD_BIN" "${APP_DEPLOY_ARGS[@]}"
 fi

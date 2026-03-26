@@ -212,3 +212,49 @@ ensure_radius_workspace_context() {
   run_cmd "$RAD_BIN" group switch "$group_name" -w "$workspace_name"
   log_success "Radius workspace '${workspace_name}' and group '${group_name}' are selected"
 }
+
+ensure_radius_recipe_rbac() {
+  local subscription_id="${1:-$AZURE_SUBSCRIPTION_ID}"
+  local resource_group="$2"
+  local sp_object_id="${3:-}"
+  
+  [ -n "$subscription_id" ] || fail "Azure subscription ID is required for RBAC setup."
+  [ -n "$resource_group" ] || fail "Resource group is required for RBAC setup."
+  
+  if [ -z "$sp_object_id" ]; then
+    log_info "Skipping Radius recipe RBAC setup: service principal object ID not provided."
+    log_info "Radius recipes that assign roles will require User Access Administrator or Owner on '${resource_group}'."
+    return 0
+  fi
+  
+  local scope="/subscriptions/${subscription_id}/resourceGroups/${resource_group}"
+  local has_uaa=false
+  local has_owner=false
+  
+  local assignments
+  assignments="$(az role assignment list --assignee "$sp_object_id" --scope "$scope" --query "[].{role:roleDefinitionName}" -o tsv 2>/dev/null || echo "")"
+  
+  if printf '%s\n' "$assignments" | grep -iqx "User Access Administrator"; then
+    has_uaa=true
+  fi
+  
+  if printf '%s\n' "$assignments" | grep -iqx "Owner"; then
+    has_owner=true
+  fi
+  
+  if [ "$has_uaa" = true ] || [ "$has_owner" = true ]; then
+    log_success "Service principal has role assignment permissions on '${resource_group}' (User Access Administrator or Owner detected)"
+    return 0
+  fi
+  
+  log_info "Granting User Access Administrator role to service principal on '${resource_group}'"
+  log_info "This allows Radius recipes to assign data-plane roles (e.g., Storage Blob Data Contributor)."
+  
+  run_cmd az role assignment create \
+    --assignee "$sp_object_id" \
+    --role "User Access Administrator" \
+    --scope "$scope" \
+    --output none
+  
+  log_success "User Access Administrator role granted on '${resource_group}'"
+}

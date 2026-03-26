@@ -116,6 +116,11 @@ Run `./scripts/bootstrap.sh --resource-group <name>` to deploy the RadiusClaim a
   - `AZURE_TENANT_ID` — Azure tenant ID
   - `AZURE_PRINCIPAL_ID` — Principal object ID (auto-resolved from service principal if not set; see *Principal ID Resolution* below)
   - `AZURE_CLIENT_SECRET` — Only required when using service principal auth (not workload identity)
+- **RBAC Permissions:** The authenticated identity needs:
+  - **Contributor** role on the resource group (for creating resources)
+  - **User Access Administrator** role on the resource group (for assigning data-plane roles in recipes)
+  
+  Bootstrap automatically grants **User Access Administrator** when `AZURE_PRINCIPAL_ID` is available. If you're using a service principal that already has these roles, no manual action is needed.
 
 **Principal ID Resolution:**
 

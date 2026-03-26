@@ -32,6 +32,7 @@ RadiusClaim is designed to deploy via **two scripts** that handle the full workf
   --yes
 
 # Step 2: Deploy the app (repeatable for updates)
+# Requires Azure credentials — see "Environment Variables" in the Quick Start below
 ./scripts/bootstrap.sh \
   --resource-group radiusclaim-rg \
   --yes
@@ -110,9 +111,49 @@ Run this once to create or verify your AKS cluster and install Dapr + Radius:
 - If reusing an **existing AKS cluster**, omit `--create-aks`
 - If using **Arc-enabled or self-managed Kubernetes**, omit the AKS flags and ensure `kubectl` points to your cluster (or use `--kube-context`)
 
+### Set Azure Credentials (Required for Step 2)
+
+Bootstrap needs Azure credentials to wire up backing services and RBAC. Set these before running Step 2:
+
+**Service Principal Auth (most common):**
+```bash
+export AZURE_CLIENT_ID="<service-principal-app-id>"
+export AZURE_CLIENT_SECRET="<service-principal-client-secret>"
+export AZURE_TENANT_ID="<your-azure-tenant-id>"
+
+# Optional: Let bootstrap auto-resolve this from AZURE_CLIENT_ID
+# Or set explicitly if auto-resolution fails:
+export AZURE_PRINCIPAL_ID="<service-principal-object-id>"
+```
+
+<details>
+<summary>Other auth modes (workload identity, user identity)</summary>
+
+**Workload Identity (Federated Credentials):**
+```bash
+export AZURE_CLIENT_ID="<managed-identity-client-id>"
+export AZURE_TENANT_ID="<your-azure-tenant-id>"
+
+# Workload identity mode: no client secret needed
+./scripts/bootstrap.sh \
+  --resource-group radiusclaim-rg \
+  --azure-auth-mode wi \
+  --yes
+```
+
+**User Identity (az login):**
+```bash
+# If using 'az login' with your user account:
+export AZURE_PRINCIPAL_ID="$(az ad signed-in-user show --query id -o tsv)"
+```
+
+</details>
+
+> **Note:** For state-store and pub/sub RBAC, bootstrap needs the principal's **object ID** (not just client ID). It tries to auto-resolve from the client ID; if that fails, set `AZURE_PRINCIPAL_ID` explicitly.
+
 ### Step 2: Deploy the Application
 
-After cluster prep completes, deploy RadiusClaim. Run this once per deployment:
+After cluster prep completes and credentials are set, deploy RadiusClaim:
 
 ```bash
 ./scripts/bootstrap.sh \
@@ -134,51 +175,6 @@ After cluster prep completes, deploy RadiusClaim. Run this once per deployment:
 ```bash
 ./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
 ```
-
----
-
-## Environment Variables (Required for Bootstrap)
-
-When `bootstrap.sh` deploys the Radius environment and Dapr components, it needs Azure credentials to wire up backing services and RBAC. Set these before running bootstrap:
-
-### For Service Principal Auth (Recommended)
-
-```bash
-# Azure CLI will prompt for these; also supported via environment variables
-export AZURE_CLIENT_ID="<service-principal-app-id>"
-export AZURE_CLIENT_SECRET="<service-principal-client-secret>"
-export AZURE_TENANT_ID="<your-azure-tenant-id>"
-
-# Optional: Let bootstrap auto-resolve this from AZURE_CLIENT_ID
-# Or set explicitly if auto-resolution fails:
-export AZURE_PRINCIPAL_ID="<service-principal-object-id>"
-
-./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
-```
-
-### For Workload Identity (Federated Credentials)
-
-```bash
-export AZURE_CLIENT_ID="<managed-identity-client-id>"
-export AZURE_TENANT_ID="<your-azure-tenant-id>"
-
-# Workload identity mode: no client secret needed
-./scripts/bootstrap.sh \
-  --resource-group radiusclaim-rg \
-  --azure-auth-mode wi \
-  --yes
-```
-
-### For User Identity (az login)
-
-```bash
-# If using 'az login' with your user account:
-export AZURE_PRINCIPAL_ID="$(az ad signed-in-user show --query id -o tsv)"
-
-./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
-```
-
-> **Note:** For state-store and pub/sub RBAC, bootstrap needs to know the principal's **object ID** (not just client ID). It tries to auto-resolve from the client ID; if that fails, use `AZURE_PRINCIPAL_ID` to set it explicitly.
 
 ---
 
@@ -217,6 +213,8 @@ GitHub Actions handles the same steps as the scripts: cluster prep (if needed), 
 ---
 
 ## Opening the Web UI
+
+Whether you deployed via scripts or GitHub Actions, the result is the same: RadiusClaim is running and accessible.
 
 After `bootstrap.sh` completes successfully, it prints the public URL to the console:
 
@@ -1395,6 +1393,46 @@ Once the app is open in your browser:
 - **See the environment definition:** `infra/radius/environments/azure-radius.bicep`
 - **See the Azure recipes:** `infra/radius/recipes/azure/`
 - **See the service code:** `src/`
+
+---
+
+## Teardown
+
+When you are done with the RadiusClaim deployment and want to clean up all resources,
+use [`scripts/teardown.sh`](../scripts/teardown.sh). The script removes Radius objects,
+Kubernetes namespaces, and Azure resources in the correct dependency order and is safe
+to run multiple times (idempotent).
+
+**Quick start:**
+
+```bash
+# Preview what will be deleted (no changes made)
+./scripts/teardown.sh --dry-run
+
+# Tear down, keeping the resource group shell and service principals
+./scripts/teardown.sh --resource-group radiusclaim-rg --yes
+
+# Full teardown including the Azure resource group
+./scripts/teardown.sh --resource-group radiusclaim-rg --include-resource-group --yes
+
+# Also remove service principal app registrations
+./scripts/teardown.sh --include-resource-group --include-service-principals --yes
+```
+
+**Key flags:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--resource-group <name>` | `radiusclaim-rg` | Azure resource group to clean |
+| `--kube-context <ctx>` | current context | Kubernetes context for kubectl/rad |
+| `--include-resource-group` | off | Delete the entire resource group (not just its contents) |
+| `--include-service-principals` | off | Delete `radiusclaim-radius-sp` and `radiusclaim-github-actions` app registrations |
+| `--include-ghcr-artifacts` | off | Delete GHCR recipe and container images (requires `gh` CLI) |
+| `--dry-run` | off | Print the plan without executing |
+| `--yes` | off | Skip confirmation prompts |
+
+⚠️ **Service principals are shared resources.** Only pass `--include-service-principals` if
+you are certain no other environment or CI pipeline depends on them.
 
 ---
 

@@ -1497,3 +1497,22 @@ This is **critical** because previously, env var setup was buried in Steps 6–8
 - `README.md` — Already points to script-first pattern
 - `docs/radius-validation-checklist.md` — Companion to walkthrough; stable
 
+
+## Walkthrough Ordering Validation (2026-03-26)
+
+### Findings
+
+**Critical fix applied:** Environment Variables section was positioned AFTER Quick Start Step 2. A reader following the Quick Start would copy-paste the `bootstrap.sh` command and fail because Azure credentials weren't set. Moved credentials into Quick Start flow between Step 1 (prepare-cluster) and Step 2 (deploy), with secondary auth modes collapsed in a `<details>` block to keep the primary path fast.
+
+**Minor fixes applied:**
+- Added env-var comment in Overview code block so the glance view signals the dependency
+- Added bridge sentence before "Opening the Web UI" connecting both script and CI/CD paths
+
+**Validated as correct (no changes needed):**
+- Teardown placement: after Next Steps, before Reference — natural end-of-lifecycle position
+- Manual Walkthrough placement: correctly gated with "optional" disclaimer after all action sections
+- Section flow from Overview → Prerequisites → Quick Start → Understanding Scripts → CI/CD → Web UI → Deep Dive → Troubleshooting → Next Steps → Teardown → Reference is logical
+- Reference vs. action separation is clean throughout
+
+### Learning
+- Environment variables are a prerequisite for action, not a reference section. They must appear in the reader's path before the command that needs them, not after it. When Quick Start is the primary path, prerequisites that are specific to a step belong inline with that step.

@@ -21,6 +21,12 @@ param publicGatewayPrefix string = 'expense'
 @description('Optional fully qualified hostname for the public expense-api gateway. Leave empty to let Radius generate a hostname.')
 param publicGatewayHostname string = ''
 
+@description('Set to "true" when deploying to AKS with Azure Workload Identity enabled. Adds azure.workload.identity/use=true to all pod specs so the AKS webhook injects the projected service account token.')
+param useWorkloadIdentity string = 'false'
+
+@description('Name of the imagePullSecret in the workload namespace for pulling GHCR private images. Leave empty to skip imagePullSecrets injection.')
+param ghcrImagePullRef string = ''
+
 @description('Logical Dapr recipe selections. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets.')
 param daprBackings object = {
   stateStore: {
@@ -45,6 +51,8 @@ var secretVaultName = 'ce-${take(uniqueString(applicationName, environment, 'pla
 var stateStoreBacking = daprBackings.stateStore
 var pubsubBacking = daprBackings.pubsub
 var secretStoreBacking = daprBackings.secretStore
+var workloadIdentityPodLabels = useWorkloadIdentity == 'true' ? { 'azure.workload.identity/use': 'true' } : {}
+var pullSecrets = empty(ghcrImagePullRef) ? [] : [{ name: ghcrImagePullRef }]
 var publicGatewayHost = empty(publicGatewayHostname)
   ? {
       prefix: publicGatewayPrefix
@@ -138,6 +146,8 @@ module expenseApi './modules/container-service.bicep' = {
         source: platformSecretStore.id
       }
     }
+    podLabels: workloadIdentityPodLabels
+    imagePullSecrets: pullSecrets
   }
 }
 
@@ -167,6 +177,8 @@ module workflowEngine './modules/container-service.bicep' = {
         source: platformSecretStore.id
       }
     }
+    podLabels: workloadIdentityPodLabels
+    imagePullSecrets: pullSecrets
   }
 }
 
@@ -193,6 +205,8 @@ module notificationService './modules/container-service.bicep' = {
         source: platformSecretStore.id
       }
     }
+    podLabels: workloadIdentityPodLabels
+    imagePullSecrets: pullSecrets
   }
 }
 

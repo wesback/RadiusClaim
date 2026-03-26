@@ -1704,3 +1704,50 @@ Graham's GHCR recipe publish auth note was also merged and consolidated with Kar
 - `.squad/decisions.md` — added statestore diagnosis
 - `.squad/decisions.md` — consolidated GHCR auth + validation
 - `.squad/decisions/inbox/` — cleared
+
+---
+
+## 2026-03-26 | Radius Recipe RBAC Issue - Resolved
+
+### Problem
+Statestore recipe deployment was failing with `AuthorizationFailed` error:
+```
+"code": "AuthorizationFailed",
+"message": "The client 'a40c1c0c-b97d-48ca-8ea7-8a5e87d91af5' does not have 
+authorization to perform action 'Microsoft.Authorization/roleAssignments/write'"
+```
+
+### Root Cause
+The `radiusclaim-github-actions` service principal (object ID `0db8a2ff-dab2-44cf-b7b8-1df3c944cf66`) only had **Contributor** role on `radiusclaim-rg`. The statestore recipe (`infra/radius/recipes/azure/state-store.bicep`) creates a Storage Account and assigns `Storage Blob Data Contributor` role to the workload identity. This role assignment requires `Microsoft.Authorization/roleAssignments/write` permission, which needs **User Access Administrator** or **Owner** role.
+
+### Solution
+1. **Immediate fix:** Granted **User Access Administrator** role to the SP scoped to the resource group:
+   ```bash
+   az role assignment create \
+     --assignee 0db8a2ff-dab2-44cf-b7b8-1df3c944cf66 \
+     --role "User Access Administrator" \
+     --scope /subscriptions/5b6c36e5-b279-4005-8bf1-c73b1c2b71c2/resourceGroups/radiusclaim-rg
+   ```
+
+2. **Permanent fix:** 
+   - Added `ensure_radius_recipe_rbac()` function to `scripts/lib/platform-common.sh`
+   - Integrated into `scripts/bootstrap.sh` after resource group setup
+   - Function checks existing roles and grants **User Access Administrator** if missing
+   - Documented RBAC prerequisites in `scripts/README.md`
+
+3. **Verification:** Re-ran bootstrap — statestore recipe deployment succeeded, role assignment returned `"code": "RoleAssignmentExists"` (idempotent success).
+
+### Why User Access Administrator?
+**Least privilege principle:** This role grants only role assignment permissions, not full resource control. **Owner** would be excessive for recipe RBAC needs.
+
+### Pattern Learned
+**Radius recipes that assign Azure roles require the deploying identity to have User Access Administrator or Owner role** on the target scope. This is now automated in bootstrap.
+
+### Files Updated
+- `scripts/lib/platform-common.sh` — added `ensure_radius_recipe_rbac()`
+- `scripts/bootstrap.sh` — added RBAC check after resource group setup
+- `scripts/README.md` — documented RBAC prerequisites
+- `.squad/decisions/inbox/graham-statestore-rbac.md` — decision record
+
+### Related
+- Skill to extract: `.squad/skills/radius-recipe-rbac/SKILL.md` (reusable pattern)
