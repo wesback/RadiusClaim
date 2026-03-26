@@ -164,6 +164,9 @@ Trailer includes Copilot co-author metadata per project convention.
 
 - Closing the Radius CI gap worked best by reusing the shared flow-validation script and collecting runtime-specific evidence separately: `kubectl port-forward`/`kubectl logs` for Radius, runtime-native commands for other targets.
 - When a validation script also emits a small machine-readable artifact (expense IDs, correlation IDs, summary counts), CI can prove downstream pub/sub evidence without duplicating the flow logic.
+- Live Radius statestore failures on this repo now have a repeatable shape: `rad env show` can show the Azure recipe inputs were rendered, but `rad resource show Applications.Dapr/stateStores statestore -a radiusclaim`, `az storage account show`, and `az role assignment list` reveal the real blocker when `Storage Blob Data Contributor` is missing on the Blob account.
+- When `kubectl get components.dapr.io -A` is empty after a Radius deploy, treat the Dapr projection gap as a follow-on symptom; fix the statestore authorization first, then rerun `scripts/deploy-dapr-components.sh` to backfill `statestore`, `pubsub`, and `platform-secrets` into `azure-radiusclaim`.
+- Key files for this pattern: `infra/radius/environments/azure-radius.bicep`, `infra/radius/recipes/azure/state-store.bicep`, `scripts/deploy-dapr-components.sh`, and `docs/radius-validation-checklist.md`.
 
 ## .gitignore Housekeeping (2026-03-24)
 
@@ -1565,3 +1568,139 @@ Daisy completed a deep investigation into ArgoCD fit for RadiusClaim and conclud
 **Decision recorded:** `.squad/decisions.md` (2026-03-26: ArgoCD Fit for RadiusClaim)
 
 **For future:** If a multi-environment promotion sample (dev → staging → prod) is created, ArgoCD can be evaluated in that context. Not retrofitting into RadiusClaim keeps the sample's focus sharp.
+
+## 2026-03-26: GHCR Recipe Publish Auth Fix
+
+**Task:** Fix GHCR 403 errors during Radius recipe publication by adding explicit credential support and improving error messages.  
+**Outcome:** Completed successfully; `publish-radius-recipes.sh` now supports explicit GHCR auth, works in GitHub Actions, and provides actionable diagnostics when auth is missing.
+
+### Problem
+- `rad bicep publish` uses Docker's credential store for OCI registry auth
+- GitHub Actions workflow did `docker login` for service images but relied on ambient auth for recipe publishing
+- Operators running the script manually would hit 403 Forbidden errors without clear guidance
+- No explicit GHCR credential flow in the publish script
+
+### Solution
+Enhanced `scripts/publish-radius-recipes.sh` with:
+
+1. **Explicit GHCR auth support:**
+   - Detects `GHCR_TOKEN` + `GHCR_USERNAME` env vars
+   - Auto-authenticates to ghcr.io when credentials present
+   - Falls back to existing docker credential store when already authenticated
+   - Warns operators when neither available (but lets publish proceed to fail clearly)
+
+2. **Generic registry support:**
+   - Added `REGISTRY_USERNAME` + `REGISTRY_PASSWORD` for non-GHCR registries
+   - Performs docker login when credentials present
+
+3. **Improved error messages:**
+   - Detects publish failures and provides context-specific guidance
+   - GHCR 403 errors get detailed troubleshooting (token scope, namespace ownership, visibility)
+   - Non-GHCR errors get generic auth guidance
+   - Better preflight messages about docker and rad CLI requirements
+
+4. **GitHub Actions integration:**
+   - Updated `.github/workflows/deploy-azure.yml` to pass `GHCR_TOKEN` and `GHCR_USERNAME` explicitly
+   - Workflow already did `docker login`, now defense-in-depth approach
+
+### Files Changed
+- `scripts/publish-radius-recipes.sh` — Added GHCR/generic registry auth, improved error handling
+- `.github/workflows/deploy-azure.yml` — Pass GHCR credentials to publish step
+- `scripts/README.md` — Document new auth modes and error handling
+- `docs/end-to-end-setup-walkthrough.md` — Update examples to show credential options
+- `docs/radius-validation-checklist.md` — Update recipe publish instructions
+
+### Key Patterns
+- **Defense in depth:** Workflow does docker login AND passes env vars (redundant but safe)
+- **Auto-detection hierarchy:** GHCR_TOKEN → existing docker auth → warning + proceed
+- **Fail clearly:** If publish fails, provide specific 403 troubleshooting for GHCR
+- **Username auto-resolution:** Falls back to GITHUB_ACTOR or git config user.name when GHCR_USERNAME not set
+- **Keep manual path teachable:** Operators can set env vars OR docker login manually
+
+### Validation
+- ✅ Bash syntax check passed
+- ✅ GitHub Actions workflow remains compatible
+- ✅ Both env-var and pre-auth docker login paths work
+- ✅ Error messages tested with various failure modes
+- ✅ Documentation aligned across README, walkthrough, and checklist
+
+**Architecture Decision:** Avoid embedding credentials in scripts; rely on environment variables or Docker credential store. Keep publish script focused on OCI interaction, let operators choose their auth mode.
+
+**Status:** Complete and ready for use
+
+---
+
+### Compatibility Pass: GHCR_USERNAME / GITHUB_USERNAME Alias Support
+
+**Issue:** Docs used `GITHUB_USERNAME` while workflow used `GHCR_USERNAME`, creating potential confusion.
+
+**Fix:** Updated `scripts/publish-radius-recipes.sh` to accept both variable names with priority fallback:
+1. `GHCR_USERNAME` (preferred, matches GHCR_TOKEN naming)
+2. `GITHUB_USERNAME` (accepted for compatibility with existing docs)
+3. `GITHUB_ACTOR` (GitHub Actions default)
+4. `git config user.name` (local git config fallback)
+
+**Result:**
+- Workflow continues using `GHCR_USERNAME=${{ github.actor }}` (no changes needed)
+- Docs showing `export GITHUB_USERNAME=...` work without modification
+- Both patterns are now explicitly documented as supported aliases
+- No breaking changes to any existing usage
+
+**Files Changed:**
+- `scripts/publish-radius-recipes.sh` — Username fallback chain, header documentation
+- `scripts/README.md` — Document alias support and fallback order
+
+**Validation:**
+- ✅ Bash syntax check passed
+- ✅ Fallback chain logic tested (all 4 priority levels)
+- ✅ Docs remain compatible without changes
+- ✅ Workflow remains compatible without changes
+
+
+---
+
+## 2026-03-26 | Namespace Drift Explanation for Wesley
+
+### Question
+Wesley asked about namespace name drift — why the name changed and whether it was intentional.
+
+### Answer
+**No drift. The namespace name never changed.**
+
+The **environment namespace** has always been `radiusclaim-azure` (set in `infra/radius/environments/azure-radius.bicep` line 7).
+
+The **workload namespace** is `radiusclaim-azure-radiusclaim` — computed by Radius as `environment-namespace + "-" + applicationName`. This is Radius convention, not a drift.
+
+### What Happened Earlier
+On 2026-03-25, there was a **deployment failure** where Radius attempted to change the namespace from `radiusclaim-azure-radiusclaim` to `radiusclaim-azure-radiusclaim-radiusclaim`. This was **Radius internal state drift**, not a naming change.
+
+**Root cause:** Variable reuse in docs led operators to reassign `RADIUS_KUBERNETES_NAMESPACE` from the environment namespace to the workload namespace, confusing Radius about which namespace was which.
+
+**Fix (by Eddie):** Docs now use separate variables:
+- `RADIUS_KUBERNETES_NAMESPACE` = `radiusclaim-azure` (environment)
+- `WORKLOAD_NAMESPACE` = `radiusclaim-azure-radiusclaim` (workload)
+
+### Source of Truth
+1. **Environment namespace:** `infra/radius/environments/azure-radius.bicep` line 7 → `radiusclaim-azure`
+2. **Workload namespace:** Computed by Radius → `radiusclaim-azure-radiusclaim`
+3. All docs and component manifests correctly reference these namespaces.
+
+### No Stale Documentation
+All files are consistent:
+- `infra/kubernetes/dapr-components.yaml` → `namespace: radiusclaim-azure-radiusclaim` ✅
+- `docs/end-to-end-setup-walkthrough.md` → distinguishes both namespaces ✅
+- `docs/radius-validation-checklist.md` → uses correct workload namespace ✅
+## 2026-03-26: Cross-Agent Note — Statestore Failure Root Cause and GHCR Auth Fix
+
+**From:** Scribe (consolidating Graham inbox work)
+**Date:** 2026-03-26
+**Impact:** ✅ DIAGNOSED / IMPLEMENTED
+
+Graham's inbox work was merged into the shared registry. The live Radius deployment failed at `Applications.Dapr/stateStores/statestore` with `RecipeDeploymentFailed` because the Blob account is missing `Storage Blob Data Contributor` for the configured Dapr principal. The registry now recommends granting Blob data-plane RBAC and rerunning the Dapr component backfill.
+
+Graham's GHCR recipe publish auth note was also merged and consolidated with Karen's validation. The shared registry now records explicit GHCR credential support, explicit workflow credential passing, and the approval to merge the fix.
+
+**Files/Decisions Updated:**
+- `.squad/decisions.md` — added statestore diagnosis
+- `.squad/decisions.md` — consolidated GHCR auth + validation
+- `.squad/decisions/inbox/` — cleared

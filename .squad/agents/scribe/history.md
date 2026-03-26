@@ -99,3 +99,15 @@
 **Agents Updated:** Eddie history appended with namespace discovery learning. Scribe history (this file) documents full orchestration cycle.
 
 **Outcome:** Inbox merged, orchestration/session logs documented, team decision registry current. Namespace guidance decision fully integrated into project memory.
+## 2026-03-26: Orchestration & Decision Merge — Statestore Diagnosis
+
+**Work:** Logged Graham's live statestore diagnosis, created the orchestration and session records, merged three inbox decisions into `.squad/decisions.md`, and cleared the inbox.
+
+**Files Written:**
+- `.squad/orchestration-log/2026-03-26T13-57-17Z-graham.md`
+- `.squad/log/2026-03-26T13-57-17Z-radius-statestore-diagnosis.md`
+- Updated `.squad/decisions.md` — added statestore diagnosis and consolidated GHCR auth/validation
+
+**Inbox Purged:** `graham-ghcr-recipe-auth.md`, `graham-statestore-diagnosis.md`, `karen-ghcr-publish-validation.md`
+
+**Outcome:** Scribe records updated; team decision registry current.

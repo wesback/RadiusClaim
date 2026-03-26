@@ -41,6 +41,20 @@
 
 **Consequence:** Phase 7 end-to-end validation is blocked until Graham delivers Entra auth pivot.
 
+### 2026-03-26: Decision — Live Statestore Failure Root Cause
+**By:** Graham (Platform Dev)
+**Date:** 2026-03-26
+**Status:** DIAGNOSED
+**What:** The latest Radius deploy failed on `Applications.Dapr/stateStores/statestore` with `RecipeDeploymentFailed`. The Blob account keeps shared keys disabled and the configured Dapr principal is missing `Storage Blob Data Contributor` on the storage account.
+**Why:** Live Radius logs and cluster inspection show this is a Blob data-plane RBAC gap, not a component projection bug. Grant the Blob role to the configured principal, then rerun the Dapr component backfill so statestore can project successfully.
+
+### 2026-03-26: Decision — GHCR Recipe Publish Auth and Validation (consolidated)
+**By:** Graham (Platform Dev), Karen (Tester)
+**Date:** 2026-03-26
+**Status:** IMPLEMENTED — VALIDATED
+**What:** `scripts/publish-radius-recipes.sh` now supports explicit GHCR credentials via `GHCR_TOKEN` and `GHCR_USERNAME`, while still allowing an existing Docker credential store. The GitHub Actions publish step passes the same credentials explicitly, and validation confirmed the workflow path is correct.
+**Why:** Recipe publishing previously depended on ambient Docker auth and could fail with GHCR 403s without clear guidance. Explicit credentials make manual and CI publishing predictable, and the validation confirms the fix is safe to merge.
+
 ### 2026-03-25: Decision — Operator Docs Updated for Component Projection Gap
 **By:** Eddie (Docs/Story)
 **Status:** IMPLEMENTED

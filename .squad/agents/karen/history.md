@@ -498,3 +498,17 @@ Eddie restructured `docs/end-to-end-setup-walkthrough.md` to present scripts as 
 **Files modified:** `docs/end-to-end-setup-walkthrough.md` only. No deployment logic or script changes.
 
 **Decision recorded:** `.squad/decisions.md` (2026-03-26: Script-First Documentation Restructure)
+## 2026-03-26: Cross-Agent Note — GHCR Publish Validation and Statestore Diagnosis
+
+**From:** Scribe (consolidating team updates)
+**Date:** 2026-03-26
+**Impact:** ✅ VALIDATED / DOCUMENTED
+
+Karen's GHCR validation was merged into the shared registry with Graham's auth fix. The approval confirms the publish script accepts explicit GHCR credentials or Docker auth, and the GitHub Actions workflow passes credentials correctly.
+
+The same merge run also recorded Graham's live statestore diagnosis: `RecipeDeploymentFailed` on `statestore` was traced to missing `Storage Blob Data Contributor` on the Blob account, with the Dapr backfill recommended after the role grant.
+
+**Files/Decisions Updated:**
+- `.squad/decisions.md` — consolidated GHCR auth + validation
+- `.squad/decisions.md` — added statestore diagnosis
+- `.squad/decisions/inbox/` — cleared
