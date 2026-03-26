@@ -1030,3 +1030,17 @@ Recipe artifacts and application container images follow different authenticatio
 - Graham to implement bootstrap.sh per design spec
 - Karen to validate corrected walkthrough, then bootstrap.sh end-to-end
 
+
+### 2026-03-26: ArgoCD Fit Investigation
+
+**Decision:** REJECTED — ArgoCD does not belong in RadiusClaim.
+
+**Key findings:**
+1. **Radius and ArgoCD have conflicting reconciliation models.** Radius generates Kubernetes resources dynamically via `rad deploy` and recipes. ArgoCD wants static manifests in Git. These two controllers would fight over ownership of container Deployments, gateways, and Dapr components.
+2. **Dapr component backfill is inherently dynamic.** `deploy-dapr-components.sh` queries Radius for provisioned Azure resource names, then generates Component CRDs. ArgoCD cannot sync what doesn't exist in Git until after Radius executes.
+3. **Fourth control plane breaks the ten-minute rule.** The sample already teaches Kubernetes + Dapr + Radius. Adding ArgoCD dilutes the Dapr-versus-Radius story without adding proportional platform insight.
+4. **The deployment story is already complete.** `bootstrap.sh` (idempotent, dry-run capable) + `deploy-azure.yml` (GitHub Actions CI/CD) covers the full deploy-validate loop.
+
+**Architecture pattern confirmed:** Delivery mechanism (ArgoCD, GitHub Actions, Flux) is orthogonal to platform architecture (Dapr + Radius). Reference samples should teach architecture, not delivery opinions.
+
+**Decision file:** `.squad/decisions/inbox/daisy-argocd-investigation.md`

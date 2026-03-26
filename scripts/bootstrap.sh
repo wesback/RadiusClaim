@@ -266,17 +266,46 @@ resolve_azure_auth_mode() {
 }
 
 resolve_azure_principal_id() {
+  # Explicit AZURE_PRINCIPAL_ID always wins
   if [ -n "${AZURE_PRINCIPAL_ID:-}" ]; then
     echo "${AZURE_PRINCIPAL_ID}"
     return 0
   fi
 
+  # No AZURE_CLIENT_ID → cannot resolve
   if [ -z "${AZURE_CLIENT_ID:-}" ]; then
+    echo >&2 "⚠️  Cannot resolve principal ID: AZURE_CLIENT_ID is not set."
+    echo >&2 "    Set AZURE_PRINCIPAL_ID directly if using user identity or managed identity."
     echo ""
     return 0
   fi
 
-  az ad sp show --id "${AZURE_CLIENT_ID}" --query id -o tsv 2>/dev/null || true
+  # Try to resolve via service principal lookup
+  local resolved_id
+  resolved_id="$(az ad sp show --id "${AZURE_CLIENT_ID}" --query id -o tsv 2>/dev/null || true)"
+  
+  if [ -n "$resolved_id" ]; then
+    echo "$resolved_id"
+    return 0
+  fi
+
+  # Service principal lookup failed — provide diagnostic
+  echo >&2 "⚠️  Cannot resolve principal ID via service principal lookup."
+  echo >&2 "    AZURE_CLIENT_ID is set to: ${AZURE_CLIENT_ID}"
+  echo >&2 ""
+  echo >&2 "    Possible causes:"
+  echo >&2 "    1. AZURE_CLIENT_ID points to an app registration without a service principal in this tenant"
+  echo >&2 "    2. You are authenticated as a user identity instead of a service principal"
+  echo >&2 "    3. Your Azure account lacks permission to query service principals"
+  echo >&2 ""
+  echo >&2 "    Resolution:"
+  echo >&2 "    • For service principal auth: Verify the SP exists in your tenant:"
+  echo >&2 "        az ad sp show --id \"\$AZURE_CLIENT_ID\""
+  echo >&2 "    • For user identity or managed identity: Set AZURE_PRINCIPAL_ID manually:"
+  echo >&2 "        export AZURE_PRINCIPAL_ID=\$(az ad signed-in-user show --query id -o tsv)"
+  echo >&2 "    • For workload identity: Provide the managed identity's principal object ID"
+  echo ""
+  return 0
 }
 
 current_secret_store_recipe_name() {
@@ -692,7 +721,7 @@ AZURE_AUTH_MODE_RESOLVED="$(resolve_azure_auth_mode)"
 test -n "${AZURE_CLIENT_ID:-}" || fail "AZURE_CLIENT_ID is required for the Microsoft Entra statestore path."
 test -n "${AZURE_TENANT_ID:-}" || fail "AZURE_TENANT_ID is required for the Microsoft Entra statestore path."
 AZURE_PRINCIPAL_ID_RESOLVED="$(resolve_azure_principal_id)"
-test -n "$AZURE_PRINCIPAL_ID_RESOLVED" || fail "Could not resolve the Microsoft Entra principal object ID. Set AZURE_PRINCIPAL_ID or ensure 'az ad sp show --id \$AZURE_CLIENT_ID' succeeds."
+test -n "$AZURE_PRINCIPAL_ID_RESOLVED" || fail "Could not resolve the Microsoft Entra principal object ID. See diagnostics above for resolution steps."
 if [ "$SHOULD_REGISTER_AZURE_CREDENTIAL" = true ] && [ -z "$AZURE_AUTH_MODE_RESOLVED" ]; then
   fail "Azure credential registration was approved, but the required Azure auth environment variables are not set."
 fi

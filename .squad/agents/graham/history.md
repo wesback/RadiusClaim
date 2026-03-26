@@ -1542,3 +1542,26 @@ Update `scripts/prepare-cluster.sh` to install Dapr with `dapr init -k --wait` i
 - ✅ Bootstrap flow timing and idempotency verified
 
 **Status:** Closed and merged into decisions.md
+
+---
+
+## 2026-03-26: Cross-Agent Note — Daisy ArgoCD Investigation (REJECTED)
+
+**From:** Scribe (consolidating Daisy's work)
+**Date:** 2026-03-26
+**Status:** REJECTED — Documented for future reference
+
+Daisy completed a deep investigation into ArgoCD fit for RadiusClaim and concluded: **No.**
+
+**Key Technical Findings:**
+1. **Reconciliation conflict:** Radius generates Kubernetes resources dynamically via recipes; ArgoCD expects static Git manifests. These models conflict — who owns the Deployments, gateways, and components?
+2. **Dynamic component mismatch:** `deploy-dapr-components.sh` queries Radius outputs to generate Component CRDs. ArgoCD can't sync what doesn't exist in Git until recipes execute.
+3. **No deploy gap filled:** Current `bootstrap.sh` + GitHub Actions already covers the full deploy-validate loop idempotently.
+4. **Teaching cost:** Fourth control plane (Kubernetes + Dapr + Radius + ArgoCD) dilutes focus on Dapr-Radius boundary.
+
+**What to tell teams who ask:**
+> "RadiusClaim doesn't include ArgoCD because Radius already provides the declarative application model. ArgoCD is a delivery mechanism — you can layer it on top of Radius in production. This sample focuses on the Dapr + Radius boundary so you can evaluate those two together."
+
+**Decision recorded:** `.squad/decisions.md` (2026-03-26: ArgoCD Fit for RadiusClaim)
+
+**For future:** If a multi-environment promotion sample (dev → staging → prod) is created, ArgoCD can be evaluated in that context. Not retrofitting into RadiusClaim keeps the sample's focus sharp.

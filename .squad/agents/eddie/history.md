@@ -1420,3 +1420,80 @@ Add the new cluster-prep script option to the end-to-end walkthrough, alongside 
 - Bootstrap script's actual help text matches our documentation claim
 - No broken links or stale references introduced
 
+
+## Phase 7 Continuation — Script-First Documentation Restructure (2026-03-26)
+
+### Task
+Restructure `docs/end-to-end-setup-walkthrough.md` to make the two-script workflow (`prepare-cluster.sh` then `bootstrap.sh`) the primary, recommended path, with manual steps as a secondary reference for learning and troubleshooting.
+
+### Changes Made
+
+**docs/end-to-end-setup-walkthrough.md** — Complete restructure with new architecture:
+
+1. **New structure (high-level → detail → reference):**
+   - Intro: "Overview & Recommended Path" — Emphasizes two-script approach with clear table
+   - Section: "When to Use This Guide" — Forks readers to the path they need
+   - Section: "Prerequisites" — Script-based path only (manual walkthrough doesn't need separate prerequisites)
+   - Section: "Quick Start: Run the Two Scripts" — Step 1 (prepare), Step 2 (bootstrap), repeated deploys
+   - Section: "Environment Variables" — **NEW** — Detailed Entra auth guidance for bootstrap (required)
+   - Section: "Understanding the Scripts" — References scripts/README.md for deep knowledge
+   - Section: "CI/CD Alternative Path" — GitHub Actions option clearly marked as alternative
+   - Section: "Opening the Web UI" — Shared endpoint discovery (port-forward option included)
+   - Section: "Manual Walkthrough (Deep Dive)" — All 12 manual steps moved here with disclaimer ⓘ
+
+2. **Key narrative changes:**
+   - **Opening:** "Two scripts that wrap the entire deployment" (not "three ways")
+   - **Emphasis:** "fastest, most reliable way" applied to script path
+   - **Manual steps:** Prefixed with "ℹ️ This section is optional" and "skip to Troubleshooting if using scripts"
+   - **Environment variables:** Moved from optional/scattered to **prominent section** before manual steps
+     - Service principal mode
+     - Workload identity (federated credentials)
+     - User identity (az login)
+     - Note about `AZURE_PRINCIPAL_ID` auto-resolution
+
+3. **Tone shift:**
+   - From: "Here's the manual approach, and optionally you can use scripts"
+   - To: "Here's the script approach (recommended), and optionally learn the manual steps"
+
+4. **Supporting docs consistency:**
+   - `scripts/README.md` — Already script-first; no changes needed (verified consistent)
+   - `README.md` — Already mentions script-first pattern; no changes needed (verified consistent)
+   - CI/CD reference — Added to new walkthrough structure as alternative path
+
+### Critical Detail: Environment Variables Documentation
+
+Bootstrap's success depends on Azure credentials. The new walkthrough now documents:
+- **When:** Required before running `bootstrap.sh`
+- **Which:** `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` (sp mode), `AZURE_TENANT_ID`
+- **How:** Service principal vs. workload identity vs. user identity patterns
+- **Troubleshooting:** Auto-resolution of `AZURE_PRINCIPAL_ID` from `AZURE_CLIENT_ID`
+
+This is **critical** because previously, env var setup was buried in Steps 6–8, making it easy to miss.
+
+### Validation Performed
+
+1. ✅ Walkthrough structure is pedagogical: "happy path first, deep dive after"
+2. ✅ All section links/headings are consistent
+3. ✅ Manual steps (Steps 1–12) remain intact, just repositioned and labeled optional
+4. ✅ Scripts/README.md is aligned with new structure (verified no changes needed)
+5. ✅ README.md already points to script-first narrative (verified no changes needed)
+6. ✅ Environment variables section is prominent (not buried)
+7. ✅ CI/CD path is present but clearly alternative (not primary)
+
+### Learning for Future Docs Restructuring
+
+1. **Prominence principle:** Put the recommended path (script) first; make optional paths discoverable but not dominant
+2. **Prerequisite clarity:** Prerequisites should match the path, not be combined across paths
+3. **Environment variables:** If deployment depends on env vars, document them as **required** in the happy-path section, not in step details
+4. **Terminology consistency:** "Deploy," "bootstrap," "prepare" are distinct phases; use them consistently
+5. **Skip-to sections:** Use "ℹ️ optional" disclaimers to help readers avoid sections that don't apply to their path
+
+### Files Updated
+- `docs/end-to-end-setup-walkthrough.md` — Complete restructure
+- `.squad/agents/eddie/history.md` — This entry
+
+### Files Verified (No Changes Needed)
+- `scripts/README.md` — Already aligned with script-first narrative
+- `README.md` — Already points to script-first pattern
+- `docs/radius-validation-checklist.md` — Companion to walkthrough; stable
+

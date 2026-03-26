@@ -187,3 +187,102 @@ Using the CLI's built-in wait semantics is the smallest correct repair:
 **Supporting Pattern:**
 - `.squad/skills/azure-keyvault-soft-delete-preflight/SKILL.md` — Reusable detection and recovery pattern for future platforms
 
+### 2026-03-26: Decision — Script-First Documentation Restructure
+**By:** Eddie (Docs/Story)
+**Date:** 2026-03-26  
+**Status:** COMPLETED
+**Scope:** `docs/end-to-end-setup-walkthrough.md`
+
+**What:** Restructured the walkthrough to make scripts the primary narrative, not an optional alternative. Manual steps (1–12) moved to optional deep-dive section.
+
+**Why:** Original structure had manual steps dominating; operators cloning the repo would see detailed `az` and `rad` commands before learning the script-based path was faster and more reliable.
+
+**Key Changes:**
+1. Opening emphasizes two-script approach
+2. New "Environment Variables" section upfront (Entra auth guidance)
+3. "Quick Start: Run the Two Scripts" (Steps 1–2, then subsequent deployments)
+4. Manual walkthrough (all 12 steps) moved to "Deep Dive" section with "optional" disclaimer
+5. CI/CD path clearly marked as alternative
+
+**Impact:**
+- Scripts presented as primary, recommended path (not optional)
+- Manual steps remain discoverable for learning/customization
+- Consistent with existing README and scripts/README messaging
+- No breaking changes to deployment logic or scripts
+
+### 2026-03-26: Decision — ArgoCD Fit for RadiusClaim
+**By:** Daisy (Lead)
+**Date:** 2026-03-26
+**Status:** REJECTED
+**Requested by:** Wesley Backelant
+
+**Recommendation:** No. ArgoCD does not belong in RadiusClaim.
+
+**Why:**
+1. **No deploy gap:** Current two-phase deployment (prepare-cluster.sh + bootstrap.sh) is complete. ArgoCD would add a fourth control plane to a sample teaching Dapr + Radius.
+2. **Conflicts with Radius model:** Radius generates Kubernetes resources dynamically via recipes; ArgoCD expects static manifests in Git. This creates ownership ambiguity (who manages Deployments — ArgoCD or Radius?).
+3. **Dynamic component impedance mismatch:** Dapr component backfill queries Radius outputs and generates CRDs dynamically; ArgoCD can't sync components that don't exist until recipes execute.
+4. **Teaching cost exceeds value:** Adding ArgoCD adds a fourth control plane, complicates the "who deploys what" story, and dilutes the focus on Dapr + Radius boundary.
+5. **Audience fit:** Target audience (platform teams) will understand ArgoCD after learning Dapr + Radius; retrofitting it in the sample conflates delivery with architecture.
+
+**What to tell teams who ask:**
+> "RadiusClaim doesn't include ArgoCD because Radius already provides the declarative application model. ArgoCD is a delivery mechanism — you can layer it on top of Radius in production. This sample focuses on the Dapr + Radius boundary so you can evaluate those two together without delivery-pipeline opinions getting in the way."
+
+### 2026-03-26: Decision — Bootstrap Principal ID Resolution Improved
+**By:** Graham (Platform Dev)
+**Date:** 2026-03-26T09:15:32Z  
+**Status:** IMPLEMENTED
+
+**What:** Improved `resolve_azure_principal_id()` in `scripts/bootstrap.sh` to handle multiple Azure authentication modes with actionable diagnostics when auto-resolution fails.
+
+**Why:** Original implementation only handled service principal lookups via `az ad sp show --id "$AZURE_CLIENT_ID"`. This failed silently when operators used user identity (interactive `az login`), managed identity, or workload identity federation without traditional service principals.
+
+**Implementation:**
+1. Function improvements:
+   - Kept existing happy paths
+   - Added stderr diagnostics when resolution fails
+   - Provided context-specific guidance for different auth modes
+   - Maintained stdout cleanliness for command substitution
+2. Documentation updates:
+   - `scripts/README.md`: Added "About AZURE_PRINCIPAL_ID" and "Principal ID Resolution" sections
+   - `docs/end-to-end-setup-walkthrough.md`: Added inline comments explaining auto-resolution and alternatives
+
+**Supported Auth Modes:**
+- ✅ Service principal (client ID + secret) — auto-resolves principal ID
+- ✅ Workload identity (federated credential without secret) — auto-resolves principal ID
+- ✅ User identity (interactive `az login`) — requires manual `AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)`
+- ✅ Managed identity — requires manual `AZURE_PRINCIPAL_ID=<managed-identity-object-id>`
+
+**Operator Rule:** When auto-resolution fails, stderr diagnostics explain exactly what to do next.
+
+**Validation:**
+- ✅ Syntax validated with `bash -n`
+- ✅ Function preserves stdout cleanliness
+- ✅ Diagnostics go to stderr only
+- ✅ Existing happy paths unchanged
+
+### 2026-03-26: Decision — Radius existing-install readiness must honor current controller naming
+**By:** Graham (Platform Dev)
+**Date:** 2026-03-26
+**Status:** PROPOSED
+
+**What:** `scripts/prepare-cluster.sh` and `scripts/bootstrap.sh` should treat the stock Radius controller as `deployment/controller` with pod label `app.kubernetes.io/name=controller`, while still tolerating legacy `radius-controller-manager` naming for older clusters.
+
+**Why:** Current Radius install docs and Helm chart use `controller`; the repo had drifted to `radius-controller-manager`, making healthy existing installs look broken and causing misleading post-install failures.
+
+**Operator Impact:** If `rad install kubernetes` reports an existing installation and the control plane is still not ready after checking both naming shapes, the script should say plainly it did not auto-repair and point to `kubectl get deployments,pods -n radius-system` plus the reinstall command.
+
+### 2026-03-26: Decision — Prepare-Cluster Must Wait for Radius Controller Rollout
+**By:** Graham (Platform Dev)
+**Date:** 2026-03-26
+**Status:** PROPOSED
+
+**What:** Treat `rad install kubernetes` as an install submission step, not a readiness guarantee. Gate the script on:
+```bash
+kubectl rollout status deployment/radius-controller-manager -n radius-system --timeout=5m
+```
+
+**Why:** `rad install kubernetes` has no native `--wait` flag. The script immediately checks Radius readiness after install, so it can reject a normal fresh install while the controller is still converging.
+
+**Consequence:** Fresh-cluster prep becomes deterministic for the Radius install step, and the readiness contract stays teachable: install when asked, wait on canonical controller rollout, then verify.
+

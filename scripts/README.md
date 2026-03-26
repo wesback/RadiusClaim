@@ -111,6 +111,25 @@ Run `./scripts/bootstrap.sh --resource-group <name>` to deploy the RadiusClaim a
 - Cluster prepared with Dapr and Radius (via `prepare-cluster.sh` or manual setup)
 - Azure resource group exists (created by `prepare-cluster.sh` or Step 2 of manual walkthrough)
 - `az`, `kubectl`, `rad` CLIs installed and configured
+- **Microsoft Entra authentication** variables for the state-store recipe:
+  - `AZURE_CLIENT_ID` — Application/service principal client ID
+  - `AZURE_TENANT_ID` — Azure tenant ID
+  - `AZURE_PRINCIPAL_ID` — Principal object ID (auto-resolved from service principal if not set; see *Principal ID Resolution* below)
+  - `AZURE_CLIENT_SECRET` — Only required when using service principal auth (not workload identity)
+
+**Principal ID Resolution:**
+
+Bootstrap requires `AZURE_PRINCIPAL_ID` (principal object ID) for RBAC assignments to Azure Blob storage. It resolves this automatically by:
+1. Using `AZURE_PRINCIPAL_ID` if explicitly set
+2. Running `az ad sp show --id "$AZURE_CLIENT_ID"` if `AZURE_CLIENT_ID` is set
+3. Failing with actionable diagnostics if resolution fails
+
+**If auto-resolution fails**, you're likely using:
+- **User identity** — Set `export AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)`
+- **Managed identity** — Set `export AZURE_PRINCIPAL_ID=<managed-identity-object-id>`
+
+See the `deploy-dapr-components.sh` prerequisites section for more detail on supported auth modes.
+
 
 **Notes:**
 - By default derives image and recipe tags from the current git SHA
@@ -190,9 +209,38 @@ docker login ghcr.io
 - `kubectl` (cluster access)
 - `az` CLI (Azure credentials configured)
 - `jq` (JSON processing)
-- `AZURE_CLIENT_ID` + `AZURE_TENANT_ID` for the Entra statestore path
-- `AZURE_CLIENT_SECRET` as well when using service-principal auth instead of workload identity
-- `AZURE_PRINCIPAL_ID` if you want to skip the `az ad sp show --id "$AZURE_CLIENT_ID"` lookup
+- **Microsoft Entra authentication** for the Blob statestore:
+  - `AZURE_CLIENT_ID` — Application/service principal client ID
+  - `AZURE_TENANT_ID` — Azure tenant ID
+  - `AZURE_PRINCIPAL_ID` — Principal object ID (see below if not set)
+  - `AZURE_CLIENT_SECRET` — Only required when using service principal auth (not workload identity)
+
+**About AZURE_PRINCIPAL_ID:**
+
+The Entra-backed Dapr statestore requires the principal's **object ID** (not the client ID) for RBAC role assignments.
+
+The script attempts to resolve this automatically:
+1. If `AZURE_PRINCIPAL_ID` is set → uses that value directly
+2. If `AZURE_CLIENT_ID` is set → tries `az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv`
+3. If resolution fails → stops with actionable diagnostics
+
+**When to set AZURE_PRINCIPAL_ID manually:**
+- **User identity mode:** If you're using `az login` with a user identity instead of a service principal, set:
+  ```bash
+  export AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)
+  ```
+- **Managed identity mode:** If using a managed identity for Dapr runtime auth, provide its object ID:
+  ```bash
+  export AZURE_PRINCIPAL_ID=<managed-identity-object-id>
+  ```
+- **Service principal without auto-resolution:** If `az ad sp show` fails but you know the object ID, set it directly.
+
+**Supported auth modes:**
+- ✅ Service principal (client ID + secret)
+- ✅ Workload identity (federated credential without secret)
+- ✅ User identity (interactive `az login` with manual `AZURE_PRINCIPAL_ID`)
+- ✅ Managed identity (with manual `AZURE_PRINCIPAL_ID`)
+
 
 **Output:**
 - `dapr-components-generated.yaml` in the repo root (generated manifest for review)

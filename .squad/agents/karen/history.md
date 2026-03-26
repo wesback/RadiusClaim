@@ -478,3 +478,23 @@ Live idempotency test (second `rad deploy` execution) blocked by Kubernetes envi
 - Session log: Daisy→Graham handoff summary
 
 **Next:** Monitor recipe artifact republishing and GHCR image pull auth before live demo resumption.
+
+---
+
+## 2026-03-26: Cross-Agent Note — Eddie Documentation Restructure
+
+**From:** Scribe (consolidating Eddie's work)
+**Date:** 2026-03-26
+**Impact:** ✅ POSITIVE for validation workflow
+
+Eddie restructured `docs/end-to-end-setup-walkthrough.md` to present scripts as the primary path (not optional). This change:
+- **Simplifies operator onboarding:** Readers see `prepare-cluster.sh` + `bootstrap.sh` as the recommended, fastest path
+- **Preserves manual deep-dive:** Full 12-step walkthrough moved to optional section for learning/customization
+- **Adds Environment Variables upfront:** Entra auth guidance now prominent (previously buried in steps)
+- **Aligns with existing messaging:** Consistent with README.md and scripts/README.md
+
+**For validation:** When you test the walkthrough, start with the Quick Start section (script-based). The deep-dive is available for exploratory testing. All 12 manual steps remain intact and unchanged.
+
+**Files modified:** `docs/end-to-end-setup-walkthrough.md` only. No deployment logic or script changes.
+
+**Decision recorded:** `.squad/decisions.md` (2026-03-26: Script-First Documentation Restructure)

@@ -1,58 +1,27 @@
 # End-to-End Setup: From Resource Group to Web Browser
 
 > **Audience:** Platform engineers and operators deploying RadiusClaim to Azure  
-> **Duration:** ~30–45 minutes (varies with Azure resource creation time)  
-> **Goal:** Establish the complete infrastructure and deploy the app, then open the web UI in a browser
+> **Duration:** ~30–45 minutes (AKS creation), ~5 minutes if cluster exists  
+> **Goal:** Deploy the complete RadiusClaim stack, then open the web UI in a browser
 
 ---
 
-## Overview
+## Overview & Recommended Path
 
-This guide walks you through the entire RadiusClaim deployment pipeline from initial Azure setup to opening the application in a web browser. It covers both **what this repository automates** and **what you must do manually**.
+This guide shows you the **fastest, most reliable way** to deploy RadiusClaim: **two shell scripts** that wrap the entire deployment.
 
-### Three Ways to Use This Guide
+### The Happy Path: Two Scripts
 
-| Path | Phase | Who It's For | What It Does |
-|------|-------|-------------|-------------|
-| **Cluster Prep Script** (`scripts/prepare-cluster.sh`) | 1st-time setup | New operators | Verifies or creates AKS, sets `kubectl` context, and makes sure Dapr + Radius are ready |
-| **Bootstrap Script** (`scripts/bootstrap.sh`) | Repeatable deploys | Returning operators | Automates recipe publishing, environment/app deployment, component backfill, and validation after the cluster is ready |
-| **Manual walkthrough** (Steps 1–12) | All phases | Learning-focused operators | Walks through every step with explanations so you understand the deployment model and can customize |
+RadiusClaim is designed to deploy via **two scripts** that handle the full workflow:
 
-**Recommended approach for first deployment:**
-1. Run `scripts/prepare-cluster.sh` once to set up or verify the cluster boundary
-2. Then run `scripts/bootstrap.sh` to deploy RadiusClaim (replaces Steps 7–12)
-3. This walkthrough remains the reference when you need to understand *why* each step exists, troubleshoot a failure, or customize a deployment
+| Script | Purpose | Time | Who Runs It |
+|--------|---------|------|------------|
+| **`scripts/prepare-cluster.sh`** | Create/verify AKS, install Dapr & Radius, set up Kubernetes context | ~15–20 min | Run once per cluster |
+| **`scripts/bootstrap.sh`** | Deploy recipes, Radius environment, RadiusClaim app, validate | ~5–10 min | Run for each deploy/update |
 
-### What's Automated
-- AKS verification/creation and `kubectl` context setup (via cluster prep script)
-- Dapr and Radius control plane installation/preflight (via cluster prep script)
-- Kubernetes cluster detection/validation (via Radius and bootstrap scripts)
-- Container image builds and registry pushes (GitHub Actions)
-- Radius environment and application deployment (via bootstrap script or GitHub Actions)
-- Kubernetes resource creation and Dapr component wiring (Radius + Bicep)
-- Public endpoint exposure and DNS resolution (Radius gateway)
-
-### What You Must Do Manually
-**If using cluster prep script + bootstrap script:**
-1. Decide whether the script should create AKS (`--create-aks`) or reuse an existing cluster/context
-2. Open the app URL in a browser
-
-**If using manual walkthrough:**
-1. Azure subscription selection and authentication (CLI)
-2. Resource group creation
-3. Kubernetes cluster provisioning (AKS, Arc-enabled, or self-managed) with Dapr + Radius installation
-4. GitHub Actions secret/variable configuration (if using CI/CD for app deployment)
-5. Radius workspace and group initialization (if running app deployment locally)
-6. Opening the app URL in a browser
-
----
-
-## Quick Start: Using the Cluster Prep Script (First Time Only)
-
-Use the cluster prep script for your first deployment. It automates the infrastructure foundation:
-
+**First deployment:**
 ```bash
-# For first-time cluster setup
+# Step 1: Prepare cluster (one time, or when cluster is fresh)
 ./scripts/prepare-cluster.sh \
   --resource-group radiusclaim-rg \
   --location belgiumcentral \
@@ -62,101 +31,212 @@ Use the cluster prep script for your first deployment. It automates the infrastr
   --install-radius \
   --yes
 
-# Then, for repeatable app deployment
+# Step 2: Deploy the app (repeatable for updates)
 ./scripts/bootstrap.sh \
   --resource-group radiusclaim-rg \
   --yes
 ```
 
-> **Fresh cluster note:** Keep `--install-dapr` and `--install-radius` in the first-time command unless those control planes are already present. Leaving them out makes `prepare-cluster.sh` verification-only for Dapr/Radius, so it will stop with a readiness error instead of installing them.
+**Subsequent deployments (cluster already ready):**
+```bash
+./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
+```
 
-**What the cluster prep script does:**
-- Verifies Azure login and subscription context
-- Reuses or creates the Azure resource group used later by `bootstrap.sh`
-- Reuses or creates an AKS cluster when explicitly allowed
-- Sets the `kubectl` context
-- Installs or verifies Dapr control plane
-- Installs or verifies Radius control plane
-- Selects the Radius workspace/group for later deploys
+**That's it.** No manual `az` commands, no `rad` CLI orchestration, no hand-written YAML. The scripts validate, configure, and deploy everything.
 
-If you are reusing an existing non-AKS cluster, keep `--resource-group` but omit the AKS flags and make sure `kubectl` already points at the target cluster (or pass `--kube-context`).
+---
 
-**Next:** Run `scripts/bootstrap.sh` after cluster prep completes, then skip to [Opening the Web UI](#step-11-open-the-web-ui-in-a-browser) or read the manual steps below to understand what the scripts automate.
+## When to Use This Guide
 
-> **Bootstrap note:** The scripted path now preflights the deterministic Azure Key Vault name behind `platform-secrets`. If the vault is only soft-deleted and Azure can safely recover it back into the current subscription/resource-group/location, bootstrap restores it before the app deploy. Otherwise it stops early with actionable scope/purge guidance.
+- **First deployment?** Start with [Quick Start](#quick-start-run-the-two-scripts) below.
+- **Need to customize or debug?** Read [Understanding the Scripts](#understanding-the-scripts) to see what each does.
+- **Prefer manual control or learning the internals?** See [Manual Walkthrough (Deep Dive)](#manual-walkthrough-deep-dive) at the end.
+- **Using GitHub Actions instead?** Jump to [CI/CD Alternative Path](#cicd-alternative-path).
 
 ---
 
 ## Prerequisites
 
-Before you start, confirm you have the basic tools. Depending on your path:
+Before you start, confirm you have the basic tools:
 
-### For Cluster Prep Script Path
-- **Azure CLI** — for authentication
+### For Script-Based Deployment Path (Recommended)
+- **Azure CLI** — for authentication and resource creation
 - **git** — to clone this repository
-- **bash** — to run the script
-- Azure subscription with permissions to create AKS clusters and resource groups
+- **bash** — to run the scripts
+- Azure subscription with permissions to create AKS clusters, resource groups, and role assignments
 - Roughly 15–20 minutes and AKS quota in your target region
 
-### For Manual Walkthrough Path
-In addition to what's above, you'll manually install:
+### Additional Tools (auto-checked by scripts)
+The scripts verify you have:
+- **kubectl** — Kubernetes CLI
+- **dapr** — Dapr CLI
+- **rad** — Radius CLI
+- **jq** — JSON processor
+- **docker** — for building images (if not using GitHub Actions)
 
-### Azure Account & CLI (Required for Both Paths)
+### For CI/CD Path (GitHub Actions)
+- Git repository on GitHub with Actions enabled
+- Azure subscription credentials configured as GitHub Secrets (see [CI/CD Alternative Path](#cicd-alternative-path))
+
+---
+
+## Quick Start: Run the Two Scripts
+
+### Step 1: Prepare Your Cluster (First Time Only)
+
+Run this once to create or verify your AKS cluster and install Dapr + Radius:
+
 ```bash
-# Install Azure CLI
-# macOS: brew install azure-cli
-# Windows/Linux: https://learn.microsoft.com/en-us/cli/azure/install-azure-cli
-
-# Verify installation
-az --version
-# Expected: Azure CLI 2.60.0 or later
+./scripts/prepare-cluster.sh \
+  --resource-group radiusclaim-rg \
+  --location belgiumcentral \
+  --aks-cluster-name radiusclaim-aks \
+  --create-aks \
+  --install-dapr \
+  --install-radius \
+  --yes
 ```
 
-### Kubernetes Cluster with Dapr & Radius (Required for Manual Path)
-You need a Kubernetes cluster with **Dapr and Radius already installed**. Options:
+**What happens:**
+- ✅ Azure login verified
+- ✅ Resource group created (if missing)
+- ✅ AKS cluster created or reused (need `--create-aks` first time)
+- ✅ kubectl context configured
+- ✅ Dapr control plane installed
+- ✅ Radius control plane installed
+- ✅ Kubernetes workspace/group initialized
 
-**Option A: Azure Kubernetes Service (AKS) — Recommended**
+**Options for existing clusters:**
+- If reusing an **existing AKS cluster**, omit `--create-aks`
+- If using **Arc-enabled or self-managed Kubernetes**, omit the AKS flags and ensure `kubectl` points to your cluster (or use `--kube-context`)
+
+### Step 2: Deploy the Application
+
+After cluster prep completes, deploy RadiusClaim. Run this once per deployment:
+
 ```bash
-# If you don't have AKS yet, create it (see Step 3 below)
-# But you must install Dapr and Radius on it before deploying RadiusClaim
+./scripts/bootstrap.sh \
+  --resource-group radiusclaim-rg \
+  --yes
 ```
 
-**Option B: Arc-enabled Kubernetes or Self-managed Cluster**
-- Any Kubernetes cluster (on-premises, edge, or multi-cloud) reachable from your machine and registered with Azure Arc
-- Or any self-managed Kubernetes cluster with Dapr and Radius control plane installed
-- Must have Azure credentials configured (for Azure backing services)
+**What happens:**
+- ✅ Pre-flight checks (CLIs, Azure auth, cluster health)
+- ✅ Radius workspace/environment initialized
+- ✅ Recipes published to OCI registry (if needed)
+- ✅ Radius environment deployed (Azure backing services wired)
+- ✅ RadiusClaim application deployed
+- ✅ Dapr components backfilled (state store, pub/sub, secrets)
+- ✅ Deployment validated end-to-end
+- ✅ Public URL printed to console
 
-### Dapr & Radius CLI (Required for Manual Path)
+**For subsequent deployments** (when cluster is already ready):
 ```bash
-# Install Dapr CLI (for local development; optional if using only GitHub Actions)
-# https://docs.dapr.io/getting-started/install-dapr-cli/
-
-# Install Radius CLI (required for manual deployment)
-wget -q https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh -O - | /bin/bash
-rad --version
-# Expected: v0.37.0 or later
-```
-
-### Tools
-```bash
-# Required
-- kubectl (Kubernetes CLI) — usually bundled with AKS/cluster tooling
-- git (to clone this repo)
-- docker (if building images locally instead of GitHub Actions)
-
-# Optional (for validation scripts)
-- jq (JSON processor)
-- curl (HTTP client)
-
-# For multi-platform builds (Mac ARM, Linux, Windows)
-- docker buildx (usually included with Docker Desktop)
+./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
 ```
 
 ---
 
-## Manual Deployment Steps (Steps 1–12)
+## Environment Variables (Required for Bootstrap)
 
-> **Skip this section if using the cluster prep script.** These steps are the detailed reference for understanding and customizing cluster setup and app deployment. If you're using `scripts/prepare-cluster.sh` + `scripts/bootstrap.sh`, jump directly to [Step 11: Open the Web UI in a Browser](#step-11-open-the-web-ui-in-a-browser).
+When `bootstrap.sh` deploys the Radius environment and Dapr components, it needs Azure credentials to wire up backing services and RBAC. Set these before running bootstrap:
+
+### For Service Principal Auth (Recommended)
+
+```bash
+# Azure CLI will prompt for these; also supported via environment variables
+export AZURE_CLIENT_ID="<service-principal-app-id>"
+export AZURE_CLIENT_SECRET="<service-principal-client-secret>"
+export AZURE_TENANT_ID="<your-azure-tenant-id>"
+
+# Optional: Let bootstrap auto-resolve this from AZURE_CLIENT_ID
+# Or set explicitly if auto-resolution fails:
+export AZURE_PRINCIPAL_ID="<service-principal-object-id>"
+
+./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
+```
+
+### For Workload Identity (Federated Credentials)
+
+```bash
+export AZURE_CLIENT_ID="<managed-identity-client-id>"
+export AZURE_TENANT_ID="<your-azure-tenant-id>"
+
+# Workload identity mode: no client secret needed
+./scripts/bootstrap.sh \
+  --resource-group radiusclaim-rg \
+  --azure-auth-mode wi \
+  --yes
+```
+
+### For User Identity (az login)
+
+```bash
+# If using 'az login' with your user account:
+export AZURE_PRINCIPAL_ID="$(az ad signed-in-user show --query id -o tsv)"
+
+./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
+```
+
+> **Note:** For state-store and pub/sub RBAC, bootstrap needs to know the principal's **object ID** (not just client ID). It tries to auto-resolve from the client ID; if that fails, use `AZURE_PRINCIPAL_ID` to set it explicitly.
+
+---
+
+## Understanding the Scripts
+
+Want to see what each script does in detail? Read `scripts/README.md` in the repository. Key scripts:
+
+- **`prepare-cluster.sh`** — Cluster setup, AKS creation, Dapr/Radius installation, workspace initialization
+- **`bootstrap.sh`** — Recipe publishing, environment deployment, app deployment, component backfill, validation
+- **`publish-radius-recipes.sh`** — Publishes custom Radius recipes to an OCI registry
+- **`deploy-dapr-components.sh`** — Backfills Dapr component manifests after app deployment
+- **`validate-deployment.sh`** — End-to-end smoke tests (state, workflows, pub/sub)
+
+---
+
+## CI/CD Alternative Path
+
+**Using GitHub Actions instead of local scripts?**
+
+The repository includes `.github/workflows/deploy-azure.yml` which automates the same deployment pipeline. Configure it:
+
+1. **Set up Azure credentials** in GitHub Secrets:
+   - `AZURE_CLIENT_ID`
+   - `AZURE_CLIENT_SECRET`
+   - `AZURE_TENANT_ID`
+   - `AZURE_SUBSCRIPTION_ID`
+
+2. **Set deployment variables** in GitHub Variables:
+   - `AZURE_LOCATION` (e.g., `belgiumcentral`)
+   - `AZURE_RESOURCE_GROUP` (e.g., `radiusclaim-rg`)
+
+3. **Push to main** or trigger the workflow manually.
+
+GitHub Actions handles the same steps as the scripts: cluster prep (if needed), recipe publishing, environment deployment, app deployment, and validation.
+
+---
+
+## Opening the Web UI
+
+After `bootstrap.sh` completes successfully, it prints the public URL to the console:
+
+```
+RadiusClaim is deployed! Visit:
+https://expense-api.<cluster-ip>.nip.io/app
+```
+
+Or, if you don't have public ingress configured, use port-forward:
+
+```bash
+kubectl port-forward -n radiusclaim-azure-radiusclaim svc/expense-api 8080:8080 &
+# Then visit: http://127.0.0.1:8080/app
+```
+
+---
+
+## Manual Walkthrough (Deep Dive)
+
+> **ℹ️ This section is optional.** If you've successfully run the scripts above, you don't need this. This walkthrough is a reference for understanding the deployment steps in detail, troubleshooting, or customizing the deployment. Skip to [Troubleshooting](#troubleshooting) if you hit an issue.
 
 ---
 
@@ -563,6 +643,9 @@ export AZURE_CLIENT_SECRET="<azure-service-principal-client-secret>"
 export AZURE_RESOURCE_GROUP="radiusclaim-rg"
 export AZURE_LOCATION="belgiumcentral"
 export AZURE_TENANT_ID="<azure-tenant-id>"
+# Principal object ID for RBAC assignments — auto-resolves from service principal if not set.
+# For user identity mode: export AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)
+# For managed identity: export AZURE_PRINCIPAL_ID=<managed-identity-object-id>
 export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
 export AZURE_PROVIDER_SCOPE="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP"
 export RADIUS_ENVIRONMENT_NAME="azure"
@@ -800,6 +883,9 @@ The script:
 > export AZURE_CLIENT_ID="<azure-service-principal-client-id>"
 > export AZURE_TENANT_ID="<azure-tenant-id>"
 > export AZURE_CLIENT_SECRET="<azure-service-principal-client-secret>"   # omit for workload identity
+> # Principal object ID — auto-resolves from service principal if not set.
+> # For user identity: export AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)
+> # For managed identity: export AZURE_PRINCIPAL_ID=<managed-identity-object-id>
 > export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
 > ```
 > It then keeps the statestore on the supported Microsoft Entra/RBAC path and the pubsub component on **one** auth path only (`connectionString` for the current operator flow).
@@ -1085,6 +1171,9 @@ kubectl get component statestore pubsub -n "$WORKLOAD_NAMESPACE" -o yaml
   ```
   Then repair the component with the Microsoft Entra path the repo now expects:
   ```bash
+  # Principal object ID — auto-resolves from service principal if not set.
+  # For user identity: export AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)
+  # For managed identity: export AZURE_PRINCIPAL_ID=<managed-identity-object-id>
   export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
   ./scripts/deploy-dapr-components.sh \
     --resource-group "$AZURE_RESOURCE_GROUP" \
