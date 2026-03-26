@@ -1256,3 +1256,87 @@ Generated: `.squad/orchestration-log/2026-03-26T20-22-59Z-daisy-live-bootstrap.m
 ### Session Log
 Generated: `.squad/log/2026-03-26T20-22-59Z-bootstrap-deploy-success.md`
 Contains full decision audit trail, technical findings, and deployment commands.
+
+---
+
+## 2026-03-27: Portability Audit — Post-Debugging Session
+
+**Triggered by:** Wesley requested a full best-practices audit after a 3.3-hour live debugging session applied 6 fixes to get the app deploying.
+
+**Files Audited:**
+- `infra/radius/app.bicep`
+- `infra/radius/environments/azure-radius.bicep`
+- `infra/radius/environments/dev.bicep`
+- `scripts/bootstrap.sh`
+- `scripts/prepare-cluster.sh`
+- `scripts/lib/platform-common.sh`
+- `docs/architecture.md`
+- `.github/workflows/deploy-azure.yml`
+
+**Key Findings:**
+
+1. **Dapr portability is architecturally sound but not realized for local dev.** All Dapr components use `resourceProvisioning: 'recipe'` with parameterized recipe names. The `daprBackings` param in `app.bicep` allows environment-level recipe swapping. However, `dev.bicep` still wires to Azure recipes — no local Redis/RabbitMQ recipes exist yet.
+
+2. **`Applications.*@2023-10-01-preview` is still the canonical Radius API version.** No `Radius.*` namespace exists in the current release. Fix #4 is correct. No timeline risk identified.
+
+3. **ACR switch is clean — parameterized, not hardcoded.** `app.bicep` defaults to GHCR, `bootstrap.sh` accepts `--container-registry`, and CI still uses GHCR. The ACR switch was a runtime parameter, not a codebase mutation.
+
+4. **GHCR pull secret code is dead for ACR path.** Lines 914-933 of bootstrap.sh still create `ghcr-pull-secret` and pass `ghcrImagePullRef=ghcr-pull-secret` even when using ACR with managed identity. Should be conditional.
+
+5. **RBAC scoping is mixed.** `prepare-cluster.sh` creates the SP with subscription-scoped Contributor. `bootstrap.sh` adds UAA at resource group scope only. The subscription-scope Contributor in prepare-cluster is broader than necessary.
+
+6. **SP credential auto-detect is sound.** The `rad credential show azure` fallback is idempotent and well-documented in stderr diagnostics. Re-registering on secret availability is a safe upsert.
+
+**Audit report written to:** `.squad/decisions.md` (merged from inbox)
+
+## Phase 7 (2026-03-26) — Portability Review
+
+### Deliverable
+
+Comprehensive audit of 6 bootstrap fixes applied in live debugging session to verify Dapr/Radius portability impact.
+
+### Summary
+
+- ✅ **No portability regressions** from any of the 6 fixes
+- ✅ Dapr component abstraction is structurally sound (resource-based, not connection-string-based)
+- ✅ App/environment decoupling preserved (Azure-specific config flows through environment files)
+- ✅ App code remains cloud-agnostic
+- ⚠️ 3 minor pre-existing gaps identified (not caused by fixes)
+
+### Audit Details
+
+**Clean Items (no concerns):**
+- Dapr component abstraction via Radius resources ✅
+- App/environment decoupling ✅
+- Radius API version (`Applications.*@2023-10-01-preview`) ✅
+- SP credential handling (auto-detect + re-registration) ✅
+- Registry parameterization ✅
+- Container platform constraints (`linux/amd64` optional) ✅
+- UAA justification (needed for RBAC assignments) ✅
+
+**Minor Concerns (pre-existing, not regressions):**
+1. **GHCR pull secret dead code for ACR** → Make conditional on registry type
+   - If `CONTAINER_REGISTRY` starts with `ghcr.io`: create secret + pass ref
+   - If ACR or native auth: skip secret + pass empty ref
+   - Rename to `imagePullSecretRef` for registry-neutrality
+
+2. **SPN Contributor role scoped to subscription** → Narrow to resource group
+   - Change `prepare-cluster.sh` scope from `/subscriptions/$ID` to `/subscriptions/$ID/resourceGroups/$RG`
+   - Requires RG to exist first (already ensured)
+
+3. **Local dev recipes missing** → Create `infra/radius/recipes/local/`
+   - Would complete architecture docs promise ("swap Azure Blob for Redis")
+   - Would enable true local dev without Azure dependencies
+   - New work item, not a regression
+
+### Highest-Priority Fix
+
+Make pull secret conditional on registry type (resolves confusing noise for ACR users).
+
+### Highest-Value New Work
+
+Create local dev recipes (would complete portability story).
+
+### Status
+
+✅ COMPLETE — Audit report merged into `.squad/decisions.md`
