@@ -1516,3 +1516,23 @@ This is **critical** because previously, env var setup was buried in Steps 6–8
 
 ### Learning
 - Environment variables are a prerequisite for action, not a reference section. They must appear in the reader's path before the command that needs them, not after it. When Quick Start is the primary path, prerequisites that are specific to a step belong inline with that step.
+
+## Architecture Documentation (Current Session)
+
+### Delivered
+- Created `docs/architecture.md` — standalone architecture reference for platform engineers and architects
+- Covers four areas grounded in actual code, not generic theory:
+  1. What Dapr does: State, Workflows, Service Invocation, Pub/Sub — mapped to which services use each and why
+  2. What Radius does: app model, recipe provisioning, Kubernetes manifest generation, environment portability
+  3. How they divide responsibility: Dapr owns runtime behavior, Radius owns wiring and infrastructure
+  4. Two Mermaid diagrams: architecture overview (`graph TD`) and expense submission flow (`sequenceDiagram`) with both auto-approve ($50) and manual-review ($150) branches
+
+### Key Decisions Documented
+- Recipes are the portability mechanism (swap environment file, not app code)
+- No hand-written Kubernetes YAML — Radius generates Deployments, Services, Dapr component CRDs
+- Workflow uses Dapr-native durable workflow SDK (checkpointed through same state store)
+- Loose coupling enforced by design: service invocation + pub/sub, no direct imports between services
+- The `$100` auto-approve threshold is documented as the branching point (matches `ApproveExpenseActivity.cs`)
+
+### Learning
+- Architecture docs should open with the "why this combination" question and close with repeatable takeaways. Platform audiences want to know the division of responsibility before they look at diagrams.

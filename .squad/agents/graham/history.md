@@ -167,6 +167,7 @@ Trailer includes Copilot co-author metadata per project convention.
 - Live Radius statestore failures on this repo now have a repeatable shape: `rad env show` can show the Azure recipe inputs were rendered, but `rad resource show Applications.Dapr/stateStores statestore -a radiusclaim`, `az storage account show`, and `az role assignment list` reveal the real blocker when `Storage Blob Data Contributor` is missing on the Blob account.
 - When `kubectl get components.dapr.io -A` is empty after a Radius deploy, treat the Dapr projection gap as a follow-on symptom; fix the statestore authorization first, then rerun `scripts/deploy-dapr-components.sh` to backfill `statestore`, `pubsub`, and `platform-secrets` into `azure-radiusclaim`.
 - Key files for this pattern: `infra/radius/environments/azure-radius.bicep`, `infra/radius/recipes/azure/state-store.bicep`, `scripts/deploy-dapr-components.sh`, and `docs/radius-validation-checklist.md`.
+- **GHCR image pull secret timing:** The bootstrap script must create the GHCR image pull secret AFTER `rad deploy` completes, not before. Radius generates the workload namespace (e.g., `radiusclaim-azure-radiusclaim`) during deployment, so trying to create the secret before deployment results in a timeout waiting for a namespace that doesn't exist yet. Fixed in `scripts/bootstrap.sh` by reordering the "Ensuring GHCR image pull secret" section to run after "Deploying Radius application".
 
 ## .gitignore Housekeeping (2026-03-24)
 
@@ -1751,3 +1752,452 @@ The `radiusclaim-github-actions` service principal (object ID `0db8a2ff-dab2-44c
 
 ### Related
 - Skill to extract: `.squad/skills/radius-recipe-rbac/SKILL.md` (reusable pattern)
+
+---
+
+## 2026-03-26 | Radius API Namespace Migration - Completed
+
+### Problem
+Two deployment errors when running `rad deploy` against `infra/radius/app.bicep`:
+
+1. **Deprecated resource types warning:**
+   ```
+   WARNING: The following resource types are deprecated:
+     - Applications.Core/applications@2023-10-01-preview
+     - Applications.Dapr/stateStores@2023-10-01-preview
+     - Applications.Dapr/pubSubBrokers@2023-10-01-preview
+     - Applications.Dapr/secretStores@2023-10-01-preview
+     - Applications.Core/gateways@2023-10-01-preview
+   Please migrate to the new Radius.* namespace.
+   ```
+
+2. **Azure authentication failure:**
+   ```
+   Error: {
+     "code": "AuthenticationFailed",
+     "message": "ClientSecretCredential authentication failed"
+   }
+   ```
+
+### Solution: Namespace Migration
+
+**Migrated all deprecated `Applications.*` types to stable `Radius.*` namespace:**
+
+Type Mappings:
+- `Applications.Core/applications@2023-10-01-preview` → `Radius.Core/applications@2024-01-01`
+- `Applications.Core/containers@2023-10-01-preview` → `Radius.Core/containers@2024-01-01`
+- `Applications.Core/environments@2023-10-01-preview` → `Radius.Core/environments@2024-01-01`
+- `Applications.Core/gateways@2023-10-01-preview` → `Radius.Core/gateways@2024-01-01`
+- `Applications.Dapr/stateStores@2023-10-01-preview` → `Radius.Dapr/stateStores@2024-01-01`
+- `Applications.Dapr/pubSubBrokers@2023-10-01-preview` → `Radius.Dapr/pubSubBrokers@2024-01-01`
+- `Applications.Dapr/secretStores@2023-10-01-preview` → `Radius.Dapr/secretStores@2024-01-01`
+
+Files Updated:
+- `infra/radius/app.bicep` — All application resources (app, gateway, Dapr components)
+- `infra/radius/modules/container-service.bicep` — Container resource type
+- `infra/radius/environments/azure-radius.bicep` — Environment + recipe registrations
+- `infra/radius/environments/dev.bicep` — Dev environment + recipe registrations
+
+**Important:** Recipe dictionary keys in environment files changed from `Applications.Dapr/*` to `Radius.Dapr/*` to match the new namespace.
+
+### Solution: Authentication Documentation
+
+**Root Cause:** Radius uses Azure credentials (service principal or workload identity) to provision Azure resources via recipes. The `ClientSecretCredential authentication failed` error occurs when required environment variables are missing or invalid.
+
+**Required Environment Variables:**
+
+Service Principal mode (--azure-auth-mode sp):
+- `AZURE_CLIENT_ID` — Application (client) ID
+- `AZURE_CLIENT_SECRET` — Client secret
+- `AZURE_TENANT_ID` — Microsoft Entra tenant ID
+- `AZURE_SUBSCRIPTION_ID` — (Optional) Auto-detected if not set
+
+Workload Identity mode (--azure-auth-mode wi):
+- `AZURE_CLIENT_ID` — Application (client) ID
+- `AZURE_TENANT_ID` — Microsoft Entra tenant ID
+- `AZURE_SUBSCRIPTION_ID` — (Optional) Auto-detected if not set
+
+Data-plane RBAC (Optional):
+- `AZURE_PRINCIPAL_ID` — Microsoft Entra object ID (auto-resolved from AZURE_CLIENT_ID if not set)
+
+**Documentation Added:**
+
+1. **scripts/bootstrap.sh** — Added comprehensive 30-line prerequisite header explaining:
+   - What credentials Radius needs and why
+   - Required environment variables for each auth mode
+   - Validation behavior and error messages
+   - Reference to walkthrough docs
+
+2. **.env.example** — Created template file with:
+   - Service principal mode section
+   - Workload identity mode section
+   - Data-plane RBAC guidance
+   - GHCR pull secret variables
+   - Usage notes and security warnings
+
+3. **.gitignore** — Added `.env` exclusion to prevent committing secrets
+
+**Why These Credentials Matter:**
+
+Radius uses them for two purposes:
+1. **Control-plane:** Provisioning Azure resources (storage, service bus, key vault) through recipes
+2. **Data-plane:** RBAC role assignments so Dapr components authenticate without shared keys (aligned with Entra auth pivot)
+
+**Operator Impact:**
+- Bootstrap script already validates credentials during preflight checks
+- New documentation makes prerequisites visible upfront instead of discovered through errors
+- .env.example provides copy-paste template for quick setup
+
+### Platform Story Update
+
+The Radius API migration to stable namespace is a breaking change for existing deployments. All Bicep files using `Applications.*` types must be updated to `Radius.*` before the next deployment. This is a one-time migration — the `@2024-01-01` API version is stable and forward-compatible.
+
+Recipe registrations in environment files must also update their dictionary keys from `Applications.Dapr/*` to `Radius.Dapr/*` to match the resource type namespace.
+
+### Files Changed
+- `infra/radius/app.bicep`
+- `infra/radius/modules/container-service.bicep`
+- `infra/radius/environments/azure-radius.bicep`
+- `infra/radius/environments/dev.bicep`
+- `scripts/bootstrap.sh` (prerequisite header)
+- `.env.example` (new file)
+- `.gitignore` (.env exclusion)
+
+### Related Decisions
+- See `.squad/decisions/inbox/graham-radius-api-migration.md` for formal decision record
+
+---
+
+## 2026-03-26: Service Principal Creation in prepare-cluster.sh
+
+**What:** Added automated Service Principal creation and credential management to `scripts/prepare-cluster.sh` so the entire cluster prep flow is self-contained and documented.
+
+**Why:** Wesley already has a Service Principal but wanted the creation step baked into the script to eliminate tribal knowledge. The feature makes the platform story teachable to operators who don't yet have credentials.
+
+**Implementation:**
+
+1. **Placement:** New section added after Azure login/subscription check (line 339) and before resource group creation.
+
+2. **Skip-if-present logic:** If `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` are already exported, the section skips creation and logs success.
+
+3. **Existing SPN detection:** Before creating, checks if `radiusclaim-radius-sp` already exists using `az ad sp list --display-name`. If found:
+   - Prompts user to either reuse it (they provide the secret manually) or create new with timestamp suffix
+   - Exits with actionable instructions if reuse is chosen
+
+4. **SPN creation:** Uses `az ad sp create-for-rbac` with Contributor role scoped to the subscription. Parses JSON output to extract `appId`, `password`, and `tenant`.
+
+5. **Credential export:** Exports `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` for the current session.
+
+6. **Prominent warning:** After creation, displays credentials in a clearly marked section with:
+   - Warning that the secret cannot be retrieved again
+   - Copy-paste-ready export statements for shell profile or .env file
+   - Reminder to exclude .env from git
+
+**Style Compliance:**
+- Uses existing helper functions: `section`, `log_success`, `log_warning`, `log_info`, `log_error`, `fail`, `prompt_confirm`, `run_cmd`
+- Follows script's bash conventions (variable naming, error handling)
+- No new dependencies (only `az` CLI, `jq`, standard bash)
+- Interactive prompts respect `--yes` flag for non-interactive mode
+- Teachable inline comments on non-obvious parts
+
+**Operator Impact:**
+- First-time operators can run prepare-cluster.sh and get prompted through SPN creation
+- Operators with existing credentials can skip creation by exporting env vars upfront
+- Credential values are printed once for operator to save — no silent failures
+- Rerunning the script on same cluster won't recreate SPN if credentials are set
+
+**Files Changed:**
+- `scripts/prepare-cluster.sh` — New Service Principal creation section
+
+**Related Decisions:**
+- See `.squad/decisions/inbox/graham-spn-setup-in-prepcluster.md` for decision rationale
+
+---
+
+## 2026-03-26: Radius Azure Credential Registration in prepare-cluster.sh
+
+**What:** Added Azure credential registration to `scripts/prepare-cluster.sh` to fix `InvalidDeployment` errors when deploying Radius environments.
+
+**Why:** Radius requires Azure credentials to be registered at the control plane level using `rad credential register azure sp` before it can provision Azure-backed recipes. The environment bicep file correctly declares `providers.azure.scope`, but Radius also needs the credentials registered separately to authenticate with Azure during recipe execution.
+
+**Root Cause of Original Error:**
+The environment deployment was failing with:
+```
+Error: {
+  "code": "InvalidDeployment",
+  "message": "Invalid deployment template.",
+  "details": [
+    {
+      "code": "Invalid",
+      "message": "Azure deployment failed, please ensure you have configured an Azure provider with your Radius environment"
+    }
+  ]
+}
+```
+
+This happened because the Radius control plane knew WHERE to deploy (from `azureProviderScope` in the bicep) but had no credentials to authenticate with Azure when running recipes.
+
+**Implementation:**
+
+1. **Placement:** Added after workspace context setup (line 442) and before "Cluster prep complete" section
+
+2. **Idempotent check:** Uses `rad credential show azure` to check if credentials are already registered; skips registration if they exist
+
+3. **Uses existing credentials:** Leverages `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` that are already validated earlier in the script (service principal creation section)
+
+4. **Uses script conventions:** Uses existing `section`, `log_success`, `run_cmd`, `fail` helpers; respects `$DRY_RUN` flag
+
+5. **Inline comment:** Explains why this step exists (Radius control plane needs creds separately from bicep params)
+
+**Operator Impact:**
+- First-time cluster prep now registers credentials automatically
+- Rerunning prepare-cluster.sh on the same cluster skips registration if already present
+- Credentials flow through to bootstrap.sh, which also has idempotent registration logic
+- Error surfaces earlier (during cluster prep) if credentials are missing
+
+**Files Changed:**
+- `scripts/prepare-cluster.sh` — Added credential registration section after workspace setup
+
+**Related Decisions:**
+- See `.squad/decisions/inbox/graham-radius-credential-register.md` for decision record
+
+---
+
+## 2026-03-26: SPN Creation Changed to Explicit --create-spn Flag
+
+**What:** Refactored `scripts/prepare-cluster.sh` to require an explicit `--create-spn` flag for service principal creation instead of implicit detection based on missing environment variables.
+
+**Why:** Implicit detection made a destructive cloud operation (creating a service principal with Contributor role) feel accidental. Explicit flags for mutations are a platform automation best practice and align with the existing pattern used by `--create-aks`, `--install-dapr`, and `--install-radius`.
+
+**Changes Made:**
+
+1. **Added `CREATE_SPN` variable:** Initialized to `false` by default alongside other feature flags (line 19)
+
+2. **Added `--create-spn` argument parser:** Integrated into the existing `while`/`case` block following the same pattern as `--create-aks` (line 83-86)
+
+3. **Updated usage/help text:** Added `--create-spn` description in the optional arguments section explaining it creates a service principal for Radius and is skipped if credentials are already set (line 41)
+
+4. **Refactored SPN creation logic:**
+   - **If credentials exist:** Skip creation entirely (unchanged behavior)
+   - **If credentials missing AND `--create-spn` is NOT set:** Fail early with clear, actionable message listing the three required env vars and mentioning the `--create-spn` option
+   - **If credentials missing AND `--create-spn` IS set:** Proceed with the existing interactive prompt-and-create flow
+
+**Operator Impact:**
+- **Before:** Script would prompt to create SPN when credentials were missing (implicit)
+- **After:** Script requires explicit `--create-spn` flag to enter creation flow; otherwise fails fast with guidance
+- **Existing users:** No behavior change if credentials are already set or if using `--create-spn` explicitly
+- **New users:** Must make conscious decision to pass `--create-spn` for cloud resource creation
+
+**Style Compliance:**
+- Follows existing flag pattern: `CREATE_AKS`, `INSTALL_DAPR`, `INSTALL_RADIUS` → `CREATE_SPN`
+- Uses same script conventions for error handling and user messaging
+- Help text format matches existing optional arguments
+- No changes to underlying SPN creation logic (same prompts, same credential handling)
+
+**Design Rationale:**
+Explicit flags for destructive operations prevent accidental cloud resource creation and make the operator's intent visible in command history and CI logs. This aligns with the principle established by `--create-aks`: cluster-level mutations require explicit opt-in.
+
+**Files Changed:**
+- `scripts/prepare-cluster.sh` — Added `--create-spn` flag, updated argument parser, updated usage text, refactored SPN block
+
+**Related Decisions:**
+- See `.squad/decisions/inbox/graham-spn-explicit-flag.md` for formal decision record
+- Supersedes implicit detection behavior added in previous SPN creation work
+
+
+---
+
+## 2026-03-26: Added rad env update to bootstrap.sh
+
+**Context:**
+Daisy confirmed the root cause of Radius Azure provider errors: `bootstrap.sh` was missing a `rad env update` call after environment deployment. The bicep's `providers.azure.scope` declaration is descriptive metadata only — Radius requires an explicit CLI command to register WHERE the environment should deploy Azure resources.
+
+**What Was Added:**
+After the `rad deploy infra/radius/environments/azure-radius.bicep` call succeeds (line 843), added:
+
+```bash
+section "Registering Azure provider scope with Radius"
+run_cmd "$RAD_BIN" env update "${ENV_NAME}" \
+  --azure-subscription-id "${AZURE_SUBSCRIPTION_ID}" \
+  --azure-resource-group "${RESOURCE_GROUP}"
+```
+
+**Why rad env update Is Distinct from rad credential register:**
+- `rad credential register azure sp` (already present) tells Radius WHO authenticates to Azure (service principal credentials)
+- `rad env update --azure-subscription-id --azure-resource-group` tells Radius WHERE to deploy Azure resources (subscription + resource group scope)
+- Both are required. Credential registration without scope registration causes "Azure provider not configured" errors when recipes attempt to provision Azure resources.
+
+**Implementation Details:**
+- Uses existing variable names: `ENV_NAME`, `AZURE_SUBSCRIPTION_ID`, `RESOURCE_GROUP`
+- Uses existing helper functions: `section`, `run_cmd`
+- Idempotent — `rad env update` is safe to run multiple times (it's an upsert operation)
+- Comment explains why this step is separate from credential registration
+
+**Files Changed:**
+- `scripts/bootstrap.sh` — Added `rad env update` call after environment deployment
+
+**Related Decisions:**
+- See `.squad/decisions/inbox/graham-rad-env-update.md` for formal decision record
+
+---
+
+## 2026-03-26T20:15:00Z — Credential Registration Must Happen in bootstrap.sh Before Environment Deploy
+
+**Context:**
+Despite adding `rad credential register azure sp` to `prepare-cluster.sh` and `rad env update` to `bootstrap.sh` after environment deploy, the error persisted:
+```
+Azure deployment failed, please ensure you have configured an Azure provider with your Radius environment
+```
+
+**Root Cause:**
+The error happens DURING `rad deploy azure-radius.bicep`. Radius needs Azure credentials registered BEFORE the bicep deploy runs. The previous implementation:
+1. Only registered credentials in `prepare-cluster.sh` (which may not run in every bootstrap.sh execution)
+2. Placed `rad env update` AFTER the environment deploy (correct placement, but insufficient)
+3. Missing: credential registration in bootstrap.sh itself before the environment deploy
+
+**Critical Ordering Requirement:**
+```
+1. rad credential register azure sp/wi  ← Must happen before environment deploy
+2. rad deploy azure-radius.bicep        ← Validates Azure access during bicep processing
+3. rad env update                       ← Tells Radius WHERE to deploy (after environment exists)
+```
+
+**Implementation:**
+Added credential registration logic in `bootstrap.sh` immediately BEFORE the environment deploy:
+```bash
+section "Deploying Radius environment"
+
+# Register Azure credentials with Radius control plane.
+# Required BEFORE environment deploy — Radius validates Azure access during bicep processing.
+# Idempotent: safe to run on re-runs.
+if "$RAD_BIN" credential show azure &>/dev/null; then
+  log_info "Azure credentials already registered with Radius — skipping"
+else
+  if [ "$AZURE_AUTH_MODE_RESOLVED" = "sp" ]; then
+    log_info "Registering Azure service principal credentials with Radius"
+    run_cmd "$RAD_BIN" credential register azure sp \
+      --client-id "${AZURE_CLIENT_ID}" \
+      --client-secret "${AZURE_CLIENT_SECRET}" \
+      --tenant-id "${AZURE_TENANT_ID}"
+    log_success "Azure service principal credentials registered with Radius"
+  elif [ "$AZURE_AUTH_MODE_RESOLVED" = "wi" ]; then
+    log_info "Registering Azure workload identity credentials with Radius"
+    run_cmd "$RAD_BIN" credential register azure wi \
+      --client-id "${AZURE_CLIENT_ID}" \
+      --tenant-id "${AZURE_TENANT_ID}"
+    log_success "Azure workload identity credentials registered with Radius"
+  else
+    fail "Cannot register Azure credentials: auth mode '${AZURE_AUTH_MODE_RESOLVED}' is not supported"
+  fi
+fi
+
+ENV_DEPLOY_ARGS=(...)
+run_cmd "$RAD_BIN" "${ENV_DEPLOY_ARGS[@]}"
+```
+
+**Why This Works:**
+- `bootstrap.sh` is designed to be runnable independently of `prepare-cluster.sh`
+- Idempotent check (`rad credential show azure`) makes it safe to run on re-runs
+- Supports both service principal (sp) and workload identity (wi) auth modes
+- Uses already-validated variables: `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`
+- Placed immediately before the environment deploy ensures credentials are available when Radius validates Azure access
+
+**Variable Validation:**
+No additional validation needed — the script already validates:
+- Line 762: `test -n "${AZURE_CLIENT_ID:-}" || fail`
+- Line 763: `test -n "${AZURE_TENANT_ID:-}" || fail`
+- Line 766-768: Validates auth mode and credential registration requirements
+- `AZURE_CLIENT_SECRET` is validated indirectly via auth mode resolution (line 289)
+
+**Files Changed:**
+- `scripts/bootstrap.sh` — Added credential registration before environment deploy
+- `.squad/agents/graham/history.md` — This entry
+- `.squad/decisions/inbox/graham-credential-in-bootstrap.md` — Decision record
+
+**Operator Rule:**
+Credentials must be registered in bootstrap.sh itself, not only in prepare-cluster.sh, because bootstrap.sh is designed to be runnable independently.
+
+## 2026-03-26: Fixed Radius Azure Provider Sequencing (rad env update)
+
+**Root Cause:** The "Azure provider not configured" error was a sequencing bug. `rad env update` (which registers the Azure subscription/resource group scope with Radius) was running AFTER `rad deploy azure-radius.bicep`. But Radius needs the scope configured BEFORE it can process the bicep.
+
+**Correct Radius Azure Provider Sequence:**
+1. `rad credential register azure sp` — WHO to authenticate as
+2. `rad env update --azure-subscription-id ... --azure-resource-group ...` — WHERE to deploy
+3. `rad deploy {env-bicep}` — THEN deploy
+
+**Chicken-and-Egg Problem on First Run:**
+`rad env update` requires the Radius environment to already exist. On a first-time deploy, the environment doesn't exist yet — the bicep creates it. 
+
+**Solution Pattern:**
+```bash
+# Check if environment exists
+ENV_EXISTS=false
+if rad env show "${ENV_NAME}" &>/dev/null; then
+  ENV_EXISTS=true
+fi
+
+# If env exists → update BEFORE deploy
+if [ "$ENV_EXISTS" = true ]; then
+  rad env update "${ENV_NAME}" --azure-subscription-id ... --azure-resource-group ...
+fi
+
+# Deploy bicep (creates env on first run, updates on re-run)
+rad deploy azure-radius.bicep
+
+# If first-run → update AFTER deploy
+if [ "$ENV_EXISTS" = false ]; then
+  rad env update "${ENV_NAME}" --azure-subscription-id ... --azure-resource-group ...
+fi
+```
+
+This pattern handles both cases:
+- **First-run:** bicep creates environment → `rad env update` runs after
+- **Re-run:** environment exists → `rad env update` runs before bicep can reference Azure resources
+
+**Files Changed:**
+- `scripts/bootstrap.sh` — Moved `rad env update` logic with chicken-and-egg handling (lines 853-889)
+- `.squad/agents/graham/history.md` — This entry
+- `.squad/decisions/inbox/graham-env-update-sequence.md` — Decision record
+
+**Verification:**
+The credential registration sequence (lines 829-851) remains correct — it runs before both `rad env update` and the bicep deploy, as required.
+
+**Operator Rule:**
+When deploying Radius environments with Azure providers, the scope registration (`rad env update`) must happen before bicep deployment on re-runs, but after bicep deployment on first-runs. The `rad env show` check disambiguates.
+
+## 2026-03-26: Bicep Type Migration Reverted — Applications.* Types Correct
+
+**Finding from daisy-live-bootstrap testing:**
+
+The migration from `Applications.*@2023-10-01-preview` to `Radius.*@2024-01-01` bicep types was **incompatible with Radius 0.55.0**.
+
+**Key Discovery:**
+- `Radius.Dapr/*` does NOT exist at any Radius version
+- `Radius.Core/*` only at `@2025-08-01-preview` (not available in 0.55.0)
+- `Applications.Core/*` and `Applications.Dapr/*` @2023-10-01-preview are the **correct and only working types**
+
+**Decision:**
+✅ Keep all bicep files using `Applications.*@2023-10-01-preview` for now.
+❌ Do NOT migrate to `Radius.*` types until Radius version includes `Radius.Dapr/*` support.
+
+**Why the BCP081 Warning is Real:**
+When using `Radius.*` types in bootstrap/azure-radius.bicep, the warnings are **not** cosmetic — they indicate the namespace/type doesn't exist in the installed Radius version. Each BCP081 warning translates to a runtime "invalid namespace" error during `rad deploy`.
+
+**Action Taken:**
+- Reverted all migration attempts from prior session
+- Verified Applications.* types work end-to-end with ACR strategy
+- Document in decision log for team awareness
+
+**Related Work:**
+- daisy-live-bootstrap session: 8+ iterations, final success with Applications.* types
+- Session Log: `.squad/log/2026-03-26T20-22-59Z-bootstrap-deploy-success.md`
+
+**Gateway Verification:**
+With Applications.* types + ACR migration + 6 bootstrap fixes:
+- ✅ All services running
+- ✅ Gateway: http://expense.radiusclaim.9.160.144.105.nip.io → HTTP 200
+- ✅ All Dapr sidecars ready (2/2)
+
+**Team Recommendation:**
+This reverts the intent of the graham-app-bicep-migration attempt. Record it as learning: Radius version compatibility must be validated before type migrations.

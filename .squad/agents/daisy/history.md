@@ -1220,3 +1220,39 @@ Ran `./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes` iteratively. 
 - All 3 services running (2/2 ready with Dapr sidecars)
 - Gateway endpoint: `http://expense.radiusclaim.9.160.144.105.nip.io` → HTTP 200
 - Decision document: `.squad/decisions/inbox/daisy-bootstrap-live-debug.md`
+
+## Bootstrap Success & Gateway Live (2026-03-26 Post-Debug)
+
+### Status Update
+✅ Deployment **fully succeeded** on 8th attempt after all 6 fixes implemented.
+
+### Gateway Verification
+- **URL:** http://expense.radiusclaim.9.160.144.105.nip.io
+- **Status:** HTTP 200 OK
+- **Services:** All 3 running with 2/2 Dapr sidecars ready
+- **Container Registry:** ACR (radiusclaimacr.azurecr.io) with amd64 images
+
+### Critical Decision: Applications.* Types
+**DO NOT migrate bicep types to Radius.*** until Radius version supports `Radius.Dapr/*` resources.
+
+**Reason:** Radius 0.55.0 incompatibility
+- `Radius.Dapr/*` does NOT exist at any version
+- `Radius.Core/*` only available at @2025-08-01-preview (not in 0.55.0)
+- `Applications.*@2023-10-01-preview` are the correct types for current Radius version
+- BCP081 warnings are **real errors** in this context (not just cosmetic)
+
+**Action:** All bicep files reverted to Applications.* types and validated.
+
+### ACR Decision
+Recommend using radiusclaimacr.azurecr.io as standard container registry going forward.
+- Native AKS-ACR integration via `az aks update --attach-acr`
+- Eliminates image pull secret management
+- Managed identity grants AcrPull to kubelet automatically
+- Always build with `--platform linux/amd64`
+
+### Orchestration Log
+Generated: `.squad/orchestration-log/2026-03-26T20-22-59Z-daisy-live-bootstrap.md`
+
+### Session Log
+Generated: `.squad/log/2026-03-26T20-22-59Z-bootstrap-deploy-success.md`
+Contains full decision audit trail, technical findings, and deployment commands.
