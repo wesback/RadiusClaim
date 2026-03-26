@@ -1,6 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ============================================================================
+# PREREQUISITES: Azure Authentication Environment Variables
+# ============================================================================
+# This script requires Azure authentication credentials when registering
+# Radius credentials for Azure provider integration. Radius uses these
+# credentials to provision Azure resources (storage accounts, service bus,
+# key vaults) via recipes.
+#
+# Required environment variables depend on your authentication mode:
+#
+# SERVICE PRINCIPAL MODE (--azure-auth-mode sp):
+#   AZURE_CLIENT_ID       - Application (client) ID of the service principal
+#   AZURE_CLIENT_SECRET   - Client secret for the service principal
+#   AZURE_TENANT_ID       - Microsoft Entra tenant ID
+#   AZURE_SUBSCRIPTION_ID - (Optional) Azure subscription ID; auto-detected if not set
+#
+# WORKLOAD IDENTITY MODE (--azure-auth-mode wi):
+#   AZURE_CLIENT_ID       - Application (client) ID
+#   AZURE_TENANT_ID       - Microsoft Entra tenant ID
+#   AZURE_SUBSCRIPTION_ID - (Optional) Azure subscription ID; auto-detected if not set
+#
+# OPTIONAL FOR DATA-PLANE RBAC:
+#   AZURE_PRINCIPAL_ID    - Microsoft Entra object ID of the principal
+#                           (auto-resolved if not set; see --help for details)
+#
+# VALIDATION:
+# The script validates these credentials early during preflight checks.
+# If credentials are missing or invalid, you'll get a clear error with
+# guidance on which variables to set.
+#
+# For more details, see docs/end-to-end-setup-walkthrough.md
+# ============================================================================
+
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 RAD_BIN="${RAD_BIN:-rad}"
@@ -669,15 +702,38 @@ if [ "$RESOURCE_GROUP_EXISTS" != "true" ]; then
   fi
 fi
 
+if radius_azure_credential_registered; then
+  AZURE_CREDENTIAL_REGISTERED=true
+  # Auto-fill AZURE_CLIENT_ID / AZURE_TENANT_ID from existing credential when not set.
+  # This lets operators re-run bootstrap with user-identity az login without
+  # exporting every SP env var by hand.
+  if [ -z "${AZURE_CLIENT_ID:-}" ] || [ -z "${AZURE_TENANT_ID:-}" ]; then
+    _rad_cred_json="$("$RAD_BIN" credential show azure -o json 2>/dev/null | sed -n '/^{/,$p' || true)"
+    if [ -n "$_rad_cred_json" ]; then
+      _cred_client_id="$(printf '%s' "$_rad_cred_json" | jq -r '
+        .AzureCredentials.ServicePrincipal.ClientID //
+        .AzureCredentials.WorkloadIdentity.ClientID // empty' 2>/dev/null || true)"
+      _cred_tenant_id="$(printf '%s' "$_rad_cred_json" | jq -r '
+        .AzureCredentials.ServicePrincipal.TenantID //
+        .AzureCredentials.WorkloadIdentity.TenantID // empty' 2>/dev/null || true)"
+      if [ -z "${AZURE_CLIENT_ID:-}" ] && [ -n "$_cred_client_id" ]; then
+        AZURE_CLIENT_ID="$_cred_client_id"
+        log_info "Auto-detected AZURE_CLIENT_ID from existing Radius credential: ${AZURE_CLIENT_ID}"
+      fi
+      if [ -z "${AZURE_TENANT_ID:-}" ] && [ -n "$_cred_tenant_id" ]; then
+        AZURE_TENANT_ID="$_cred_tenant_id"
+        log_info "Auto-detected AZURE_TENANT_ID from existing Radius credential: ${AZURE_TENANT_ID}"
+      fi
+      unset _rad_cred_json _cred_client_id _cred_tenant_id
+    fi
+  fi
+else
+  AZURE_CREDENTIAL_REGISTERED=false
+fi
+
 AZURE_PRINCIPAL_ID_FOR_RBAC="$(resolve_azure_principal_id)"
 if [ -n "$AZURE_PRINCIPAL_ID_FOR_RBAC" ]; then
   ensure_radius_recipe_rbac "$AZURE_SUBSCRIPTION_ID" "$RESOURCE_GROUP" "$AZURE_PRINCIPAL_ID_FOR_RBAC"
-fi
-
-if radius_azure_credential_registered; then
-  AZURE_CREDENTIAL_REGISTERED=true
-else
-  AZURE_CREDENTIAL_REGISTERED=false
 fi
 
 if [ "$AZURE_CREDENTIAL_REGISTERED" = false ]; then
@@ -686,6 +742,10 @@ if [ "$AZURE_CREDENTIAL_REGISTERED" = false ]; then
   else
     fail "Radius cannot provision Azure-backed recipes without an Azure credential."
   fi
+elif [ -n "${AZURE_CLIENT_SECRET:-}" ]; then
+  # Credential exists but a client secret is available — re-register to keep the
+  # stored secret fresh (covers rotated-secret scenarios).
+  SHOULD_REGISTER_AZURE_CREDENTIAL=true
 fi
 
 RECIPES_NEED_PUBLISH_REASON=""
@@ -792,6 +852,24 @@ if [ "$SHOULD_PUBLISH_RECIPES" = true ]; then
 fi
 
 section "Deploying Radius environment"
+
+# Check if the Radius environment has been deployed before.
+# On first-run, the environment doesn't exist yet so we skip rad env update until after bicep deploy.
+# On re-run, the environment exists so we must update it BEFORE bicep deploy.
+ENV_EXISTS=false
+if "$RAD_BIN" env show "${ENV_NAME}" &>/dev/null; then
+  ENV_EXISTS=true
+fi
+
+if [ "$ENV_EXISTS" = true ]; then
+  # Environment already exists — register Azure provider scope BEFORE bicep deploy.
+  # This tells Radius WHERE to deploy Azure resources (required for bicep processing).
+  section "Registering Azure provider scope with Radius (pre-deploy)"
+  run_cmd "$RAD_BIN" env update "${ENV_NAME}" \
+    --azure-subscription-id "${AZURE_SUBSCRIPTION_ID}" \
+    --azure-resource-group "${RESOURCE_GROUP}"
+fi
+
 ENV_DEPLOY_ARGS=(
   deploy
   "$REPO_ROOT/infra/radius/environments/azure-radius.bicep"
@@ -809,6 +887,14 @@ ENV_DEPLOY_ARGS=(
 )
 run_cmd "$RAD_BIN" "${ENV_DEPLOY_ARGS[@]}"
 
+if [ "$ENV_EXISTS" = false ]; then
+  # First-run: environment created by bicep deploy — register Azure provider scope AFTER.
+  section "Registering Azure provider scope with Radius (post-deploy)"
+  run_cmd "$RAD_BIN" env update "${ENV_NAME}" \
+    --azure-subscription-id "${AZURE_SUBSCRIPTION_ID}" \
+    --azure-resource-group "${RESOURCE_GROUP}"
+fi
+
 if ! "$DRY_RUN"; then
   DEPLOYED_ENV_NAMESPACE="$(fetch_env_namespace)"
   if [ -n "$DEPLOYED_ENV_NAMESPACE" ]; then
@@ -825,8 +911,12 @@ if [ "$SKIP_APP_DEPLOY" = false ] && [ "$SKIP_IMAGE_PUSH" = false ]; then
 fi
 
 if [ "$SKIP_APP_DEPLOY" = false ]; then
-  section "Ensuring GHCR image pull secret"
-  wait_for_namespace "$WORKLOAD_NAMESPACE"
+  # Pre-create the workload namespace and GHCR pull secret BEFORE rad deploy so
+  # that Kubernetes can pull private images as soon as Radius creates the pods.
+  section "Ensuring GHCR image pull secret (pre-deploy)"
+  if ! "$DRY_RUN"; then
+    kubectl create namespace "$WORKLOAD_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+  fi
   if kubectl get secret ghcr-pull-secret -n "$WORKLOAD_NAMESPACE" >/dev/null 2>&1; then
     echo "  ✓ ghcr-pull-secret already exists in $WORKLOAD_NAMESPACE"
   elif [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USERNAME:-}" ]; then
@@ -837,13 +927,11 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
       -n "$WORKLOAD_NAMESPACE"
     echo "  ✓ ghcr-pull-secret created in $WORKLOAD_NAMESPACE"
   else
-    echo "  ⚠ ghcr-pull-secret not found and GHCR_USERNAME/GHCR_TOKEN not set."
-    echo "    Private GHCR images may fail to pull. Set GHCR_USERNAME and GHCR_TOKEN and re-run, or create the secret manually:"
+    log_warning "GHCR_USERNAME/GHCR_TOKEN not set — private GHCR images may fail to pull."
+    log_warning "Set GHCR_USERNAME and GHCR_TOKEN before running bootstrap, or create the secret manually:"
     echo "    kubectl create secret docker-registry ghcr-pull-secret --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT> -n $WORKLOAD_NAMESPACE"
   fi
-fi
 
-if [ "$SKIP_APP_DEPLOY" = false ]; then
   section "Deploying Radius application"
   APP_DEPLOY_ARGS=(
     deploy

@@ -1045,3 +1045,178 @@ Recipe artifacts and application container images follow different authenticatio
 **Architecture pattern confirmed:** Delivery mechanism (ArgoCD, GitHub Actions, Flux) is orthogonal to platform architecture (Dapr + Radius). Reference samples should teach architecture, not delivery opinions.
 
 **Decision file:** `.squad/decisions/inbox/daisy-argocd-investigation.md`
+
+---
+
+## 2026-03-26 — Phase 7 Status Review (Daisy Assessment)
+
+**Timestamp:** 20260326T093010Z  
+**Authority:** Daisy (Lead)  
+**Task:** Review Phase 7 progress against validation checklist exit criteria
+
+### Assessment Findings
+
+#### ✅ COMPLETE: Build & Parse Validation
+- [x] `dotnet build RadiusClaim.slnx --nologo` passes (zero errors, zero warnings)
+- [x] `az bicep build --file infra/radius/app.bicep` parses without errors
+- [x] No test projects exist (deferred by design)
+
+**Verdict:** All build/parse gates PASSED.
+
+#### ✅ COMPLETE: Infrastructure & Scripting
+
+**Deployment scripts exist and are feature-complete:**
+- ✅ `scripts/validate-deployment.sh` (410 lines) — Health checks, $50 auto-approve flow, $150 manual-review flow, $100.00 boundary case validation, JSON output for CI/CD
+- ✅ `scripts/bootstrap.sh` (33KB) — Operator orchestrator with preflight checks, Entra auth principal resolution, Key Vault soft-delete recovery, Dapr + Radius readiness checks
+- ✅ `scripts/prepare-cluster.sh` (12KB) — AKS creation/verification, Dapr/Radius installation, kubectl context setup
+
+**CI/CD pipeline complete:**
+- ✅ `.github/workflows/deploy-azure.yml` (13.5KB) — Build, push to GHCR, Kubernetes deploy, end-to-end validation via port-forward, notification-svc log inspection
+- ✅ Validation step integrated (line 262): "Run end-to-end validation against Kubernetes deployment"
+
+**Radius infrastructure complete:**
+- ✅ `infra/radius/app.bicep` (8KB) — Applications.Core app model, three service deployments, public gateway for expense-api, Dapr state/pub/sub/secrets components with Entra auth metadata
+
+**Three service projects present and building:**
+- ✅ `src/expense-api/` — ExpenseApi.csproj with HTTP endpoints, Dapr state, workflow invocation
+- ✅ `src/workflow-engine/` — WorkflowEngine.csproj with Dapr Workflows orchestrator
+- ✅ `src/notification-svc/` — NotificationSvc.csproj with pub/sub subscription
+
+**Entra Auth Pivot COMPLETED:**
+- ✅ `infra/radius/recipes/azure/state-store.bicep` — Removed `allowSharedKeyAccess: true`, now uses Microsoft Entra parameters (tenantId, clientId, principalObjectId)
+- ✅ `scripts/deploy-dapr-components.sh` — Entra auth path with clientId/clientSecret secret binding, no shared-key fallback
+- ✅ `scripts/bootstrap.sh` — `resolve_azure_principal_id()` function with support for service principal, workload identity, and manual principal ID
+
+**Verdict:** Infrastructure & scripting gates PASSED.
+
+#### ✅ COMPLETE: Documentation & Demo Readiness
+
+- ✅ `docs/phase-7-demo-walkthrough.md` (282 lines) — Step-by-step $50 and $150 flows, `kubectl logs` evidence collection, CorrelationId traceability
+- ✅ `docs/end-to-end-setup-walkthrough.md` (1,447 lines) — Two-script primary path, deep-dive optional manual steps, environment variable guidance, Entra auth documentation
+- ✅ `docs/radius-validation-checklist.md` (34.5KB) — Pre-deployment validation, troubleshooting, preflight checks, Dapr/Radius readiness gates
+- ✅ `README.md` — Architecture narrative, boundary case ($100.00) documented, sample capabilities clearly described
+
+**Verdict:** Documentation gates PASSED.
+
+#### ⏳ PENDING: Distributed System Validation (Requires Live Deployment)
+
+Phase 7 validation checklist marks these as **unchecked** because they require a **live Kubernetes + Radius deployment**:
+
+- [ ] Health endpoint returns `{ "status": "ok" }`
+- [ ] $50 expense progresses: Submitted → Approved → Reimbursed
+- [ ] $150 expense progresses: Submitted → ManualReviewRequested
+- [ ] $100.00 expense enters ManualReviewRequested (not auto-approved)
+- [ ] All amounts preserved correctly
+- [ ] Script exits with code 0
+
+**Why these are pending:** These are not code-review gates; they are operational validation gates. Karen (Tester) must run `scripts/validate-deployment.sh` against a live deployment to mark these complete.
+
+Similarly, CI/CD validation (`deploy-azure.yml` end-to-end step) requires a live GitHub Actions workflow execution.
+
+**Verdict:** Operational gates WAITING FOR KAREN (requires live deployment environment).
+
+### Phase 7 Blocking Issues Resolved
+
+The two critical blockers from 2026-03-25 have been resolved:
+
+1. **Entra Auth Pivot (RESOLVED)** — Tenant policy blocks `allowSharedKeyAccess: true`. Graham completed rewrite of state-store recipe, bootstrap script, and Dapr component backfill to use Microsoft Entra identity. Pivot is production-ready.
+2. **CI/CD Auth Registration (RESOLVED)** — GitHub Actions workflow now includes explicit `rad credential register azure sp` step before recipe provisioning.
+
+### Summary: What's Genuinely Done
+
+**Ready to share:** The infrastructure code, scripts, documentation, and CI/CD pipeline are production-quality and could be merged to main/released as reference material **right now**. The code quality, error handling, and narrative are solid.
+
+**What's still open:** Karen must run a live end-to-end validation to prove the distributed system behavior (workflow orchestration, state persistence, pub/sub notification) works as advertised. This is not a code problem — it's an operational validation problem.
+
+### Recommendation
+
+**Phase 7 is code-complete and ready for operational validation.** 
+
+Wesley: Allocate a Kubernetes cluster (AKS or any K8s with Dapr + Radius) and have Karen execute `scripts/bootstrap.sh` and `scripts/validate-deployment.sh`. Once those validation scripts pass with all checks green, Phase 7 is **APPROVED**.
+
+No code changes are needed. The sample is teachable, repeatable, and reference-quality as-is.
+
+
+## 2026-03-26: Radius Azure Provider Error RCA
+
+**Context:** Persistent "Invalid deployment template" error on `rad deploy infra/radius/environments/azure-radius.bicep` across multiple sessions despite credential registration attempts.
+
+**Investigation:**
+
+1. **Bicep Analysis:**
+   - `azure-radius.bicep` defines `Radius.Core/environments@2024-01-01` resource
+   - Contains `providers.azure.scope` metadata pointing to subscription/resource group
+   - Defines THREE Azure-backed recipes: state-store, pubsub, secrets (all point to OCI registry)
+   - Does NOT directly provision Azure resources, only declares recipe metadata
+
+2. **Bootstrap Script Sequence (lines 800-877):**
+   ```
+   Line 800-818: First credential registration attempt (SHOULD_REGISTER_AZURE_CREDENTIAL)
+   Line 832-851: Second credential registration attempt (duplicate, checks if already exists)
+   Line 853-868: rad deploy azure-radius.bicep with all parameters
+   Line 874-876: rad env update --azure-subscription-id --azure-resource-group
+   ```
+
+3. **Official Radius Documentation:**
+   - Azure provider setup guide: https://docs.radapp.io/guides/operations/providers/azure-provider/howto-azure-provider-sp/
+   - Manual configuration sequence: `rad env update` FIRST, THEN `rad credential register`
+   - Quote: "Use rad env update to update your Radius Environment with your Azure subscription ID and Azure resource group"
+   - Then: "Use rad credential register azure to add the Azure service principal"
+
+4. **Known Issue Research:**
+   - GitHub issue #11462: Radius gives misleading "Azure provider not configured" error when the real problem is API version or resource type issues
+   - Error message doesn't reflect actual cause — can be triggered by wrong API version, not just missing credentials
+
+**Root Cause:**
+
+The sequence is WRONG. Current bootstrap does:
+1. `rad credential register` (lines 832-851)
+2. `rad deploy azure-radius.bicep` (line 868)
+3. `rad env update` (lines 874-876)
+
+But Radius requires:
+1. `rad env update` to tell Radius WHERE to deploy Azure resources
+2. `rad credential register` to tell Radius HOW to authenticate
+3. THEN environment bicep can be deployed
+
+The environment bicep contains `providers.azure.scope` which is DESCRIPTIVE metadata, but `rad env update` is what Radius actually reads for Azure provider configuration. Without `rad env update` being called BEFORE deployment, Radius doesn't know the Azure target scope and fails with "Azure provider not configured".
+
+**Evidence:**
+- Line 873 comment says: "The bicep's azureProviderScope is descriptive metadata; this CLI call is what Radius reads."
+- This comment is AFTER the deploy, meaning the script acknowledges env update is required but does it too late
+- Official docs show env update must come before credential registration
+
+**Why Previous Fixes Failed:**
+- Adding `rad credential register` in `prepare-cluster.sh` (Fix #1): Wrong — credentials registered too early, no environment exists yet
+- Adding `rad env update` AFTER bicep deploy in `bootstrap.sh` (Fix #2): Wrong — too late, deploy already tried and failed
+- Adding second `rad credential register` BEFORE bicep deploy (Fix #3): Still wrong — env update is the missing piece, not more credential calls
+
+**Fix Required:**
+Move `rad env update` (lines 874-876) to BEFORE `rad deploy azure-radius.bicep` (line 868).
+
+---
+
+## Session: Bootstrap Live Debug (2026-03-26)
+
+### What happened
+Ran `./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes` iteratively. Found and fixed 6 issues until full deployment succeeded.
+
+### Fixes applied
+1. **Auto-fill Azure identity** — bootstrap.sh now auto-detects ClientID/TenantID from `rad credential show azure` when env vars aren't set
+2. **Stale SP secret** — always re-register credential when `AZURE_CLIENT_SECRET` is available
+3. **Missing Contributor role** — `ensure_radius_recipe_rbac()` now grants both Contributor AND User Access Administrator
+4. **Wrong bicep types** — reverted all `Radius.*@2024-01-01` back to `Applications.*@2023-10-01-preview` (Radius 0.55.0 doesn't support `Radius.Dapr/*`)
+5. **Pull secret timing** — moved GHCR pull secret creation before `rad deploy app.bicep`
+6. **Registry switch** — created ACR (`radiusclaimacr`), attached to AKS, rebuilt images as `linux/amd64`
+
+### Key learnings
+- `rad credential show azure -o json` outputs preamble to stdout — must filter with `sed -n '/^{/,$p'`
+- BCP081 warning on `Radius.*` types is NOT harmless — it means the type doesn't exist in the installed Radius version
+- Radius `runtimes.kubernetes.pod.spec.imagePullSecrets` does NOT work in `2023-10-01-preview` — use SA-level imagePullSecrets or ACR attach instead
+- Always build with `--platform linux/amd64` for AKS on ARM Macs
+- ACR + `az aks update --attach-acr` eliminates pull secret complexity entirely
+
+### Final state
+- All 3 services running (2/2 ready with Dapr sidecars)
+- Gateway endpoint: `http://expense.radiusclaim.9.160.144.105.nip.io` → HTTP 200
+- Decision document: `.squad/decisions/inbox/daisy-bootstrap-live-debug.md`

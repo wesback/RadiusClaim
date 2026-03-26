@@ -230,6 +230,7 @@ ensure_radius_recipe_rbac() {
   local scope="/subscriptions/${subscription_id}/resourceGroups/${resource_group}"
   local has_uaa=false
   local has_owner=false
+  local has_contributor=false
   
   local assignments
   assignments="$(az role assignment list --assignee "$sp_object_id" --scope "$scope" --query "[].{role:roleDefinitionName}" -o tsv 2>/dev/null || echo "")"
@@ -241,20 +242,39 @@ ensure_radius_recipe_rbac() {
   if printf '%s\n' "$assignments" | grep -iqx "Owner"; then
     has_owner=true
   fi
-  
-  if [ "$has_uaa" = true ] || [ "$has_owner" = true ]; then
-    log_success "Service principal has role assignment permissions on '${resource_group}' (User Access Administrator or Owner detected)"
-    return 0
+
+  if printf '%s\n' "$assignments" | grep -iqx "Contributor"; then
+    has_contributor=true
   fi
   
-  log_info "Granting User Access Administrator role to service principal on '${resource_group}'"
-  log_info "This allows Radius recipes to assign data-plane roles (e.g., Storage Blob Data Contributor)."
-  
-  run_cmd az role assignment create \
-    --assignee "$sp_object_id" \
-    --role "User Access Administrator" \
-    --scope "$scope" \
-    --output none
-  
-  log_success "User Access Administrator role granted on '${resource_group}'"
+  if [ "$has_owner" = true ]; then
+    log_success "Service principal has Owner on '${resource_group}' (covers resource provisioning and role assignment)"
+    return 0
+  fi
+
+  # Radius needs Contributor for resource provisioning and User Access Administrator
+  # for data-plane RBAC assignments (e.g. Storage Blob Data Contributor).
+  if [ "$has_contributor" = false ]; then
+    log_info "Granting Contributor role to service principal on '${resource_group}'"
+    log_info "This allows Radius recipes to provision Azure resources."
+    run_cmd az role assignment create \
+      --assignee "$sp_object_id" \
+      --role "Contributor" \
+      --scope "$scope" \
+      --output none
+    log_success "Contributor role granted on '${resource_group}'"
+  fi
+
+  if [ "$has_uaa" = false ]; then
+    log_info "Granting User Access Administrator role to service principal on '${resource_group}'"
+    log_info "This allows Radius recipes to assign data-plane roles (e.g., Storage Blob Data Contributor)."
+    run_cmd az role assignment create \
+      --assignee "$sp_object_id" \
+      --role "User Access Administrator" \
+      --scope "$scope" \
+      --output none
+    log_success "User Access Administrator role granted on '${resource_group}'"
+  fi
+
+  log_success "Service principal has required permissions on '${resource_group}'"
 }
