@@ -98,6 +98,26 @@ When the cluster is next recreated, all Dapr components will authenticate via Az
 
 **References:**
 - Audit date: 2026-03-27T09:05:00Z
+
+---
+
+### 2026-06-05 — GHCR Package Deletion Fix (API URL Encoding)
+
+**Problem:** `teardown.sh` GHCR package deletion was failing with 404 for all packages. The script was attempting to delete packages like `radiusclaim/expense-api` but using the wrong API path format.
+
+**Root cause:** GitHub Container Registry API requires forward slashes in package names to be URL-encoded as `%2F`. The script was only encoding spaces (`%20`) but not slashes, so:
+- Wrong: `/user/packages/container/radiusclaim/expense-api` (treats "radiusclaim" as package, "expense-api" as invalid path)
+- Correct: `/user/packages/container/radiusclaim%2Fexpense-api` (treats full string as one package name)
+
+**Fix applied:** Changed encoding from `${full_name// /%20}` to `${full_name//\//%2F}` to properly URL-encode all forward slashes in the package name.
+
+**Package naming convention:** GHCR uses the full image path as the package name. For images pushed as `ghcr.io/wesback/radiusclaim/expense-api:latest`, the package name in the API is `radiusclaim/expense-api` (with slashes), and these slashes MUST be URL-encoded in API paths.
+
+**Verification:** `bash -n scripts/teardown.sh` passes with no syntax errors.
+
+**References:**
+- GitHub API docs: https://docs.github.com/en/rest/packages
+- Fix date: 2026-06-05
 - Audit requested by: Wesley Backelant
 - Scribe orchestration: `.squad/orchestration-log/2026-03-27T09-05-00Z-pete-scripts-audit.md`
 

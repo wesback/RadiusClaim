@@ -489,8 +489,10 @@ delete_ghcr_artifacts() {
 
   for pkg in "${packages[@]}"; do
     local full_name="${repo}/${pkg}"
+    # URL-encode the package name: forward slashes must be %2F for GitHub API
+    local encoded_name="${full_name//\//%2F}"
     log_info "Deleting package versions for '${full_name}' ..."
-    if run_cmd gh api -X DELETE "/user/packages/container/${full_name// /%20}" 2>/dev/null; then
+    if run_cmd gh api -X DELETE "/user/packages/container/${encoded_name}" 2>/dev/null; then
       log_success "Package '${full_name}' deleted"
     else
       log_warning "Could not delete '${full_name}' — may not exist or requires manual removal via GitHub UI"
