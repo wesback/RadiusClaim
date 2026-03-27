@@ -1,0 +1,6 @@
+Your expense {{expenseId}} has been rejected.
+
+Reason: {{reason}}
+Rejected By: {{approver}}
+Subject: {{subject}}
+Rejected At: {{occurredAtUtc}}

@@ -5,9 +5,12 @@ namespace RadiusClaim.Contracts;
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum NotificationEventType
 {
+    ExpenseSubmitted,
     ExpenseApproved,
     ExpenseRejected,
-    ManualReviewRequested
+    ManualReviewRequested,
+    ApprovalTimeout,
+    ExpenseRejectedTimeout
 }
 
 public sealed record NotificationRequest(

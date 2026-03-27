@@ -1,0 +1,5 @@
+Expense {{expenseId}} has been submitted for review.
+
+Submitter: {{submitter}}
+Subject: {{subject}}
+Submitted At: {{occurredAtUtc}}
