@@ -25,3 +25,12 @@
 - Rationale: UI is demo surface, not product; framework adds pedagogical friction without advancing Dapr + Radius narrative
 - **Implication for React recommendation:** Document React path for future reference; maintain vanilla JS as the appropriate choice for Phase 7
 - **Status:** React recommendation is documented and ready for team; vanilla is the current path forward
+
+## Learnings (Issue #15 — Monitoring Dashboard, 2026-03-27)
+
+- Issue #15 asked for a workflow monitoring dashboard; the existing `wwwroot/app/` UI already covered items 1–3 (expense list with status, timeline/history, auto-refresh).
+- The missing piece was approve/reject buttons for `ManualReviewRequested` expenses. Added `handleApproval()` in `app.js` that POSTs to `/expenses/{id}/approve` or `/expenses/{id}/reject`.
+- Buttons appear inline in the workflow card only when `expense.status === "ManualReviewRequested"`, keeping the UI minimal and context-specific.
+- Adjusted history polling from 10 s to 5 s to match the issue requirement.
+- Used `--approve` / `--reject` CSS modifier classes styled with the existing `--success` / `--danger` CSS variables; no new design system tokens needed.
+- Chose not to introduce a new `src/dashboard/` Next.js app — the existing vanilla UI in `wwwroot/app/` already satisfies all requirements with zero toolchain overhead.

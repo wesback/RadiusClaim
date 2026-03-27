@@ -402,8 +402,51 @@ function renderWorkflow(expense, workflowOrError) {
             ${workflow?.failureDetails
                 ? `<div class="trace-item"><strong>Failure details</strong><span>${escapeHtml(workflow.failureDetails)}</span></div>`
                 : ""}
+            ${expense.status === "ManualReviewRequested"
+                ? `<div class="approval-actions">
+                    <p class="approval-label">This expense is held for manual review. Approve or reject to signal the workflow.</p>
+                    <div class="approval-buttons">
+                        <button class="button button--approve" type="button" data-action="approve" data-expense-id="${escapeHtml(expense.expenseId)}">Approve</button>
+                        <button class="button button--reject" type="button" data-action="reject" data-expense-id="${escapeHtml(expense.expenseId)}">Reject</button>
+                    </div>
+                    <div id="approval-feedback" class="feedback" role="status" aria-live="polite"></div>
+                   </div>`
+                : ""}
         </div>
     `;
+
+    elements.workflow.querySelectorAll("[data-action]").forEach((btn) => {
+        btn.addEventListener("click", () =>
+            handleApproval(btn.getAttribute("data-expense-id"), btn.getAttribute("data-action")));
+    });
+}
+
+async function handleApproval(expenseId, action) {
+    const feedbackEl = document.querySelector("#approval-feedback");
+    const buttons = elements.workflow.querySelectorAll("[data-action]");
+
+    buttons.forEach((b) => { b.disabled = true; });
+    if (feedbackEl) feedbackEl.textContent = `Sending ${action} signal\u2026`;
+
+    try {
+        const response = await fetch(`/expenses/${encodeURIComponent(expenseId)}/${action}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({})
+        });
+
+        if (response.ok) {
+            if (feedbackEl) feedbackEl.textContent = `${action === "approve" ? "Approved" : "Rejected"} \u2014 refreshing\u2026`;
+            await refreshExpenses(false, expenseId);
+        } else {
+            const problem = await safeProblem(response);
+            if (feedbackEl) feedbackEl.textContent = `Failed: ${extractProblemDetails(problem) || response.statusText}`;
+            buttons.forEach((b) => { b.disabled = false; });
+        }
+    } catch (err) {
+        if (feedbackEl) feedbackEl.textContent = `Network error: ${err.message}`;
+        buttons.forEach((b) => { b.disabled = false; });
+    }
 }
 
 function buildTimeline(expense, workflow) {
@@ -524,7 +567,7 @@ function startPolling() {
 
     state.historyTimer = window.setInterval(() => {
         refreshExpenses(true);
-    }, 10000);
+    }, 5000);
 
     state.selectedTimer = window.setInterval(() => {
         if (state.selectedExpenseId) {
