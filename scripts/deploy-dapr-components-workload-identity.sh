@@ -4,13 +4,30 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/platform-common.sh"
 
-# deploy-dapr-components-workload-identity.sh with Workload Identity support
+# deploy-dapr-components-workload-identity.sh — Workload Identity Cluster Bootstrap
 #
-# Automates the deployment of Dapr Component objects with Azure Workload Identity.
-# This is the clean, long-term solution that replaces service-principal-with-client-secret auth.
+# ┌─────────────────────────────────────────────────────────────────────┐
+# │  CLUSTER BOOTSTRAP ONLY — run once per cluster, not per deployment  │
+# │                                                                     │
+# │  As of issue #4 (Dapr CRD projection), Radius projects Dapr        │
+# │  Component CRDs (statestore, pubsub, platform-secrets) automatically│
+# │  during `rad deploy` when workload identity params are supplied to  │
+# │  the environment recipe (azure-radius.bicep).                       │
+# │                                                                     │
+# │  This script remains required ONE TIME per cluster to configure     │
+# │  AKS-level infrastructure that Radius recipes cannot express:       │
+# │    1. Enable OIDC issuer + workload identity addon on AKS           │
+# │    2. Create/retrieve the user-assigned managed identity            │
+# │    3. Create federated identity credentials per service account     │
+# │    4. Annotate Kubernetes service accounts with the client ID       │
+# │                                                                     │
+# │  After this script succeeds once, set daprAzureClientId and        │
+# │  daprAzurePrincipalId in azure-radius.parameters.json. Subsequent  │
+# │  `rad deploy` runs project Dapr CRDs automatically via Radius.     │
+# └─────────────────────────────────────────────────────────────────────┘
 #
 # Usage:
-#   ./scripts/deploy-dapr-components.sh [OPTIONS]
+#   ./scripts/deploy-dapr-components-workload-identity.sh [OPTIONS]
 #
 # Options:
 #   --app-name <name>          Radius application name (default: radiusclaim)

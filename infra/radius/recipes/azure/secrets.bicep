@@ -12,6 +12,17 @@ param vaultName string = 'ce-${take(uniqueString(context.resource.id, 'keyvault'
 @description('Tenant ID used by the Key Vault resource.')
 param tenantId string = subscription().tenantId
 
+@description('Microsoft Entra client ID used by the Dapr secretstore component. When set, workload identity auth is projected into the component metadata.')
+param azureClientId string = ''
+
+@description('Object ID of the Microsoft Entra principal that should receive Key Vault Secrets User access.')
+param azurePrincipalId string = ''
+
+@description('Principal type for the Microsoft Entra identity used by the Dapr secretstore component.')
+param azurePrincipalType string = 'ServicePrincipal'
+
+var keyVaultSecretsUserRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: vaultName
   location: location
@@ -31,23 +42,30 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
+resource keyVaultRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(azurePrincipalId)) {
+  name: guid(keyVault.id, azurePrincipalId, 'keyVaultSecretsUser')
+  scope: keyVault
+  properties: {
+    roleDefinitionId: keyVaultSecretsUserRoleDefinitionId
+    principalId: azurePrincipalId
+    principalType: azurePrincipalType
+  }
+}
+
+var secretStoreMetadata = union(
+  {
+    vaultName: { value: keyVault.name }
+    vaultUri: { value: keyVault.properties.vaultUri }
+    azureEnvironment: { value: 'AZUREPUBLICCLOUD' }
+    azureTenantId: { value: tenantId }
+  },
+  empty(azureClientId) ? {} : { azureClientId: { value: azureClientId } }
+)
+
 output result object = {
   values: {
     type: 'secretstores.azure.keyvault'
     version: 'v1'
-    metadata: {
-      vaultName: {
-        value: keyVault.name
-      }
-      vaultUri: {
-        value: keyVault.properties.vaultUri
-      }
-      azureEnvironment: {
-        value: 'AZUREPUBLICCLOUD'
-      }
-      azureTenantId: {
-        value: tenantId
-      }
-    }
+    metadata: secretStoreMetadata
   }
 }

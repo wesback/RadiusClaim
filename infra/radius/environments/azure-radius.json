@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "13199319407366961464"
+      "templateHash": "5513815281949896646"
     }
   },
   "parameters": {
@@ -80,7 +80,10 @@
     }
   },
   "variables": {
-    "stateStoreRecipeParameters": "[union(createObject('location', parameters('location')), if(empty(parameters('daprAzureClientId')), createObject(), createObject('azureClientId', parameters('daprAzureClientId'))), if(empty(parameters('daprAzurePrincipalId')), createObject(), createObject('azurePrincipalId', parameters('daprAzurePrincipalId'))), if(empty(parameters('daprAzureTenantId')), createObject(), createObject('azureTenantId', parameters('daprAzureTenantId'))), if(or(empty(parameters('daprAzurePrincipalId')), empty(parameters('daprAzurePrincipalType'))), createObject(), createObject('azurePrincipalType', parameters('daprAzurePrincipalType'))))]"
+    "identityParams": "[union(if(empty(parameters('daprAzureClientId')), createObject(), createObject('azureClientId', parameters('daprAzureClientId'))), if(empty(parameters('daprAzurePrincipalId')), createObject(), createObject('azurePrincipalId', parameters('daprAzurePrincipalId'))), if(empty(parameters('daprAzureTenantId')), createObject(), createObject('azureTenantId', parameters('daprAzureTenantId'))), if(and(not(empty(parameters('daprAzurePrincipalId'))), not(empty(parameters('daprAzurePrincipalType')))), createObject('azurePrincipalType', parameters('daprAzurePrincipalType')), createObject()))]",
+    "stateStoreRecipeParameters": "[union(createObject('location', parameters('location')), variables('identityParams'))]",
+    "pubsubRecipeParameters": "[union(createObject('location', parameters('location')), variables('identityParams'))]",
+    "secretStoreRecipeParameters": "[union(createObject('location', parameters('location')), variables('identityParams'))]"
   },
   "imports": {
     "radius": {
@@ -117,18 +120,14 @@
               "azure-servicebus-pubsub": {
                 "templateKind": "bicep",
                 "templatePath": "[format('{0}/pubsub:{1}', parameters('recipeRegistry'), parameters('recipeTag'))]",
-                "parameters": {
-                  "location": "[parameters('location')]"
-                }
+                "parameters": "[variables('pubsubRecipeParameters')]"
               }
             },
             "Applications.Dapr/secretStores": {
               "azure-keyvault-secrets": {
                 "templateKind": "bicep",
                 "templatePath": "[format('{0}/secrets:{1}', parameters('recipeRegistry'), parameters('recipeTag'))]",
-                "parameters": {
-                  "location": "[parameters('location')]"
-                }
+                "parameters": "[variables('secretStoreRecipeParameters')]"
               }
             }
           }
@@ -154,6 +153,8 @@
           "secretStore": "azure-keyvault-secrets"
         },
         "stateStoreAuthModel": "[if(not(empty(parameters('daprAzureClientId'))), 'microsoft-entra-rbac', 'recipe-default')]",
+        "pubsubAuthModel": "[if(not(empty(parameters('daprAzureClientId'))), 'microsoft-entra-rbac', 'connection-string-fallback')]",
+        "secretStoreAuthModel": "[if(not(empty(parameters('daprAzureClientId'))), 'microsoft-entra-rbac', 'recipe-default')]",
         "portabilityNote": "Radius remains the service wiring authority across AKS, Arc-enabled Kubernetes / Azure Local, and self-managed Kubernetes clusters; Azure-specific work stays in recipes and provider scope.",
         "kubernetesTargets": [
           "aks",
