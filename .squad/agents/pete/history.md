@@ -101,3 +101,46 @@ When the cluster is next recreated, all Dapr components will authenticate via Az
 - Audit requested by: Wesley Backelant
 - Scribe orchestration: `.squad/orchestration-log/2026-03-27T09-05-00Z-pete-scripts-audit.md`
 
+
+## Learnings
+
+### 2026-06-05 — Audit Fixes Applied (Fixes 1–8)
+
+All 8 audit findings from the 2026-06-05 audit were fixed in a single session.
+
+**Fix 1 (bootstrap → WI script):** Added `AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-radiusclaim-aks}"` default and `--cluster-name` arg to bootstrap.sh. Changed actionable_file check and run_cmd call to use `deploy-dapr-components-workload-identity.sh` with `--cluster-name "$AKS_CLUSTER_NAME"`. bootstrap.sh previously had no AKS_CLUSTER_NAME variable — the WI script defaults to `radiusclaim-aks`, so the new default matches.
+
+**Fix 2 (managed identity teardown):** Added `MI_NAME="radiusclaim-workload-identity"`, `INCLUDE_MANAGED_IDENTITY=false`, `delete_managed_identity()` function, and `--include-managed-identity` flag to teardown.sh. Design decision: auto-runs when `--include-resource-group` is true (RG deletion removes it anyway, but explicit messaging is better). Also opt-in standalone via `--include-managed-identity`.
+
+**Fix 3 (flag naming):** Added `--workspace-name` as primary, kept `--workspace` as deprecated alias with `log_warning`. Added `--group-name` flag (previously `GROUP_NAME` was hardcoded with no override).
+
+**Fix 4 (deprecation banner):** Added DEPRECATED comment block and `log_warning` call at top of `deploy-dapr-components.sh`. Added `> ⚠️ **Deprecated:**` notice to `scripts/README.md` section for that script.
+
+**Fix 5 (GHCR owner/repo from git remote):** Rewrote `delete_ghcr_artifacts()` in teardown.sh to derive owner/repo from `git remote.origin.url` using the same regex as bootstrap.sh's `derive_default_container_registry()`. Fallback to hardcoded `wesback`/`radiusclaim` with a log_warning. Added `--ghcr-owner` and `--ghcr-repo` override flags (stored as `GHCR_OWNER_OVERRIDE` / `GHCR_REPO_OVERRIDE` to avoid `set -u` conflicts).
+
+**Fix 6 (source platform-common.sh):** Added `SCRIPT_DIR` + `source "${SCRIPT_DIR}/lib/platform-common.sh"` to both deploy-dapr scripts. Replaced egregious `echo "Error: ..."` + exits with `log_error` calls in both. WI script header comment now names the correct file (`deploy-dapr-components-workload-identity.sh`).
+
+**Fix 7 (dead GHCR auth detection):** Replaced the double-broken check (`docker-credential-$()` command substitution in function name + `docker info | grep ghcr.io` fallback) with a clean two-step: query credential store name from `docker info`, then call `docker-credential-<store> list | grep ghcr.io`. Shows warning only when auth is actually missing.
+
+**Fix 8 (DRY_RUN standardization):** Used `sed` to replace all `if "$DRY_RUN"; then` → `if [ "$DRY_RUN" = true ]; then` and `if ! "$DRY_RUN"; then` → `if [ "$DRY_RUN" != true ]; then` across bootstrap.sh. 11 occurrences fixed. WI script already used `[[ "$DRY_RUN" == "true" ]]` — consistent string comparison, not command invocation.
+
+**Syntax check:** All 5 scripts passed `bash -n` after changes.
+
+## Session: Pete's 8-Point Audit Remediation (Scribe — Commit)
+
+**Date:** 2026-06-05 (session completion)
+
+All 8 findings from Pete's infrastructure scripts audit were successfully applied and committed to main:
+
+1. **bootstrap.sh now calls WI script** — swapped deprecated `deploy-dapr-components.sh` to `deploy-dapr-components-workload-identity.sh` with `--cluster-name` flag and `AKS_CLUSTER_NAME` var
+2. **teardown.sh deletes managed identity** — added `delete_managed_identity()` function and `--include-managed-identity` flag; auto-runs when `--include-resource-group` is true
+3. **Flag consistency** — teardown `--workspace-name` is now primary; `--workspace` deprecated with warning; `--group-name` added
+4. **deploy-dapr-components.sh deprecated** — DEPRECATED header comment and `log_warning` in script; `⚠️ Deprecated:` blockquote added to README
+5. **GHCR owner/repo no longer hardcoded** — teardown now derives from `git remote.origin.url` with fallback to hardcoded values; `--ghcr-owner`/`--ghcr-repo` override flags added
+6. **platform-common.sh sourced in both deploy-dapr scripts** — consistent logging and dry-run support; replaced raw `echo "Error"` with `log_error` calls
+7. **GHCR auth detection fixed** — `publish-radius-recipes.sh` now uses `docker-credential-<store> list | grep ghcr.io` instead of unreliable `docker info` grep
+8. **DRY_RUN evaluation consistent** — bootstrap.sh: all 11 `if "$DRY_RUN"` instances replaced with `if [ "$DRY_RUN" = true ]`
+
+**Commit:** `0fe8322` — "fix(scripts): Pete's 8-point audit remediation"
+
+**Status:** ✅ All scripts pass `bash -n` syntax check. Ready for bootstrap automation.

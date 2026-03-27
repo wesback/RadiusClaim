@@ -453,3 +453,24 @@ All components loaded:
 
 **Highest-Value New Work:** Create local dev recipes (would complete architecture docs promise).
 
+
+
+## Decision 17 — Scripts fully remediated (Pete audit)
+
+All 8 findings from Pete's infrastructure scripts audit applied: WI Dapr path wired in bootstrap, managed identity lifecycle managed in teardown, GHCR derivation made forkable, deploy-dapr-components.sh marked deprecated, DRY_RUN standardised, platform-common.sh sourced consistently. 
+
+**Details:**
+- Fix 1: bootstrap calls deploy-dapr-components-workload-identity.sh with --cluster-name flag
+- Fix 2: teardown deletes managed identity with --include-managed-identity flag (auto with --include-resource-group)
+- Fix 3: teardown --workspace-name primary, --workspace deprecated, --group-name added
+- Fix 4: deploy-dapr-components.sh marked DEPRECATED in header and README
+- Fix 5: teardown derives GHCR owner/repo from git remote (forkable), with --ghcr-owner/--ghcr-repo overrides
+- Fix 6: both deploy-dapr scripts source lib/platform-common.sh for consistent logging
+- Fix 7: publish-radius-recipes.sh GHCR auth detection uses docker-credential-<store> list | grep ghcr.io
+- Fix 8: bootstrap standardised all DRY_RUN checks to [ "$DRY_RUN" = true ]
+
+**Commit:** 0fe8322
+
+**Date:** 2026-06-05
+
+**Status:** ✅ All scripts pass `bash -n` syntax check. Bootstrap automation ready.
