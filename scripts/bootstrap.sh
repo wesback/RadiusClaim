@@ -1097,6 +1097,16 @@ AZURE_AUTH_MODE_RESOLVED="$(resolve_azure_auth_mode)"
 # credential registration so the cluster is ready for wi mode).
 if [ "$SETUP_WORKLOAD_IDENTITY" = true ]; then
   section "Enabling OIDC issuer and workload identity on AKS cluster"
+  # Auto-discover the cluster name if the configured default doesn't exist.
+  if ! az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" &>/dev/null; then
+    discovered="$(az aks list --resource-group "$RESOURCE_GROUP" --query '[0].name' -o tsv 2>/dev/null || true)"
+    if [ -n "$discovered" ]; then
+      log_info "AKS cluster '${AKS_CLUSTER_NAME}' not found; using discovered cluster '${discovered}'."
+      AKS_CLUSTER_NAME="$discovered"
+    else
+      fail "No AKS cluster found in resource group '${RESOURCE_GROUP}'. Pass --aks-cluster-name explicitly."
+    fi
+  fi
   run_cmd az aks update \
     --resource-group "$RESOURCE_GROUP" \
     --name "$AKS_CLUSTER_NAME" \
