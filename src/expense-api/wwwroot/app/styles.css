@@ -597,3 +597,58 @@ input:focus-visible,
         align-items: stretch;
     }
 }
+
+/* Approve / reject action block */
+.approval-actions {
+    margin-top: 16px;
+    padding-top: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.approval-label {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.approval-buttons {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.button--approve {
+    background: rgba(78, 217, 168, 0.18);
+    color: var(--success);
+    border: 1px solid rgba(78, 217, 168, 0.35);
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.button--approve:hover:not([disabled]) {
+    background: rgba(78, 217, 168, 0.30);
+}
+
+.button--reject {
+    background: rgba(255, 123, 143, 0.15);
+    color: var(--danger);
+    border: 1px solid rgba(255, 123, 143, 0.35);
+    padding: 8px 20px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.button--reject:hover:not([disabled]) {
+    background: rgba(255, 123, 143, 0.28);
+}
+
+.button--approve[disabled],
+.button--reject[disabled] {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
