@@ -2795,3 +2795,83 @@ When adding new dedicated deletion flags (e.g., hypothetical `--delete-acr`, `--
 - Graham's history: Phase 8 teardown fixes
 
 **Merged from inbox:** 2026-03-27T08:55:00Z
+
+---
+
+## 16. Scripts Audit Findings — Pete
+
+**By:** Pete (Infrastructure Automation Specialist)  
+**Date:** 2026-03-27  
+**Status:** FINDINGS DOCUMENTED — action required
+
+### Critical Issues (2)
+
+#### 1. bootstrap.sh calls deprecated deploy-dapr-components.sh
+
+**Finding:** `bootstrap.sh` line 960 calls `deploy-dapr-components.sh` (the deprecated service-principal version), NOT `deploy-dapr-components-workload-identity.sh` (the current canonical version).
+
+**Impact:** The automated bootstrap path never sets up the managed identity, federated credentials, deployment workload-identity labels, or WI-based Dapr component manifests. Operators must manually invoke `deploy-dapr-components-workload-identity.sh` after bootstrap finishes — an undocumented manual step.
+
+**Fix required:** Change bootstrap.sh line 960 to call `deploy-dapr-components-workload-identity.sh` and pass `--cluster-name`.
+
+#### 2. teardown.sh does not delete managed identity
+
+**Finding:** `deploy-dapr-components-workload-identity.sh` creates user-assigned managed identity `radiusclaim-workload-identity`. `teardown.sh` has no code to delete it. The identity and its federated credentials accumulate across setup/teardown cycles.
+
+**Fix required:** Add managed identity deletion to `teardown.sh` (gated, like `--aks-cluster-name`), or at minimum skip with a visible warning listing the resource name.
+
+### Secondary Issues (6)
+
+#### 3. Consistency: Flag naming — --workspace-name vs --workspace
+
+**Finding:**
+- `bootstrap.sh` and `prepare-cluster.sh`: `--workspace-name`
+- `teardown.sh`: `--workspace`
+
+Operators who muscle-memory `--workspace-name` from bootstrap will silently get the default in teardown.
+
+**Fix:** Rename teardown's `--workspace` to `--workspace-name` (keep `--workspace` as a hidden alias for backwards compat).
+
+#### 4. Consistency: teardown.sh missing --group-name flag
+
+**Finding:** `GROUP_NAME` in teardown.sh defaults to `radiusclaim-group` with no flag to override it. bootstrap.sh and prepare-cluster.sh both have `--group-name`. If an operator bootstrapped with a custom group name, teardown won't clean it up.
+
+**Fix:** Add `--group-name` flag to teardown.sh.
+
+#### 5. Quality: GHCR owner/repo hardcoded in teardown.sh
+
+**Finding:** `delete_ghcr_artifacts()` hardcodes `owner="wesback"` and `repo="radiusclaim"`. Anyone forking this repo gets teardown pointing at the wrong packages.
+
+**Fix:** Derive from `git remote get-url origin` (same approach as bootstrap.sh's `derive_default_container_registry()`), with a flag override.
+
+#### 6. Quality: deploy-dapr scripts don't source lib/platform-common.sh
+
+**Finding:** Both `deploy-dapr-components.sh` and `deploy-dapr-components-workload-identity.sh` use raw `echo "Error: ..."` / `exit N` patterns instead of the team's `fail()`, `log_info()`, `log_success()` functions from `lib/platform-common.sh`. Output style is inconsistent with bootstrap/teardown/prepare.
+
+**Fix:** Add `source lib/platform-common.sh` to both deploy-dapr scripts and replace all echo/exit patterns.
+
+#### 7. Quality: deploy-dapr-components-workload-identity.sh wrong header comment
+
+**Finding:** File header reads `# deploy-dapr-components.sh with Workload Identity support` — uses the wrong filename.
+
+**Fix:** Update to `# deploy-dapr-components-workload-identity.sh with Workload Identity support`.
+
+#### 8. Quality: README doesn't mark deploy-dapr-components.sh as deprecated
+
+**Finding:** `scripts/README.md` documents `deploy-dapr-components.sh` without any deprecation notice. Operators have no signal to prefer the WI version.
+
+**Fix:** Add deprecation notice: "⚠️ Deprecated — use `deploy-dapr-components-workload-identity.sh` for managed identity support."
+
+### Recommendations Summary
+
+1. **Immediate (before bootstrap automation is live):** Fix Critical Issues 1–2 + Consistency Issues 3–4
+2. **Near-term:** Fix Quality Issues 5–8
+3. **Nice-to-have:** Review publish-radius-recipes.sh auth detection (ineffective), bootstrap.sh DRY_RUN style inconsistency, and silent AZURE_CREDENTIAL re-registration signal
+
+### References
+
+- Audit requested by Wesley Backelant
+- Audit date: 2026-03-27
+- Files affected: bootstrap.sh, teardown.sh, deploy-dapr-components.sh, deploy-dapr-components-workload-identity.sh, publish-radius-recipes.sh, scripts/README.md
+
+**Merged from inbox:** 2026-03-27T09:05:00Z

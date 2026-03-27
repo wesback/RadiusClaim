@@ -178,7 +178,14 @@ aks_cluster_exists() {
 }
 
 sp_app_id_by_name() {
-  az ad app list --display-name "$1" --query "[0].appId" -o tsv 2>/dev/null
+  # macOS ships without GNU timeout; fall back to gtimeout (brew coreutils) then no timeout
+  local timeout_cmd=""
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd="timeout 20"
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_cmd="gtimeout 20"
+  fi
+  $timeout_cmd az ad app list --display-name "$1" --query "[0].appId" -o tsv 2>/dev/null || true
 }
 
 # ---------------------------------------------------------------------------
@@ -300,8 +307,32 @@ delete_azure_resources() {
     return 0
   fi
 
+  # Build exclusion query: skip AKS if --aks-cluster-name not provided
+  local query_filter="[]"
+  if [ -z "$AKS_CLUSTER_NAME" ]; then
+    query_filter="[?type != 'Microsoft.ContainerService/managedClusters']"
+  fi
+
+  local all_resources
+  all_resources="$(az resource list --resource-group "$RESOURCE_GROUP" --query "${query_filter}" -o json 2>/dev/null || echo "[]")"
+
+  # Check for excluded AKS clusters
+  if [ -z "$AKS_CLUSTER_NAME" ]; then
+    local aks_clusters
+    aks_clusters="$(az resource list --resource-group "$RESOURCE_GROUP" \
+      --resource-type "Microsoft.ContainerService/managedClusters" \
+      --query "[].name" -o tsv 2>/dev/null || true)"
+    
+    if [ -n "$aks_clusters" ]; then
+      while IFS= read -r cluster_name; do
+        [ -n "$cluster_name" ] || continue
+        log_info "ℹ Skipping AKS cluster '${cluster_name}' (use --aks-cluster-name to include)"
+      done <<< "$aks_clusters"
+    fi
+  fi
+
   local resource_ids
-  resource_ids="$(az resource list --resource-group "$RESOURCE_GROUP" --query "[].id" -o tsv 2>/dev/null || true)"
+  resource_ids="$(echo "$all_resources" | jq -r '.[].id' 2>/dev/null || true)"
 
   if [ -z "$resource_ids" ]; then
     log_info "No resources found in '${RESOURCE_GROUP}' — skipping"
@@ -339,6 +370,7 @@ delete_service_principals() {
 
   for sp_name in "$SP_RADIUS" "$SP_GITHUB"; do
     local app_id
+    log_info "Looking up app registration '${sp_name}' ..."
     app_id="$(sp_app_id_by_name "$sp_name")"
 
     if [ -n "$app_id" ]; then
@@ -390,6 +422,11 @@ section "Pre-flight checks"
 
 require_command az
 require_command kubectl
+
+if ! az account show --output none 2>/dev/null; then
+  log_error "Not logged in to Azure CLI. Run 'az login' first."
+  exit 1
+fi
 
 if ! command -v "$RAD_BIN" >/dev/null 2>&1; then
   log_warning "Radius CLI ('${RAD_BIN}') not found — Radius resource cleanup will be skipped"

@@ -53,3 +53,51 @@ When the cluster is next recreated, all Dapr components will authenticate via Az
 - `.squad/decisions/decisions.md` — Merged: Service Bus zero-secret migration, teardown script pattern
 - `.squad/orchestration-log/2026-03-27T08-55-00Z-graham-servicebus-wi.md` — Orchestration record
 
+
+## Learnings
+
+### 2026-06-05 — Full Scripts Audit
+
+**bootstrap.sh calls the deprecated script.** Line 960 invokes `deploy-dapr-components.sh` (SP/legacy), not `deploy-dapr-components-workload-identity.sh`. The entire workload identity setup path (managed identity, federated creds, deployment label patching) is never run from bootstrap. This is the #1 integration gap.
+
+**Managed identity orphaned by teardown.** `deploy-dapr-components-workload-identity.sh` creates `radiusclaim-workload-identity`. Teardown has no code to delete it. Resource accumulates across cycles.
+
+**Flag naming divergence.** `--workspace-name` in bootstrap/prepare vs `--workspace` in teardown. `--group-name` exists in bootstrap/prepare but is missing from teardown entirely.
+
+**GHCR owner/repo hardcoded in teardown.** `delete_ghcr_artifacts()` hardcodes `owner="wesback"`, `repo="radiusclaim"`. Not forkable without editing source.
+
+**Both deploy-dapr scripts don't source lib/platform-common.sh.** They use raw echo/exit patterns — inconsistent logging, no dry-run support from the common layer.
+
+**WI script header comment names wrong file.** Says `deploy-dapr-components.sh` not `deploy-dapr-components-workload-identity.sh`.
+
+**README doesn't mark deploy-dapr-components.sh deprecated.** Operators won't know to use the WI version.
+
+**DRY_RUN style inconsistency.** bootstrap.sh mixes `if "$DRY_RUN"` (command invocation) with `[ "$DRY_RUN" = true ]`. Both work; inconsistency is a maintenance hazard.
+
+**DRY_RUN style inconsistency.** bootstrap.sh mixes `if "$DRY_RUN"` (command invocation) with `[ "$DRY_RUN" = true ]`. Both work; inconsistency is a maintenance hazard.
+
+**publish-radius-recipes.sh auth detection unreliable.** The pre-publish GHCR credential check (`docker info | grep ghcr.io`) always fails, so the warning fires for every operator regardless of actual auth state.
+
+---
+
+## 2026-03-27: Full Scripts Audit → Recommended Actions (1–8)
+
+**Critical Issues (must fix before bootstrap automation):**
+
+1. **bootstrap.sh line 960:** Change call from `deploy-dapr-components.sh` → `deploy-dapr-components-workload-identity.sh --cluster-name $CLUSTER_NAME`
+2. **teardown.sh managed identity cleanup:** Add deletion code for `radiusclaim-workload-identity` resource, gated by flag (e.g., `--aks-cluster-name`) or visible skip warning
+
+**Secondary Issues (consistency + quality):**
+
+3. **Flag naming:** Rename teardown `--workspace` → `--workspace-name` (keep old name as hidden alias)
+4. **teardown missing flag:** Add `--group-name` parameter to match bootstrap/prepare-cluster
+5. **GHCR hardcoded:** Derive owner/repo from `git remote get-url origin` in teardown's `delete_ghcr_artifacts()`, with optional flag override
+6. **deploy-dapr logging:** Add `source lib/platform-common.sh` to both deploy-dapr scripts; replace all `echo "Error"` + `exit` with `fail()`, `log_info()`, `log_success()` calls
+7. **WI script header:** Fix comment in `deploy-dapr-components-workload-identity.sh` to name correct filename
+8. **README deprecation:** Mark `deploy-dapr-components.sh` deprecated in `scripts/README.md`; point operators to WI version
+
+**References:**
+- Audit date: 2026-03-27T09:05:00Z
+- Audit requested by: Wesley Backelant
+- Scribe orchestration: `.squad/orchestration-log/2026-03-27T09-05-00Z-pete-scripts-audit.md`
+
