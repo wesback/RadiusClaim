@@ -85,7 +85,7 @@ Run `./scripts/bootstrap.sh --resource-group <name>` to deploy the RadiusClaim a
 
 **What it wraps:**
 - `publish-radius-recipes.sh` for OCI recipe publication
-- `deploy-dapr-components.sh` for Dapr component backfill
+- `deploy-dapr-components-workload-identity.sh` for cluster-level workload identity bootstrap (first deploy only)
 - `validate-deployment.sh` for post-deployment smoke testing
 
 **What it adds:**
@@ -202,16 +202,36 @@ If publishing fails with a 403 error, the script provides actionable diagnostics
 - The script keeps the three custom recipes (`state-store`, `pubsub`, `secrets`) published under one teachable command
 - GitHub Actions reuses the same script with `GHCR_TOKEN` and `GHCR_USERNAME` from workflow secrets
 
-### `deploy-dapr-components.sh`
+### `deploy-dapr-components-workload-identity.sh` (Cluster Bootstrap — One-Time)
 
-> ⚠️ **Deprecated:** Use `deploy-dapr-components-workload-identity.sh` instead. This script uses Service Principal auth and is retained only for reference.
+> ⚠️ **Scope:** This is a **cluster bootstrap script**, not a per-deployment script. After this script runs once on a cluster, `rad deploy` handles Dapr Component CRD projection automatically via the Radius application model.
 
-**Purpose:** Backfill Dapr Component CRDs into Kubernetes after a Radius app deployment when the component projection gap leaves sidecars without `statestore`, `pubsub`, or `platform-secrets`.
+**Background:** Radius projects Dapr Component CRDs (`statestore`, `pubsub`, `platform-secrets`) automatically during `rad deploy` when workload identity parameters (`daprAzureClientId`, `daprAzurePrincipalId`) are supplied to the `azure-radius.bicep` environment recipe. The recipes assign RBAC and emit the component metadata; Radius materializes the Kubernetes CRDs.
 
-**When to use:**
-- After `rad deploy infra/radius/app.bicep` completes
-- When `kubectl get components.dapr.io -n <workload-namespace>` returns "No resources found"
-- When Dapr sidecars log `state store statestore is not configured`
+This script is required **once per cluster** to configure AKS-level infrastructure that Radius recipes cannot express:
+1. Enable OIDC issuer + workload identity addon on AKS
+2. Create the user-assigned managed identity
+3. Create federated identity credentials per service account
+4. Annotate Kubernetes service accounts with `azure.workload.identity/client-id`
+
+**Usage:**
+```bash
+./scripts/deploy-dapr-components-workload-identity.sh \
+  --resource-group <rg> \
+  --setup-workload-identity \
+  [--cluster-name <name>] \
+  [--dry-run]
+```
+
+**After bootstrap:** Record the managed identity `clientId` and object ID in `infra/radius/environments/azure-radius.parameters.json` as `daprAzureClientId` / `daprAzurePrincipalId`. Subsequent `rad deploy` runs project CRDs automatically — this script is not needed again unless the cluster or managed identity is recreated.
+
+---
+
+### `deploy-dapr-components.sh` (Deprecated)
+
+> ⚠️ **Deprecated:** Use `deploy-dapr-components-workload-identity.sh` for cluster bootstrap, then let `rad deploy` handle CRD projection. This script uses Service Principal auth with connection strings and is retained only as a reference fallback.
+
+**Purpose:** Backfill Dapr Component CRDs into Kubernetes. Kept as emergency fallback only.
 
 **Usage:**
 ```bash
