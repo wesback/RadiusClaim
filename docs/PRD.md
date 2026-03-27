@@ -88,7 +88,7 @@ Orchestrates the expense approval lifecycle using Dapr Workflow. Runs activities
 | Progress tracking | ✅ Working | Custom status breadcrumbs at each step |
 | State transitions | ✅ Working | Guard clauses prevent invalid transitions |
 
-**Known gaps:** $100 threshold is hardcoded. ManualReviewRequested is a terminal state — no actual manual approval step exists. No rejection workflow implemented. Notification channel is hardcoded to "email".
+**Known gaps:** ManualReviewRequested is a terminal state — no actual manual approval step exists. No rejection workflow implemented. Notification channel is hardcoded to "email".
 
 #### notification-svc
 **Status:** ✅ Functional (logging only)
@@ -438,8 +438,8 @@ The phase-7-validation-checklist.md has unchecked exit criteria and no approval 
 **[MEDIUM] Local Radius Recipes (Redis-Backed)**  
 Local development uses Dapr component overlays directly, bypassing Radius. Creating local recipes (`infra/radius/recipes/local/`) that provision Redis-backed components through Radius would demonstrate full portability: same `app.bicep`, different environment, different recipes. Identified as a gap in Daisy's portability audit.
 
-**[MEDIUM] Configurable Approval Threshold**  
-The $100 auto-approve threshold is hardcoded in `ApproveExpenseActivity`. This should be configurable via Dapr secrets or environment variables, demonstrating how platform configuration flows into business logic without code changes.
+**[MEDIUM] Configurable Approval Threshold** ✅ *Implemented — Issue #7*  
+The auto-approve threshold is configurable via `APPROVAL_THRESHOLD_USD` env var (default: 100.0). Set in `appsettings.json` under `ApprovalThreshold:ThresholdUsd`; override via env var for zero-code-change deployments.
 
 **[MEDIUM] Expense Rejection Workflow**  
 `ExpenseRejected` event type and `ExpenseStatus.Rejected` are defined in contracts but never generated. Implementing the rejection path would complete the workflow lifecycle and make the notification-svc more interesting (different notification content per outcome).
