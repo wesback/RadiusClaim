@@ -9,8 +9,8 @@ param location string = resourceGroup().location
 @description('Key Vault name for the Azure-backed Dapr secret store.')
 param vaultName string = 'ce-${take(uniqueString(context.resource.id, 'keyvault'), 20)}'
 
-@description('Tenant ID used by the Key Vault resource.')
-param tenantId string = subscription().tenantId
+@description('Tenant ID used by the Key Vault resource and Dapr secretstore metadata.')
+param azureTenantId string = subscription().tenantId
 
 @description('Microsoft Entra client ID used by the Dapr secretstore component. When set, workload identity auth is projected into the component metadata.')
 param azureClientId string = ''
@@ -32,7 +32,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     enabledForDiskEncryption: false
     enabledForTemplateDeployment: true
     publicNetworkAccess: 'Enabled'
-    tenantId: tenantId
+    tenantId: azureTenantId
     sku: {
       family: 'A'
       name: 'standard'
@@ -57,7 +57,7 @@ var secretStoreMetadata = union(
     vaultName: { value: keyVault.name }
     vaultUri: { value: keyVault.properties.vaultUri }
     azureEnvironment: { value: 'AZUREPUBLICCLOUD' }
-    azureTenantId: { value: tenantId }
+    azureTenantId: { value: azureTenantId }
   },
   empty(azureClientId) ? {} : { azureClientId: { value: azureClientId } }
 )
