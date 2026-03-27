@@ -67,7 +67,6 @@ jobs:
 
           az bicep build --file infra/radius/app.bicep >/dev/null
           az bicep build --file infra/radius/environments/azure-radius.bicep >/dev/null
-          az bicep build --file infra/radius/environments/azure.bicep >/dev/null
 
       - name: Compute shared deployment variables
         id: vars
