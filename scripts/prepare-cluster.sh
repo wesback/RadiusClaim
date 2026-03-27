@@ -167,7 +167,19 @@ ensure_resource_group() {
     || fail "Cluster preparation requires a resource group before bootstrap can deploy Azure backing services."
 
   section "Creating Azure resource group"
+  
+  # Temporarily unset SPN env vars so az uses the user's own login
+  local saved_client_id="${AZURE_CLIENT_ID:-}"
+  local saved_client_secret="${AZURE_CLIENT_SECRET:-}"
+  local saved_tenant_id="${AZURE_TENANT_ID:-}"
+  unset AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
+  
   run_cmd az group create --name "$RESOURCE_GROUP" --location "$LOCATION" --output none
+  
+  # Restore SPN env vars
+  export AZURE_CLIENT_ID="$saved_client_id"
+  export AZURE_CLIENT_SECRET="$saved_client_secret"
+  export AZURE_TENANT_ID="$saved_tenant_id"
 }
 
 ensure_cluster_admin_for_install() {
@@ -372,6 +384,12 @@ Pass --create-spn to create one automatically, or export:
     if ! prompt_confirm "Create a new service principal with timestamp suffix instead?"; then
       log_info "Ensuring existing service principal has Contributor role..."
       
+      # Temporarily unset SPN env vars so az uses the user's own login
+      local saved_client_id="${AZURE_CLIENT_ID:-}"
+      local saved_client_secret="${AZURE_CLIENT_SECRET:-}"
+      local saved_tenant_id="${AZURE_TENANT_ID:-}"
+      unset AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
+      
       # Verify/assign Contributor role on subscription (idempotent)
       SUBSCRIPTION_SCOPE="/subscriptions/${AZURE_SUBSCRIPTION_ID}"
       if az role assignment create \
@@ -389,9 +407,18 @@ Pass --create-spn to create one automatically, or export:
           --query "[0].id" -o tsv >/dev/null 2>&1; then
           log_success "Role assignment: Contributor already exists on subscription ${AZURE_SUBSCRIPTION_ID}"
         else
+          # Restore env vars before exiting
+          export AZURE_CLIENT_ID="$saved_client_id"
+          export AZURE_CLIENT_SECRET="$saved_client_secret"
+          export AZURE_TENANT_ID="$saved_tenant_id"
           fail "Failed to verify or assign Contributor role to service principal. Check Azure permissions."
         fi
       fi
+      
+      # Restore SPN env vars
+      export AZURE_CLIENT_ID="$saved_client_id"
+      export AZURE_CLIENT_SECRET="$saved_client_secret"
+      export AZURE_TENANT_ID="$saved_tenant_id"
       
       log_error "Cannot proceed without service principal credentials."
       echo ""

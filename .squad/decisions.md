@@ -725,3 +725,41 @@ bash -n scripts/deploy-dapr-components.sh              → OK
 bash -n scripts/deploy-dapr-components-workload-identity.sh → OK
 bash -n scripts/publish-radius-recipes.sh              → OK
 ```
+
+---
+
+### 2026-03-27T09:38:00Z: Decision — Azure Credential Isolation Pattern
+**By:** Pete (Infrastructure Automation Specialist)
+**Date:** 2026-03-27
+**Status:** IMPLEMENTED
+**What:** When running Azure CLI commands that require privileged operations (role assignments, resource group creation) while SPN environment variables (`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`) are set, temporarily unset those env vars before the privileged operation, then restore them afterward.
+**Why:** Azure CLI uses SPN credentials for **all** commands when those env vars are set, but service principals typically lack `Microsoft.Authorization/roleAssignments/write` permission needed for role assignment. This creates a catch-22: we need to assign Contributor to the SPN before it can do anything else, but we can't assign the role as the SPN itself. The user's Azure identity (from `az login`) has the necessary permissions for privileged operations.
+
+**Pattern:**
+```bash
+# Save SPN env vars
+local saved_client_id="${AZURE_CLIENT_ID:-}"
+local saved_client_secret="${AZURE_CLIENT_SECRET:-}"
+local saved_tenant_id="${AZURE_TENANT_ID:-}"
+
+# Unset so az uses user's own login
+unset AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
+
+# Run privileged operation as user
+az role assignment create --assignee "$app_id" --role Contributor --scope "/subscriptions/$sub_id"
+
+# Restore SPN env vars for subsequent SPN-scoped operations
+export AZURE_CLIENT_ID="$saved_client_id"
+export AZURE_CLIENT_SECRET="$saved_client_secret"
+export AZURE_TENANT_ID="$saved_tenant_id"
+```
+
+**Implementation:**
+- Applied in `scripts/prepare-cluster.sh` lines 172–184 (resource group creation)
+- Applied in `scripts/prepare-cluster.sh` lines 388–420 (role assignment for new SPN)
+- Ensures subsequent SPN-scoped operations (like `rad credential register azure sp`) continue to work correctly
+
+**Affected Operations:**
+- `az role assignment create` when assigning roles to a service principal
+- `az group create` when creating resource groups (if SPN doesn't have Contributor yet)
+- Any other `az` command requiring elevated permissions the SPN doesn't have
