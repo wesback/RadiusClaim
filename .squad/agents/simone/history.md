@@ -12,8 +12,8 @@
 - Azure is the current target, but application code must stay cloud-agnostic through Dapr abstractions.
 - Own truthful failure semantics without expanding Phase 2 into workflow behavior.
 - For shared Dapr index keys, track whether the current request actually inserted the ID before compensating, then re-check the record after rollback so concurrent creates resolve to `200/409` instead of a dishonest failure.
-- **Issue #1 (manual approval):** Dapr Workflow's `WaitForExternalEventAsync` + `CreateTimer` raced with `Task.WhenAny` is the idiomatic pattern for bounded-time human-in-the-loop steps. Both branches must be fully compensatable.
-- The state machine MUST have explicit activities for every state transition. Calling `ProcessReimbursementActivity` directly after a manual approval fails because the state store still shows `ManualReviewRequested`; a `RecordApprovalActivity` intermediate step is required.
-- All activities that write state must be idempotent: guard with `if (record.Status == already-done) return true;` before attempting the transition. Dapr Workflow will retry on transient failures.
-- Event name constants belong in the shared `RadiusClaimDapr` class so both workflow-engine and expense-api reference the same string without coupling.
-- The approve/reject endpoints live in expense-api (user-facing) and forward via service invocation to workflow-engine's `/decide` endpoint (which owns `DaprWorkflowClient`). This keeps workflow operations isolated to the workflow-engine service.
+- Human-in-the-loop in Dapr Workflows uses `WaitForExternalEventAsync<T>` raced against `CreateTimer` in `Task.WhenAny`. The workflow replay model makes this safe and durable.
+- `Workflow<T,R>` subclasses support primary constructor DI injection (e.g., `IOptions<ApprovalOptions>`).
+- Rejection activities must be idempotent: check `record.Status == ExpenseStatus.Rejected` before writing, return immediately if already rejected.
+- In a shared build environment (multiple concurrent agents), transient MSBuild cache-file lock errors occur. Work around by cleaning the shared project's obj folder before building, or retrying.
+- When a remote branch already has partial work committed, reset local commits with `git reset --soft <remote>` and only stage truly-new additions (tests, csproj changes) to keep the diff clean.
