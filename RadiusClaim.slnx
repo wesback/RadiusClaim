@@ -11,5 +11,6 @@
   </Folder>
   <Folder Name="/src/workflow-engine/">
     <Project Path="src/workflow-engine/WorkflowEngine.csproj" />
+    <Project Path="src/WorkflowEngine.Tests/WorkflowEngine.Tests.csproj" />
   </Folder>
 </Solution>
