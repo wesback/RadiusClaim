@@ -2,10 +2,17 @@ using System.Text.Json;
 using RadiusClaim.Contracts;
 using Dapr;
 using Dapr.Client;
+using NotificationSvc.Transports;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDaprClient();
+
+var transportName = builder.Configuration["NOTIFICATION_TRANSPORT"] ?? "log";
+if (transportName == "email")
+    builder.Services.AddSingleton<INotificationTransport, EmailTransport>();
+else
+    builder.Services.AddSingleton<INotificationTransport, LoggingTransport>();
 
 var app = builder.Build();
 
@@ -14,15 +21,17 @@ app.MapSubscribeHandler();
 
 app.MapGet("/", () => TypedResults.Ok(new ServiceDescriptor(
     RadiusClaimDapr.AppIds.NotificationService,
-    "phase-4",
+    "phase-5",
     [nameof(NotificationRequest)],
     ["pubsub"],
-    "Dapr pub/sub delivery is now visible via structured notification logs; transports stay deferred.")));
+    "Pluggable transport: set NOTIFICATION_TRANSPORT=log (default) or NOTIFICATION_TRANSPORT=email")));
 
 app.MapPost("/notifications",
     [Topic(RadiusClaimDapr.Components.PubSub, RadiusClaimDapr.Topics.ExpenseNotifications)]
     async (HttpRequest request, ILogger<Program> logger, CancellationToken cancellationToken) =>
     {
+        var transport = request.HttpContext.RequestServices.GetRequiredService<INotificationTransport>();
+
         NotificationRequest? notification;
 
         try
@@ -48,15 +57,10 @@ app.MapPost("/notifications",
             return TypedResults.Ok(new { status = "ignored" });
         }
 
-        logger.LogInformation(
-            "Notification received: EventType={EventType}, ExpenseId={ExpenseId}, CorrelationId={CorrelationId}, Recipient={Recipient}, Subject={Subject}",
-            notification.EventType,
-            notification.ExpenseId,
-            notification.CorrelationId,
-            notification.Recipient,
-            notification.Subject);
+        await transport.SendAsync(notification, cancellationToken);
 
-        return TypedResults.Ok(new { status = "received" });
+        // Return consistent anonymous type to keep lambda return type inference stable.
+        return TypedResults.Ok(new { status = "delivered" });
     });
 
 app.MapGet("/healthz", () => TypedResults.Ok(new { status = "ok" }));
