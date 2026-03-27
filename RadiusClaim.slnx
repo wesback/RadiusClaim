@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/src/">
     <Project Path="src/WorkflowEngine.Tests/WorkflowEngine.Tests.csproj" />
+    <Project Path="src/NotificationSvc.Tests/NotificationSvc.Tests.csproj" />
   </Folder>
   <Folder Name="/src/expense-api/">
     <Project Path="src/expense-api/ExpenseApi.csproj" />
@@ -13,6 +14,5 @@
   </Folder>
   <Folder Name="/src/workflow-engine/">
     <Project Path="src/workflow-engine/WorkflowEngine.csproj" />
-    <Project Path="src/WorkflowEngine.Tests/WorkflowEngine.Tests.csproj" />
   </Folder>
 </Solution>

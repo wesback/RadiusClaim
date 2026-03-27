@@ -2875,3 +2875,37 @@ Operators who muscle-memory `--workspace-name` from bootstrap will silently get 
 - Files affected: bootstrap.sh, teardown.sh, deploy-dapr-components.sh, deploy-dapr-components-workload-identity.sh, publish-radius-recipes.sh, scripts/README.md
 
 **Merged from inbox:** 2026-03-27T09:05:00Z
+
+---
+
+## 9. Pluggable Notification Transport (Issue #11)
+
+**By:** Warren (Eventing Specialist)
+**Date:** 2026-03-27
+**Status:** IMPLEMENTED — PR squad/11-notification-transport, Closes #11
+
+### What
+
+Introduced `INotificationTransport` interface with two implementations in `notification-svc`:
+
+| Transport | `NOTIFICATION_TRANSPORT` value | Behaviour |
+|-----------|-------------------------------|-----------|
+| `LoggingTransport` | `log` (default) | Full `NotificationRequest` serialised as structured JSON log event |
+| `EmailTransport` | `email` | Structured log per field (stub — TODO wire real SMTP relay) |
+
+### Design Choices
+
+- Interface-first so any transport (SMS, webhook, SendGrid) can be wired without changing the handler or Dapr subscription.
+- `AddSingleton<TService, TImpl>()` (if/else) used instead of switch-expression factory to avoid C# CS1593 overload cascade.
+- Service-locator (`request.HttpContext.RequestServices`) used inside `[Topic]` lambda because Dapr's attribute approach limits the lambda to ≤3 special params before hitting `RequestDelegate` overload conflict.
+- All lambda return paths use the same anonymous type shape (`new { status = "..." }`) to avoid inference failures.
+- `NOTIFICATION_TRANSPORT` read via `IConfiguration` — overridable via env, appsettings, or Dapr secrets.
+- 16 xunit tests cover transport names, `SendAsync`, all event types, and DI dispatch routing.
+
+### Ordering & Delivery
+
+- Dapr at-least-once; handler returns `200 OK` for both `delivered` and `ignored` to suppress dead-letter retry.
+- Transport stubs are synchronous no-ops; no ordering guarantees at this phase.
+- Dead-letter handling and replay deferred to a future issue.
+
+**Merged from inbox:** 2026-03-27

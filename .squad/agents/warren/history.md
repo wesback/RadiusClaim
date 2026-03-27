@@ -7,6 +7,10 @@
 
 ## Learnings
 
+- **Issue #11 — Notification Transport:** C# compiler CS1593 cascades from switch-expression lambdas with heterogeneous return types when the switch result is passed directly to `AddSingleton<T>(factory)`. Solution: use `if/else` branch with `AddSingleton<TService, TImpl>()` or declare explicit `Func<IServiceProvider, T>` variable before passing. Always use consistent anonymous-object shapes across all lambda return paths to avoid overload resolution failures on `MapPost`.
+- Transport abstraction via `INotificationTransport` interface makes the delivery channel fully swappable without touching the Dapr subscription wiring. The `NOTIFICATION_TRANSPORT` env var (read from `IConfiguration`) is the activation gate; DI wires the correct singleton at startup.
+- Untracked files survive `git stash` (without `--include-untracked`) but NOT `git stash --include-untracked` pop onto a different branch — always use targeted `git checkout stash@{0}^3 -- <paths>` to restore untracked files selectively.
+
 - Added to resolve the remaining Phase 2 deadlock in the `POST /expenses` write path.
 - The sample must stay intentionally small, demoable in roughly ten minutes, and aimed at enterprise/platform audiences.
 - Azure is the current target, but application code must stay cloud-agnostic through Dapr abstractions.
@@ -35,3 +39,16 @@ Warren standardized all `POST /expenses` non-success responses to RFC 7807 probl
 - **Build Status:** ✅ Validated `dotnet build`
 - **Decision:** [Warren: standardize expense submission failure payloads](../decisions/decisions.md)
 - **Completed:** 2026-03-25T14:28:31Z
+
+## 2026-03-27: Notification Transport (Issue #11, COMPLETE)
+
+Added pluggable transport interface to `notification-svc`:
+
+- **`INotificationTransport`** — interface with `TransportName` and `SendAsync`
+- **`LoggingTransport`** — default; serializes full payload as structured JSON via `logger.LogInformation`
+- **`EmailTransport`** — stub; logs all fields as if dispatching SMTP (safe in demo/CI, marked with TODO for real relay)
+- **DI wiring** — `if (transportName == "email")` branch in `Program.cs` registers the correct singleton at startup; `NOTIFICATION_TRANSPORT` env var read via `IConfiguration`
+- **16 tests** — `LoggingTransportTests`, `EmailTransportTests`, `TransportDispatchTests` covering transport names, `SendAsync` completion, all event types, dispatch routing, interface conformance
+- **Files:** `src/notification-svc/Transports/INotificationTransport.cs`, `LoggingTransport.cs`, `EmailTransport.cs`, `src/notification-svc/Program.cs`, `src/NotificationSvc.Tests/`
+- **Build:** ✅ `dotnet build` succeeds; `dotnet test` — 16/16 passed
+- **PR:** draft — squad/11-notification-transport → Closes #11
