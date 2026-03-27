@@ -279,3 +279,23 @@ All 8 findings from Pete's infrastructure scripts audit were successfully applie
 **Verification:** `bash -n scripts/*.sh` all pass; grep for ACA patterns returns zero results.
 
 **PR:** squad/12-aca-cleanup → closes #12
+
+## Learnings
+
+### 2026-06-05 -- GHCR Image Pull Secret Automation (Issue #16)
+
+**Problem:** Creating the `ghcr-pull-secret` Kubernetes secret was a manual step after every fresh cluster build. Operators who skipped it saw silent pod scheduling failures because AKS could not pull images from `ghcr.io/wesback`.
+
+**Fix applied:**
+
+- Added `GHCR_TOKEN="${GHCR_TOKEN:-}"` and `GHCR_USERNAME="wesback"` variables at top of `prepare-cluster.sh`.
+- Added `--ghcr-token <token>` CLI flag (overrides env var) with matching `usage()` documentation.
+- Introduced `ensure_ghcr_pull_secret()` function that runs after kubectl is confirmed reachable. Uses the idempotent `--dry-run=client -o yaml | kubectl apply -f -` pattern.
+- When token is absent, emits a clear warning (no hard fail) -- script completes, missing secret surfaced in summary line.
+- Added `GHCR_TOKEN` row to the README "Required Repository Secrets" table.
+
+**Key pattern -- pipe in dry-run context:** `run_cmd` uses `"$@"` and cannot carry pipes. Handle dry-run inline like `install_radius_if_needed`: check `[ "$DRY_RUN" = true ]` explicitly.
+
+**Verification:** `bash -n scripts/prepare-cluster.sh` passes.
+
+**PR:** squad/16-ghcr-pull-secret closes #16

@@ -21,6 +21,9 @@ INSTALL_DAPR=false
 INSTALL_RADIUS=false
 YES=false
 DRY_RUN=false
+# GHCR pull secret -- read from env var first, overridden by --ghcr-token flag
+GHCR_TOKEN="${GHCR_TOKEN:-}"
+GHCR_USERNAME="wesback"
 
 usage() {
   cat <<USAGE
@@ -48,6 +51,9 @@ Optional:
   --workspace-name <name>       Radius workspace name (default: ${WORKSPACE_NAME})
   --group-name <name>           Radius group name (default: ${GROUP_NAME})
   --kube-context <context>      kubectl context to use after credentials are set
+  --ghcr-token <token>          GitHub personal access token (read:packages) for GHCR image pulls.
+                                Falls back to $GHCR_TOKEN env var. When absent, the pull secret
+                                step is skipped with a warning.
   --dry-run                     Print the planned mutations without executing them
   --yes                         Accept confirmation prompts non-interactively
   --help                        Show this help message
@@ -115,6 +121,10 @@ while [ $# -gt 0 ]; do
       ;;
     --kube-context)
       KUBE_CONTEXT="$2"
+      shift 2
+      ;;
+    --ghcr-token)
+      GHCR_TOKEN="$2"
       shift 2
       ;;
     --dry-run)
@@ -310,6 +320,40 @@ install_radius_if_needed() {
   fi
 }
 
+# ensure_ghcr_pull_secret -- creates (or updates) the ghcr-pull-secret in
+# the default namespace so Kubernetes can pull images from ghcr.io/wesback.
+# Uses --dry-run=client | apply so the operation is idempotent.
+# Skipped with a warning when GHCR_TOKEN is empty.
+ensure_ghcr_pull_secret() {
+  section "GHCR image pull secret"
+
+  if [ -z "$GHCR_TOKEN" ]; then
+    log_warning "GHCR_TOKEN is not set -- skipping pull secret creation."
+    log_warning "Pods that pull from ghcr.io/${GHCR_USERNAME} will fail to start on a fresh cluster."
+    log_warning "Re-run with --ghcr-token <token> or export GHCR_TOKEN=<token> to create it."
+    return 0
+  fi
+
+  if [ "$DRY_RUN" = true ]; then
+    echo "[dry-run] kubectl create secret docker-registry ghcr-pull-secret \\"
+    echo "    --docker-server=ghcr.io \\"
+    echo "    --docker-username=${GHCR_USERNAME} \\"
+    echo "    --docker-password=<GHCR_TOKEN> \\"
+    echo "    --namespace=default \\"
+    echo "    --dry-run=client -o yaml | kubectl apply -f -"
+    return 0
+  fi
+
+  kubectl create secret docker-registry ghcr-pull-secret \
+    --docker-server=ghcr.io \
+    --docker-username="${GHCR_USERNAME}" \
+    --docker-password="${GHCR_TOKEN}" \
+    --namespace=default \
+    --dry-run=client -o yaml | kubectl apply -f -
+
+  log_success "ghcr-pull-secret is present in namespace 'default'"
+}
+
 prepare_aks_cluster() {
   [ -n "$AKS_CLUSTER_NAME" ] || return 0
 
@@ -500,6 +544,8 @@ if [ "$DRY_RUN" = false ]; then
   kubectl get nodes -o name >/dev/null 2>&1 || fail "kubectl cannot list cluster nodes."
 fi
 
+ensure_ghcr_pull_secret
+
 section "Cluster control planes"
 install_dapr_if_needed
 install_radius_if_needed
@@ -538,6 +584,11 @@ fi
 echo "kubectl context    : ${KUBECTL_CONTEXT}"
 echo "Radius workspace   : ${WORKSPACE_NAME}"
 echo "Radius group       : ${GROUP_NAME}"
+if [ -n "$GHCR_TOKEN" ]; then
+  echo "GHCR pull secret   : ghcr-pull-secret (namespace: default)"
+else
+  echo "GHCR pull secret   : skipped -- set GHCR_TOKEN or pass --ghcr-token"
+fi
 echo "Next command       : ./scripts/bootstrap.sh --resource-group ${RESOURCE_GROUP} --yes"
 
 if [ "$DRY_RUN" = true ]; then
