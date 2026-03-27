@@ -211,6 +211,7 @@ public sealed class ApproveExpenseActivityTests
     [Fact]
     public async Task AlreadyApproved_Status_IsIdempotent()
     {
+        // A record already at Approved status should return the AutoApprove decision without re-saving
         var record = BuildRecord(50m, ExpenseStatus.Approved);
         var mock = BuildDaprMockReturning(record);
         var activity = new ApproveExpenseActivity(mock.Object, DefaultOptions(), NullLogger<ApproveExpenseActivity>.Instance);
@@ -228,6 +229,7 @@ public sealed class ApproveExpenseActivityTests
     [Fact]
     public async Task AlreadyReimbursed_AutoApprove_IsIdempotent()
     {
+        // If already reimbursed (completed auto-approve path), return decision without modifying state
         var record = BuildRecord(50m, ExpenseStatus.Reimbursed);
         var mock = BuildDaprMockReturning(record);
         var activity = new ApproveExpenseActivity(mock.Object, DefaultOptions(), NullLogger<ApproveExpenseActivity>.Instance);

@@ -277,3 +277,60 @@ The same merge run also recorded Graham's live statestore diagnosis: `RecipeDepl
 - `.squad/decisions.md` — consolidated GHCR auth + validation
 - `.squad/decisions.md` — added statestore diagnosis
 - `.squad/decisions/inbox/` — cleared
+
+---
+
+## 2026-06-11: Issue #2 — Automated Integration Test Harness
+
+**Task:** Build a proper test harness from scratch (no prior tests existed beyond `validate-deployment.sh`).
+
+### What Was Built
+
+Three xUnit test projects added to `RadiusClaim.slnx`:
+
+- **`src/WorkflowEngine.Tests/`** — 24 unit tests for `ApproveExpenseActivity` and `ProcessReimbursementActivity`
+- **`src/IntegrationTests/`** — 12 tests: activity chain integration (end-to-end through all three activities) and contract tests for Dapr pub/sub schema alignment between `workflow-engine` and `notification-svc`
+- **`src/ExpenseApi.Tests/`** — 8 API-level validation tests using `WebApplicationFactory<Program>`
+
+**Total: 44 tests, all passing.**
+
+### Learnings
+
+**WorkflowActivityContext is abstract in Dapr.Workflow 1.17.5.**
+`RuntimeHelpers.GetUninitializedObject` throws `MemberAccessException` on abstract classes. Use Moq to create a concrete proxy: `new Mock<WorkflowActivityContext>()` with `mock.Setup(c => c.InstanceId).Returns(...)`. Castle DynamicProxy handles the abstract class subclassing.
+
+**DaprClient abstract methods map cleanly to Moq.**
+The production code calls 2-argument shorthand (`GetStateAsync(storeName, key)`) which resolves to the abstract method with all optional parameters. Moq setup with `It.IsAny<ConsistencyMode?>()`, etc., correctly intercepts these calls. No need for extension method workarounds.
+
+**In-memory Dapr state for integration tests.**
+Thread Moq's `SaveStateAsync` Callback to update a `Dictionary<string, ExpenseRecord>` and `ReturnsAsync` on `GetStateAsync` to read from the same dictionary. This allows the activity chain to behave as if there is a real state store, with state changes persisting across sequential activity calls within a single test.
+
+**InternalsVisibleTo pattern for internal sealed classes.**
+Added `<InternalsVisibleTo Include="WorkflowEngine.Tests" />` and `<InternalsVisibleTo Include="IntegrationTests" />` to `WorkflowEngine.csproj`. Allows test projects to instantiate `internal sealed class` activities directly.
+
+**WebApplicationFactory works for minimal APIs.**
+`expense-api/Program.cs` already has `public partial class Program;` at the bottom (required). Override `DaprClient` via `builder.ConfigureServices(...)`. Validation errors (400s) are returned before any Dapr calls, so the mock requires no setup for those paths.
+
+**Contract tests as compile-time guards.**
+Replicated `IsValidNotification` predicate from `notification-svc/Program.cs` into `NotificationContractTests`. Any schema drift on `NotificationRequest` fields (or renaming of enum values used in JSON serialization) will fail these tests before deployment.
+
+### Coverage
+
+- Auto-approve threshold: `amount < 100` → `ExpenseStatus.Approved` ✅
+- Manual review threshold: `amount >= 100` → `ExpenseStatus.ManualReviewRequested` ✅
+- Boundary case: exactly `$100.00` → manual review ✅
+- Idempotency: already-approved and already-reimbursed states return decisions without re-saving ✅
+- Full activity chain (auto-approve): `ApproveExpenseActivity` → `ProcessReimbursementActivity` → `PublishNotificationActivity` ✅
+- Full activity chain (manual review): `ApproveExpenseActivity` → `PublishNotificationActivity` (no reimbursement) ✅
+- Pub/sub contract: topic name, component name, and `NotificationRequest` schema validated ✅
+
+### CI Wiring
+
+Updated `squad-ci.yml` to run:
+```
+dotnet restore RadiusClaim.slnx --nologo
+dotnet build RadiusClaim.slnx --configuration Release --no-restore --nologo
+dotnet test RadiusClaim.slnx --configuration Release --no-build --nologo
+```
+The `deploy-azure.yml` workflow already ran `dotnet test` — new test projects are picked up automatically.
+

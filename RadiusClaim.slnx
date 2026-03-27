@@ -16,4 +16,9 @@
   <Folder Name="/src/workflow-engine/">
     <Project Path="src/workflow-engine/WorkflowEngine.csproj" />
   </Folder>
+  <Folder Name="/src/tests/">
+    <Project Path="src/WorkflowEngine.Tests/WorkflowEngine.Tests.csproj" />
+    <Project Path="src/ExpenseApi.Tests/ExpenseApi.Tests.csproj" />
+    <Project Path="src/IntegrationTests/IntegrationTests.csproj" />
+  </Folder>
 </Solution>
