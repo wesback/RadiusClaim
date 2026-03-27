@@ -653,6 +653,59 @@ wait_for_sidecar_log() {
   fail "Dapr sidecar for '${deployment}' did not report '${needle}'."
 }
 
+# Patch the default service account in the workload namespace so Kubernetes uses
+# ghcr-pull-secret for every pod — including those Radius spawns after deploy.
+# This is idempotent: safe to run on every bootstrap and on re-deploys.
+# Skipped silently when GHCR_TOKEN is not set (no private registry creds available).
+patch_pull_secret_to_serviceaccount() {
+  local namespace="$1"
+
+  if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
+    return 0
+  fi
+
+  if [ "$DRY_RUN" = true ]; then
+    log_info "[dry-run] Would patch default service account in '${namespace}' with ghcr-pull-secret."
+    return 0
+  fi
+
+  # Radius may recreate the namespace on re-deploy, clearing any pre-deploy secrets.
+  # Re-create the secret here (post-deploy) to guarantee it exists before patching SA.
+  if ! kubectl get secret ghcr-pull-secret -n "$namespace" >/dev/null 2>&1; then
+    log_info "Re-creating ghcr-pull-secret in '${namespace}' (cleared by Radius namespace lifecycle)."
+    kubectl create secret docker-registry ghcr-pull-secret \
+      --docker-server=ghcr.io \
+      --docker-username="${GHCR_USERNAME}" \
+      --docker-password="${GHCR_TOKEN}" \
+      -n "$namespace" >/dev/null
+  fi
+
+  # Patch is a merge — if imagePullSecrets already contains the entry, kubectl is a no-op.
+  local current
+  current="$(kubectl get sa default -n "$namespace" -o jsonpath='{.imagePullSecrets}' 2>/dev/null || echo '')"
+  if echo "$current" | grep -q "ghcr-pull-secret"; then
+    echo "  ✓ default service account in '${namespace}' already has ghcr-pull-secret"
+  else
+    kubectl patch serviceaccount default -n "$namespace" \
+      --patch '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}' >/dev/null
+    echo "  ✓ Patched default service account in '${namespace}' with imagePullSecrets: ghcr-pull-secret"
+  fi
+
+  # Evict pods stuck in ImagePullBackOff — they won't self-heal once the SA is patched
+  # unless they are rescheduled.  Deletion triggers immediate recreation.
+  local stuck_pods
+  stuck_pods="$(kubectl get pods -n "$namespace" -o json 2>/dev/null \
+    | jq -r '.items[] | select(.status.containerStatuses[]?.state.waiting.reason == "ImagePullBackOff") | .metadata.name' \
+    || true)"
+  if [ -n "$stuck_pods" ]; then
+    echo "  Deleting ImagePullBackOff pods so they restart with updated credentials:"
+    echo "$stuck_pods" | xargs kubectl delete pod -n "$namespace" --ignore-not-found >/dev/null
+    echo "  ✓ Stuck pods deleted"
+  else
+    echo "  ✓ No ImagePullBackOff pods found in '${namespace}'"
+  fi
+}
+
 build_and_push_service() {
   local service_name="$1"
   local dockerfile_path="$2"
@@ -1282,8 +1335,11 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
 fi
 
 if [ "$SKIP_APP_DEPLOY" = false ]; then
-  section "Waiting for workloads"
+  section "Wiring GHCR pull secret to service account"
   wait_for_namespace "$WORKLOAD_NAMESPACE"
+  patch_pull_secret_to_serviceaccount "$WORKLOAD_NAMESPACE"
+
+  section "Waiting for workloads"
   wait_for_deployment expense-api
   wait_for_deployment workflow-engine
   wait_for_deployment notification-svc

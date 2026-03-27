@@ -391,3 +391,42 @@ All 8 findings from Pete's infrastructure scripts audit were successfully applie
 **Key learning:** When an error message tells the user to pass a flag, that flag must actually exist in the script. Always trace the full user journey: if the remediation path you advertise isn't implemented, the user hits a second, more confusing error. Cross-script feature parity matters — if both `prepare-cluster.sh` and `bootstrap.sh` can encounter the same stale-SP scenario, both need the `--create-spn` escape hatch.
 
 **Verification:** `bash -n scripts/bootstrap.sh` passes.
+
+### 2026-06-06 — Fix ImagePullBackOff: Patch default SA with ghcr-pull-secret post-deploy
+
+**Problem:** All 3 application pods (expense-api, workflow-engine, notification-svc) fail with
+`ImagePullBackOff` after `rad app deploy`. `ghcr-pull-secret` existed in the workload namespace
+but was not wired to the `default` service account, so Kubernetes never used it.
+
+**Root cause investigation:**
+- `bootstrap.sh` already pre-creates `ghcr-pull-secret` before `rad deploy` ✓
+- `bootstrap.sh` already passes `--parameters "ghcrImagePullRef=ghcr-pull-secret"` to `rad deploy` ✓
+- `infra/radius/modules/container-service.bicep` already builds `runtimes.kubernetes.pod.spec.imagePullSecrets`
+  from that parameter ✓
+- BUT: the generated Kubernetes pod specs do NOT contain `imagePullSecrets`. Radius silently
+  ignores the `spec.imagePullSecrets` override inside `runtimes.kubernetes.pod`. This appears
+  to be a Radius version limitation — the pod override path supports labels but not `spec`
+  sub-fields like `imagePullSecrets`.
+
+**Fix applied — `patch_pull_secret_to_serviceaccount()` in `scripts/bootstrap.sh`:**
+- Added function after `wait_for_sidecar_log` in the function block (line ~656)
+- Called after `rad deploy` + `wait_for_namespace`, before `wait_for_deployment`
+- Function behaviour:
+  - No-op if `GHCR_TOKEN`/`GHCR_USERNAME` not set (silent skip)
+  - No-op in dry-run mode (logs intent)
+  - Re-creates `ghcr-pull-secret` if Radius cleared it during namespace lifecycle
+  - Idempotent SA patch — checks existing `imagePullSecrets` before patching
+  - Deletes ImagePullBackOff pods via `jq` query so they restart immediately
+- Section header "Wiring GHCR pull secret to service account" separates this from "Waiting for workloads"
+
+**Key learning:** Radius's `runtimes.kubernetes.pod` object supports pod-level label injection
+(confirmed working for workload identity labels), but `spec.imagePullSecrets` override is silently
+dropped. The service account `imagePullSecrets` field is a better hook for this anyway: it
+applies to every pod in the namespace regardless of which controller created them, and survives
+re-deploys as long as the SA exists.
+
+**Graham notified:** `.squad/decisions/inbox/pete-pull-secret-wiring.md` — asks Graham to verify
+whether `runtimes.kubernetes.pod.spec.imagePullSecrets` actually reaches the generated Deployment
+and, if so, whether a Radius schema fix could replace the SA patch long-term.
+
+**Verification:** `bash -n scripts/bootstrap.sh` passes.
