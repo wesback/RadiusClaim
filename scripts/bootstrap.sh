@@ -382,86 +382,58 @@ check_recipe_anonymous_access() {
   return $result
 }
 
-# Ensure the Radius operator (applications-rp) can pull OCI recipe artifacts.
-# If the registry packages are private, inject a GHCR credential secret into
-# radius-system and configure applications-rp to use DOCKER_CONFIG pointing to it.
-# The ORAS library Radius uses internally respects DOCKER_CONFIG for OCI auth.
-ensure_radius_oci_credentials() {
+# Verify that all recipe OCI artifacts are publicly accessible (no credentials needed).
+# Radius's applications-rp operator pulls Bicep recipe artifacts using the ORAS Go library,
+# which runs inside the Kubernetes pod with no Docker credentials. Private GHCR packages
+# therefore always result in a 401 at deploy time — there is no supported Helm value or
+# rad CLI flag to supply OCI credentials to the operator.
+#
+# The correct solution for a demo/development project is to make the GHCR recipe packages
+# public. Recipe artifacts contain only Bicep templates — no secrets or credentials.
+# See docs/adr/ghcr-recipe-packages-public.md for the full rationale.
+#
+# GitHub does NOT provide a REST API to change container package visibility; it must be
+# done once via the GitHub web UI per-package.
+require_public_recipe_access() {
   if [ "${DRY_RUN:-false}" = true ]; then
-    log_info "Dry run — skipping Radius OCI credential configuration."
+    log_info "Dry run — skipping OCI artifact public-access check."
     return 0
   fi
 
-  local all_public=true
+  local private_packages=()
   for artifact in state-store pubsub secrets; do
     if ! check_recipe_anonymous_access "$artifact"; then
-      all_public=false
-      break
+      private_packages+=("$artifact")
     fi
   done
 
-  if [ "$all_public" = true ]; then
-    log_info "Recipe OCI artifacts are publicly accessible — no credential injection needed."
+  if [ ${#private_packages[@]} -eq 0 ]; then
+    log_success "  ✓ All recipe OCI artifacts are publicly accessible."
     return 0
   fi
 
-  log_warning "Recipe OCI artifacts at '${RECIPE_REGISTRY}' are private."
-  log_warning "Radius will fail to pull them at deploy time unless credentials are injected."
+  # Extract owner from registry path, e.g. ghcr.io/wesback/radiusclaim/recipes → wesback
+  local registry_owner
+  registry_owner=$(echo "${RECIPE_REGISTRY}" | cut -d'/' -f2)
 
-  if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
-    fail "$(cat <<EOF
-Recipe OCI artifacts at ${RECIPE_REGISTRY} are private and GHCR_TOKEN/GHCR_USERNAME are not set.
-Radius cannot pull recipe artifacts at deploy time.
+  log_error "The following recipe OCI packages are private and Radius cannot pull them:"
+  for artifact in "${private_packages[@]}"; do
+    log_error "  • ${RECIPE_REGISTRY}/${artifact}:${RECIPE_TAG}"
+  done
+  log_error ""
+  log_error "Recipe packages must be public. They contain only Bicep templates — no secrets."
+  log_error "Make them public once via the GitHub web UI (Settings → Change visibility → Public):"
+  log_error ""
+  for artifact in "${private_packages[@]}"; do
+    local pkg_path
+    pkg_path=$(echo "${RECIPE_REGISTRY#*/}" | sed "s|/|%2F|g")
+    pkg_path="${pkg_path}%2F${artifact}"
+    log_error "  https://github.com/users/${registry_owner}/packages/container/${pkg_path}/settings"
+  done
+  log_error ""
+  log_error "After making the packages public, re-run bootstrap."
 
-To fix this, choose one of:
-  1. Set GHCR_TOKEN and GHCR_USERNAME so bootstrap can configure Radius:
-       export GHCR_USERNAME=<github-username>
-       export GHCR_TOKEN=<PAT-with-read:packages>
-  2. Make the GHCR recipe packages public (they contain only Bicep templates, no secrets):
-       gh api --method PATCH /user/packages/container/radiusclaim%2Frecipes%2Fsecrets  -f visibility=public
-       gh api --method PATCH /user/packages/container/radiusclaim%2Frecipes%2Fstate-store -f visibility=public
-       gh api --method PATCH /user/packages/container/radiusclaim%2Frecipes%2Fpubsub     -f visibility=public
-EOF
-)"
-  fi
-
-  log_info "Configuring Radius to pull OCI recipe artifacts from private registry..."
-
-  local auth_b64 docker_config_json
-  auth_b64=$(printf '%s:%s' "${GHCR_USERNAME}" "${GHCR_TOKEN}" | base64)
-  docker_config_json=$(printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "${auth_b64}")
-
-  # Create or update the credential secret in radius-system
-  kubectl create secret generic radius-oci-recipe-creds \
-    --from-literal=config.json="${docker_config_json}" \
-    -n radius-system \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-
-  # Add the secret volume to the pod spec (strategic merge — idempotent by volume name)
-  kubectl patch deployment applications-rp -n radius-system --type=strategic -p '{
-    "spec": {"template": {"spec": {"volumes": [
-      {"name": "oci-recipe-creds", "secret": {"secretName": "radius-oci-recipe-creds"}}
-    ]}}}
-  }' >/dev/null
-
-  # Add the volumeMount only if not already present
-  local already_mounted
-  already_mounted=$(kubectl get deployment applications-rp -n radius-system \
-    -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[?(@.name=="oci-recipe-creds")].mountPath}' 2>/dev/null || true)
-  if [ -z "$already_mounted" ]; then
-    kubectl patch deployment applications-rp -n radius-system --type=json -p='[
-      {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-",
-       "value":{"name":"oci-recipe-creds","mountPath":"/oci-creds","readOnly":true}}
-    ]' >/dev/null
-  fi
-
-  # Set DOCKER_CONFIG so the ORAS library inside applications-rp reads the mounted creds
-  kubectl set env deployment applications-rp -n radius-system \
-    DOCKER_CONFIG=/oci-creds >/dev/null
-
-  kubectl rollout status deployment applications-rp -n radius-system --timeout=120s >/dev/null
-
-  log_success "  ✓ Radius configured to pull OCI recipe artifacts from ${RECIPE_REGISTRY}"
+  fail "Recipe OCI artifacts are private. Make them public in the GitHub web UI (URLs above) and re-run."
 }
 
 resolve_app_secret_vault_name() {
@@ -762,12 +734,14 @@ actionable_file "$REPO_ROOT/infra/radius/environments/azure-radius.parameters.js
 actionable_file "$REPO_ROOT/infra/radius/recipes/azure/state-store.bicep"
 rad_version_check
 
-# Warn early if GHCR credentials are absent. They are required at deploy time when
-# recipe OCI artifacts at RECIPE_REGISTRY are stored in a private GHCR package.
-# Failing here avoids wasting time on recipe publishing before hitting the same error.
+# Auto-populate GHCR credentials from the gh CLI when available.
+# These are needed for:
+#   1. Publishing recipe Bicep artifacts to GHCR (docker login in publish-radius-recipes.sh)
+#   2. Creating ghcr-pull-secret so Kubernetes can pull application container images
+# Note: recipe OCI artifacts must be PUBLIC so Radius can pull them without credentials.
+#       See require_public_recipe_access() and docs/adr/ghcr-recipe-packages-public.md.
 if echo "${RECIPE_REGISTRY}" | grep -q "ghcr.io"; then
   if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
-    # Try to auto-populate from the gh CLI so the user doesn't have to set vars manually
     if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
       GHCR_USERNAME="${GHCR_USERNAME:-$(gh api user --jq '.login' 2>/dev/null || true)}"
       GHCR_TOKEN="${GHCR_TOKEN:-$(gh auth token 2>/dev/null || true)}"
@@ -778,12 +752,10 @@ if echo "${RECIPE_REGISTRY}" | grep -q "ghcr.io"; then
   fi
   if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
     log_warning "GHCR_TOKEN and/or GHCR_USERNAME are not set."
-    log_warning "These are required if the recipe OCI packages at '${RECIPE_REGISTRY}' are private."
-    log_warning "Bootstrap will fail later if packages are private and credentials are absent."
-    log_warning "Set them now to avoid that:"
+    log_warning "These are needed to publish recipes and create the app image pull secret."
+    log_warning "Set them or authenticate with 'gh auth login' to auto-populate:"
     log_warning "  export GHCR_USERNAME=<github-username>"
-    log_warning "  export GHCR_TOKEN=<PAT-with-read:packages>"
-    log_warning "  # Or if 'gh' CLI is authenticated, bootstrap will auto-populate these."
+    log_warning "  export GHCR_TOKEN=<PAT-with-write:packages>"
   fi
 fi
 
@@ -1164,8 +1136,8 @@ if [ "$SHOULD_PUBLISH_RECIPES" = true ]; then
   run_cmd env RAD_BIN="$RAD_BIN" "$SCRIPT_DIR/publish-radius-recipes.sh" "$RECIPE_REGISTRY" "$RECIPE_TAG"
 fi
 
-section "Ensuring Radius can pull OCI recipe artifacts"
-ensure_radius_oci_credentials
+section "Verifying recipe OCI artifacts are publicly accessible"
+require_public_recipe_access
 
 section "Deploying Radius environment"
 
