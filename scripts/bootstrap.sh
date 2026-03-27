@@ -84,6 +84,7 @@ SKIP_COMPONENT_REFRESH=false
 SHOULD_REGISTER_AZURE_CREDENTIAL=false
 SHOULD_PUBLISH_RECIPES=false
 CREATE_SPN=false
+SETUP_WORKLOAD_IDENTITY=false
 RESOURCE_GROUP_CREATED=false
 PORT_FORWARD_PID=""
 VALIDATION_BASE_URL=""
@@ -114,6 +115,7 @@ Optional:
   --image-platform <platform>   Use docker buildx for a target platform (e.g. linux/amd64)
   --azure-auth-mode <mode>      Azure credential auth mode: auto, sp, or wi (default: ${AZURE_AUTH_MODE})
   --create-spn                  Create an Azure service principal for Radius (skipped if valid credentials exist)
+  --setup-workload-identity     Enable OIDC issuer and workload identity on the AKS cluster (requires az CLI)
   --validation-url <url>        Explicit expense-api base URL for validation
   --skip-recipes                Skip recipe publishing even if artifacts look stale
   --skip-image-push             Skip Docker build/push for service images
@@ -218,6 +220,10 @@ while [ $# -gt 0 ]; do
       ;;
     --create-spn)
       CREATE_SPN=true
+      shift
+      ;;
+    --setup-workload-identity)
+      SETUP_WORKLOAD_IDENTITY=true
       shift
       ;;
     --skip-image-push)
@@ -1086,6 +1092,22 @@ if kubectl get namespace "$WORKLOAD_NAMESPACE" >/dev/null 2>&1 && kubectl get co
 fi
 
 AZURE_AUTH_MODE_RESOLVED="$(resolve_azure_auth_mode)"
+
+# Enable OIDC issuer + workload identity on AKS if requested (must run before
+# credential registration so the cluster is ready for wi mode).
+if [ "$SETUP_WORKLOAD_IDENTITY" = true ]; then
+  section "Enabling OIDC issuer and workload identity on AKS cluster"
+  run_cmd az aks update \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$AKS_CLUSTER_NAME" \
+    --enable-oidc-issuer \
+    --enable-workload-identity
+  # Force wi mode if not already set
+  if [ "$AZURE_AUTH_MODE" = "auto" ]; then
+    AZURE_AUTH_MODE="wi"
+    AZURE_AUTH_MODE_RESOLVED="wi"
+  fi
+fi
 test -n "${AZURE_CLIENT_ID:-}" || fail "AZURE_CLIENT_ID is required for the Microsoft Entra statestore path."
 test -n "${AZURE_TENANT_ID:-}" || fail "AZURE_TENANT_ID is required for the Microsoft Entra statestore path."
 AZURE_PRINCIPAL_ID_RESOLVED="$(resolve_azure_principal_id)"
