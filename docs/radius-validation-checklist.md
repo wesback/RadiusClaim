@@ -709,20 +709,16 @@ kubectl get component statestore pubsub -n "$WORKLOAD_NAMESPACE" -o yaml
 
 **Interpretation:**
 - `KeyBasedAuthenticationNotPermitted` in `daprd` logs → `statestore` is using `accountKey`, but the backing storage account disallows shared-key auth.
-- `pubsub` metadata includes both `namespaceName` and `connectionString` → the pub/sub component is also invalid and will become the next blocker after statestore is repaired.
+- `pubsub` metadata includes `connectionString` instead of `namespaceName` + `azureClientId` → the pub/sub component is using the legacy connection string path. Re-run `deploy-dapr-components-workload-identity.sh` to patch it to workload identity.
 - Dapr annotations such as `dapr.io/enabled`, `dapr.io/app-id`, and `dapr.io/app-port` are **not** the problem when the sidecar dies during component initialization.
 
 **Fix path:**
 ```bash
 export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
 
-./scripts/deploy-dapr-components.sh \
+./scripts/deploy-dapr-components-workload-identity.sh \
   --resource-group <your-resource-group> \
   --namespace "$WORKLOAD_NAMESPACE"
-
-# Keep Service Bus on exactly one auth path: connectionString only for the current backfill flow
-kubectl patch component pubsub -n "$WORKLOAD_NAMESPACE" --type merge \
-  -p '{"spec":{"metadata":[{"name":"connectionString","secretKeyRef":{"name":"pubsub-secrets","key":"connectionString"}},{"name":"disableEntityManagement","value":"true"}]}}'
 
 kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
   -n "$WORKLOAD_NAMESPACE"

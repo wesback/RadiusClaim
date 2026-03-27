@@ -134,10 +134,10 @@ Models three containerized services with Dapr sidecars, three Dapr components (s
 | Recipe | Azure Resource | Auth Model |
 |--------|---------------|------------|
 | `state-store.bicep` | Blob Storage (Standard_LRS) | RBAC (Storage Blob Data Contributor) |
-| `pubsub.bicep` | Service Bus Topics (Standard) | Connection string in recipe output; workload identity in deployment script |
+| `pubsub.bicep` | Service Bus Topics (Standard) | RBAC (Azure Service Bus Data Owner) — Entra metadata only, no connection string |
 | `secrets.bicep` | Key Vault (Standard, RBAC) | RBAC (Key Vault Secrets User) |
 
-All recipes enforce TLS 1.2, disable public blob access, and support optional RBAC role assignment. The pubsub recipe still outputs a connection string as a secret (transitional — the workload identity deployment script bypasses this).
+All recipes enforce TLS 1.2, disable public blob access, and support optional RBAC role assignment. All recipes output only Entra metadata — no connection strings or shared keys.
 
 #### Dapr Component Projection
 **Status:** ⚠️ Requires post-deploy backfill
@@ -424,8 +424,8 @@ The workflow routes expenses ≥ $100 to `ManualReviewRequested` but this is a t
 **[HIGH] Dapr Component CRD Auto-Projection**  
 Radius recipes provision Azure resources but do not create Kubernetes Dapr Component CRDs. The `deploy-dapr-components-workload-identity.sh` script fills this gap, but it means the deployment is not fully declarative through Radius alone. This is partly a Radius platform limitation, but RadiusClaim should track and adopt any upstream fix. In the meantime, the bootstrap script automates the backfill transparently.
 
-**[HIGH] Pubsub Recipe Workload Identity Migration**  
-The `pubsub.bicep` recipe still outputs a Service Bus connection string as a secret. While the deployment script bypasses this by configuring workload identity directly, the recipe itself should be updated to output only Entra metadata and RBAC assignments — matching the state-store recipe pattern. This closes the last gap in the zero-secret recipe layer.
+**[CLOSED] Pubsub Recipe Workload Identity Migration**  
+The `pubsub.bicep` recipe now outputs only Entra metadata (namespace endpoint, topic name) and assigns `Azure Service Bus Data Owner` RBAC — matching the zero-secret pattern established by `state-store.bicep`. No connection string is output. The zero-secret recipe layer is complete.
 
 **[HIGH] Automated Integration Tests**  
 No test suite exists beyond the CI smoke test (`validate-deployment.sh`). A proper test harness should cover: unit tests for approval logic, integration tests for Dapr workflow execution, and contract tests for inter-service communication. Phase 1 validation explicitly deferred this, but it's required for a complete reference app.

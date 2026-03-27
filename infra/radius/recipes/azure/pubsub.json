@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.41.2.15936",
-      "templateHash": "12021420559950196974"
+      "templateHash": "9871730221095073567"
     }
   },
   "parameters": {
@@ -52,7 +52,39 @@
       "metadata": {
         "description": "Service Bus SKU used for the demo namespace."
       }
+    },
+    "azureTenantId": {
+      "type": "string",
+      "defaultValue": "[subscription().tenantId]",
+      "metadata": {
+        "description": "Microsoft Entra tenant ID used by the Dapr pubsub component."
+      }
+    },
+    "azureClientId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Microsoft Entra client ID used by the Dapr pubsub component."
+      }
+    },
+    "azurePrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Object ID of the Microsoft Entra principal that should receive Service Bus data-plane access."
+      }
+    },
+    "azurePrincipalType": {
+      "type": "string",
+      "defaultValue": "ServicePrincipal",
+      "metadata": {
+        "description": "Principal type for the Microsoft Entra identity used by the Dapr pubsub component."
+      }
     }
+  },
+  "variables": {
+    "serviceBusDataOwnerRoleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '090c5cfd-751d-490a-894a-3ce6f1109419')]",
+    "pubsubMetadata": "[union(createObject('namespaceName', createObject('value', format('{0}.servicebus.windows.net', parameters('namespaceName'))), 'disableEntityManagement', createObject('value', 'true'), 'azureTenantId', createObject('value', parameters('azureTenantId')), 'azureEnvironment', createObject('value', 'AZUREPUBLICCLOUD')), if(empty(parameters('azureClientId')), createObject(), createObject('azureClientId', createObject('value', parameters('azureClientId')))))]"
   },
   "resources": [
     {
@@ -93,6 +125,21 @@
       "dependsOn": [
         "[resourceId('Microsoft.ServiceBus/namespaces/topics', parameters('namespaceName'), parameters('topicName'))]"
       ]
+    },
+    {
+      "condition": "[not(empty(parameters('azurePrincipalId')))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ServiceBus/namespaces', parameters('namespaceName'))]",
+      "name": "[guid(resourceId('Microsoft.ServiceBus/namespaces', parameters('namespaceName')), parameters('azurePrincipalId'), 'servicebusDataOwner')]",
+      "properties": {
+        "roleDefinitionId": "[variables('serviceBusDataOwnerRoleDefinitionId')]",
+        "principalId": "[parameters('azurePrincipalId')]",
+        "principalType": "[parameters('azurePrincipalType')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ServiceBus/namespaces', parameters('namespaceName'))]"
+      ]
     }
   ],
   "outputs": {
@@ -102,21 +149,7 @@
         "values": {
           "type": "pubsub.azure.servicebus.topics",
           "version": "v1",
-          "metadata": {
-            "namespaceName": {
-              "value": "[format('{0}.servicebus.windows.net', parameters('namespaceName'))]"
-            },
-            "disableEntityManagement": {
-              "value": "true"
-            }
-          }
-        },
-        "secrets": {
-          "metadata": {
-            "connectionString": {
-              "value": "[listKeys(resourceId('Microsoft.ServiceBus/namespaces/AuthorizationRules', parameters('namespaceName'), 'RootManageSharedAccessKey'), '2024-01-01').primaryConnectionString]"
-            }
-          }
+          "metadata": "[variables('pubsubMetadata')]"
         }
       }
     }
