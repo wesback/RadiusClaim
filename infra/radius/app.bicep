@@ -27,7 +27,20 @@ param useWorkloadIdentity string = 'false'
 @description('Name of the imagePullSecret in the workload namespace for pulling GHCR private images. Leave empty to skip imagePullSecrets injection.')
 param ghcrImagePullRef string = ''
 
-@description('Logical Dapr recipe selections. Override these per environment to swap providers without renaming statestore, pubsub, or platform-secrets.')
+@description('''
+Logical Dapr recipe selections. Override these per environment to swap providers without
+renaming statestore, pubsub, or platform-secrets.
+
+Each entry accepts an optional "parameters" object. When present, those parameters are
+passed verbatim to the recipe (useful for local/in-cluster recipes that ignore Azure names).
+When absent, computed Azure-specific defaults are passed (backwards-compatible).
+
+Azure example (default):
+  { stateStore: { recipeName: 'azure-blob-state' }, ... }
+
+Local/in-cluster example:
+  { stateStore: { recipeName: 'local-redis-state', parameters: {} }, ... }
+''')
 param daprBackings object = {
   stateStore: {
     recipeName: 'azure-blob-state'
@@ -51,6 +64,32 @@ var secretVaultName = 'ce-${take(uniqueString(applicationName, environment, 'pla
 var stateStoreBacking = daprBackings.stateStore
 var pubsubBacking = daprBackings.pubsub
 var secretStoreBacking = daprBackings.secretStore
+
+// Azure-computed defaults for each backing. Used when daprBackings.*.parameters is absent.
+var defaultStateStoreParams = {
+  storageAccountName: stateStoreAccountName
+  containerName: stateStoreContainerName
+}
+var defaultPubsubParams = {
+  namespaceName: pubsubNamespaceName
+  topicName: notificationTopicName
+  subscriptionName: notificationSubscriptionName
+}
+var defaultSecretStoreParams = {
+  vaultName: secretVaultName
+}
+
+// When the backing includes explicit parameters (e.g., local recipes), use them verbatim.
+// Otherwise fall back to the Azure-computed defaults to preserve backwards compatibility.
+var stateStoreRecipeParams = contains(stateStoreBacking, 'parameters')
+  ? stateStoreBacking.parameters
+  : defaultStateStoreParams
+var pubsubRecipeParams = contains(pubsubBacking, 'parameters')
+  ? pubsubBacking.parameters
+  : defaultPubsubParams
+var secretStoreRecipeParams = contains(secretStoreBacking, 'parameters')
+  ? secretStoreBacking.parameters
+  : defaultSecretStoreParams
 var workloadIdentityPodLabels = useWorkloadIdentity == 'true' ? { 'azure.workload.identity/use': 'true' } : {}
 var pullSecrets = empty(ghcrImagePullRef) ? [] : [{ name: ghcrImagePullRef }]
 var publicGatewayHost = empty(publicGatewayHostname)
@@ -78,10 +117,7 @@ resource stateStore 'Applications.Dapr/stateStores@2023-10-01-preview' = {
     resourceProvisioning: 'recipe'
     recipe: {
       name: stateStoreBacking.recipeName
-      parameters: {
-        storageAccountName: stateStoreAccountName
-        containerName: stateStoreContainerName
-      }
+      parameters: stateStoreRecipeParams
     }
   }
 }
@@ -95,11 +131,7 @@ resource pubsub 'Applications.Dapr/pubSubBrokers@2023-10-01-preview' = {
     resourceProvisioning: 'recipe'
     recipe: {
       name: pubsubBacking.recipeName
-      parameters: {
-        namespaceName: pubsubNamespaceName
-        topicName: notificationTopicName
-        subscriptionName: notificationSubscriptionName
-      }
+      parameters: pubsubRecipeParams
     }
   }
 }
@@ -113,9 +145,7 @@ resource platformSecretStore 'Applications.Dapr/secretStores@2023-10-01-preview'
     resourceProvisioning: 'recipe'
     recipe: {
       name: secretStoreBacking.recipeName
-      parameters: {
-        vaultName: secretVaultName
-      }
+      parameters: secretStoreRecipeParams
     }
   }
 }
