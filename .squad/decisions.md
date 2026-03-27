@@ -474,3 +474,103 @@ All 8 findings from Pete's infrastructure scripts audit applied: WI Dapr path wi
 **Date:** 2026-06-05
 
 **Status:** ✅ All scripts pass `bash -n` syntax check. Bootstrap automation ready.
+
+## Decision 18 — GHCR Package API URL Encoding (Pete)
+
+**Date:** 2026-06-05  
+**Author:** Pete (Infrastructure Automation Specialist)  
+**Status:** Implemented  
+
+### Context
+
+The `scripts/teardown.sh` script includes a `delete_ghcr_packages()` function to clean up container images from GitHub Container Registry (GHCR) during teardown. This function was consistently failing with 404 errors for all packages.
+
+### Problem
+
+Package deletion was attempting to call:
+```bash
+gh api -X DELETE "/user/packages/container/radiusclaim/expense-api"
+```
+
+The GitHub API was interpreting this as:
+- Package owner: (authenticated user)
+- Package name: `radiusclaim`
+- Invalid path segment: `expense-api`
+
+This resulted in 404 errors because there is no package named simply "radiusclaim".
+
+### Root Cause
+
+GitHub Container Registry uses the full image path as the package name. For images pushed as:
+```
+ghcr.io/wesback/radiusclaim/expense-api:latest
+```
+
+The package name in the API is `radiusclaim/expense-api` (including the forward slash).
+
+However, forward slashes in URL paths have special meaning and must be URL-encoded when they are part of a single path parameter. The script was only encoding spaces (`%20`) but not forward slashes.
+
+### Decision
+
+**All forward slashes in GHCR package names MUST be URL-encoded as `%2F` when used in GitHub API paths.**
+
+### Implementation
+
+Changed the encoding in `scripts/teardown.sh` line 493:
+
+**Before:**
+```bash
+gh api -X DELETE "/user/packages/container/${full_name// /%20}"
+```
+
+**After:**
+```bash
+local encoded_name="${full_name//\//%2F}"
+gh api -X DELETE "/user/packages/container/${encoded_name}"
+```
+
+This properly encodes package names like:
+- `radiusclaim/expense-api` → `radiusclaim%2Fexpense-api`
+- `radiusclaim/recipes/state-store` → `radiusclaim%2Frecipes%2Fstate-store`
+
+### Package Naming Convention
+
+**Standard GHCR package structure:**
+```
+ghcr.io/<owner>/<package-name>:<tag>
+```
+
+Where `<package-name>` can contain slashes and becomes the package identifier in the API.
+
+**API endpoint format:**
+```
+/user/packages/container/<url-encoded-package-name>
+```
+
+**Example packages in RadiusClaim:**
+- `radiusclaim/expense-api`
+- `radiusclaim/workflow-engine`
+- `radiusclaim/notification-svc`
+- `radiusclaim/recipes/state-store`
+- `radiusclaim/recipes/pubsub`
+- `radiusclaim/recipes/secrets`
+
+### Consequences
+
+**Positive:**
+- GHCR package deletion will now work correctly
+- Script properly handles multi-level package names (e.g., `recipes/state-store`)
+- 404 errors for non-existent packages are still handled gracefully (soft warning, as intended)
+
+**Neutral:**
+- The fix is transparent to script users — no flag or behavior changes required
+- Syntax verified with `bash -n scripts/teardown.sh`
+
+**Risk:**
+- None. This is a bug fix that aligns with GitHub API requirements.
+
+### References
+
+- GitHub REST API: [Packages - Delete a package for the authenticated user](https://docs.github.com/en/rest/packages/packages#delete-a-package-for-the-authenticated-user)
+- URL encoding spec: RFC 3986 (forward slash = `%2F`)
+- Related file: `scripts/teardown.sh` line 481-498
