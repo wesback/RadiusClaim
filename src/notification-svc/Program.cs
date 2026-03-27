@@ -2,6 +2,7 @@ using System.Text.Json;
 using RadiusClaim.Contracts;
 using Dapr;
 using Dapr.Client;
+using NotificationSvc.Templates;
 using NotificationSvc.Transports;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,6 +14,8 @@ if (transportName == "email")
     builder.Services.AddSingleton<INotificationTransport, EmailTransport>();
 else
     builder.Services.AddSingleton<INotificationTransport, LoggingTransport>();
+
+builder.Services.AddSingleton<ITemplateRenderer, TemplateRenderer>();
 
 var app = builder.Build();
 
@@ -31,6 +34,7 @@ app.MapPost("/notifications",
     async (HttpRequest request, ILogger<Program> logger, CancellationToken cancellationToken) =>
     {
         var transport = request.HttpContext.RequestServices.GetRequiredService<INotificationTransport>();
+        var renderer = request.HttpContext.RequestServices.GetRequiredService<ITemplateRenderer>();
 
         NotificationRequest? notification;
 
@@ -57,7 +61,10 @@ app.MapPost("/notifications",
             return TypedResults.Ok(new { status = "ignored" });
         }
 
-        await transport.SendAsync(notification, cancellationToken);
+        var renderedMessage = RenderMessage(renderer, notification, logger);
+        var enrichedNotification = notification with { Message = renderedMessage };
+
+        await transport.SendAsync(enrichedNotification, cancellationToken);
 
         // Return consistent anonymous type to keep lambda return type inference stable.
         return TypedResults.Ok(new { status = "delivered" });
@@ -66,6 +73,31 @@ app.MapPost("/notifications",
 app.MapGet("/healthz", () => TypedResults.Ok(new { status = "ok" }));
 
 app.Run();
+
+static string RenderMessage(ITemplateRenderer renderer, NotificationRequest notification, ILogger logger)
+{
+    try
+    {
+        var templateName = TemplateRenderer.TemplateNameFor(notification.EventType);
+        var variables = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["expenseId"]     = notification.ExpenseId,
+            ["correlationId"] = notification.CorrelationId,
+            ["recipient"]     = notification.Recipient,
+            ["channel"]       = notification.Channel,
+            ["eventType"]     = notification.EventType.ToString(),
+            ["subject"]       = notification.Subject,
+            ["message"]       = notification.Message,
+            ["occurredAtUtc"] = notification.OccurredAtUtc.ToString("u"),
+        };
+        return renderer.Render(templateName, variables);
+    }
+    catch (Exception ex)
+    {
+        logger.LogWarning(ex, "Template rendering failed for event type {EventType}; falling back to original message.", notification.EventType);
+        return notification.Message;
+    }
+}
 
 static bool IsValidNotification(NotificationRequest? notification) =>
     notification is not null

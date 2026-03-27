@@ -1,9 +1,4 @@
 <Solution>
-  <Folder Name="/src/">
-    <Project Path="src/ExpenseApi.Tests/ExpenseApi.Tests.csproj" />
-    <Project Path="src/WorkflowEngine.Tests/WorkflowEngine.Tests.csproj" />
-    <Project Path="src/NotificationSvc.Tests/NotificationSvc.Tests.csproj" />
-  </Folder>
   <Folder Name="/src/expense-api/">
     <Project Path="src/expense-api/ExpenseApi.csproj" />
   </Folder>
@@ -19,6 +14,7 @@
   <Folder Name="/src/tests/">
     <Project Path="src/WorkflowEngine.Tests/WorkflowEngine.Tests.csproj" />
     <Project Path="src/ExpenseApi.Tests/ExpenseApi.Tests.csproj" />
+    <Project Path="src/NotificationSvc.Tests/NotificationSvc.Tests.csproj" />
     <Project Path="src/IntegrationTests/IntegrationTests.csproj" />
   </Folder>
 </Solution>
