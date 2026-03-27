@@ -652,10 +652,25 @@ build_and_push_service() {
   local dockerfile_path="$2"
   local image_ref="${CONTAINER_REGISTRY}/${service_name}:${IMAGE_TAG}"
 
-  if [ -n "$IMAGE_PLATFORM" ]; then
+  # Auto-detect platform mismatch: if IMAGE_PLATFORM is not set, check whether
+  # the local build host arch differs from the cluster node arch. AKS always runs
+  # linux/amd64; building on Apple Silicon (arm64) without --platform produces an
+  # arm64 image that AKS nodes cannot run ("no match for platform in manifest").
+  local effective_platform="$IMAGE_PLATFORM"
+  if [ -z "$effective_platform" ]; then
+    local host_arch cluster_arch
+    host_arch="$(uname -m)"
+    cluster_arch="$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || true)"
+    if [ "$host_arch" = "arm64" ] && [ "$cluster_arch" = "amd64" ]; then
+      effective_platform="linux/amd64"
+      log_info "Auto-detected platform mismatch (host: arm64, cluster: amd64). Building for linux/amd64."
+    fi
+  fi
+
+  if [ -n "$effective_platform" ]; then
     run_cmd docker buildx build \
       --file "$dockerfile_path" \
-      --platform "$IMAGE_PLATFORM" \
+      --platform "$effective_platform" \
       --tag "$image_ref" \
       --push \
       "$REPO_ROOT"
