@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/ExpenseApi.Tests/ExpenseApi.Tests.csproj" />
     <Project Path="src/WorkflowEngine.Tests/WorkflowEngine.Tests.csproj" />
   </Folder>
   <Folder Name="/src/expense-api/">

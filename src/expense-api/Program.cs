@@ -194,22 +194,55 @@ expenses.MapGet("/{id}", async (string id, DaprClient daprClient, CancellationTo
         : Results.Ok(record);
 });
 
-expenses.MapGet("/", async (DaprClient daprClient, CancellationToken cancellationToken) =>
+// GET /expenses?page=1&pageSize=20
+// Returns a paginated envelope: { items, total, page, pageSize, hasMore }
+// page defaults to 1, pageSize defaults to 20 (max 100).
+expenses.MapGet("/", async (
+    DaprClient daprClient,
+    CancellationToken cancellationToken,
+    int page = 1,
+    int pageSize = 20) =>
 {
-    var expenseIndex = await GetExpenseIndexAsync(daprClient, cancellationToken);
-    if (expenseIndex.Count == 0)
+    if (page < 1)
     {
-        return Results.Ok(Array.Empty<ExpenseRecord>());
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["page"] = ["Page must be 1 or greater."]
+        });
     }
 
-    var records = await Task.WhenAll(expenseIndex.Select(expenseId =>
+    if (pageSize < 1 || pageSize > 100)
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["pageSize"] = ["pageSize must be between 1 and 100."]
+        });
+    }
+
+    var expenseIndex = await GetExpenseIndexAsync(daprClient, cancellationToken);
+    var total = expenseIndex.Count;
+
+    if (total == 0)
+    {
+        return Results.Ok(new ExpensePagedResult([], 0, page, pageSize, false));
+    }
+
+    var pageIds = expenseIndex
+        .Skip((page - 1) * pageSize)
+        .Take(pageSize)
+        .ToArray();
+
+    var records = await Task.WhenAll(pageIds.Select(expenseId =>
         daprClient.GetStateAsync<ExpenseRecord>(
             RadiusClaimDapr.Components.StateStore,
             RadiusClaimDapr.StateKeys.Expense(expenseId),
             consistencyMode: ConsistencyMode.Strong,
             cancellationToken: cancellationToken)));
 
-    return Results.Ok(records.Where(record => record is not null).ToArray());
+    var items = records.Where(record => record is not null).ToArray();
+    var hasMore = page * pageSize < total;
+
+    return Results.Ok(new ExpensePagedResult(items!, total, page, pageSize, hasMore));
 });
 
 app.MapGet("/app", () => Results.Redirect("/app/index.html"));
@@ -713,5 +746,18 @@ internal sealed record ExpenseWorkflowSnapshot(
 
 /// <summary>Optional body for approve/reject endpoints. Both fields are optional.</summary>
 internal sealed record ExpenseApprovalActionRequest(string? Reason = null);
+
+/// <summary>Paginated result envelope for GET /expenses.</summary>
+/// <param name="Items">The expenses on the current page.</param>
+/// <param name="Total">Total number of expenses across all pages.</param>
+/// <param name="Page">Current page number (1-based).</param>
+/// <param name="PageSize">Number of items per page.</param>
+/// <param name="HasMore">True when additional pages exist beyond the current page.</param>
+internal sealed record ExpensePagedResult(
+    ExpenseRecord[] Items,
+    int Total,
+    int Page,
+    int PageSize,
+    bool HasMore);
 
 public partial class Program;
