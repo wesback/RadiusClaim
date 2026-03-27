@@ -7,6 +7,15 @@
     },
     "kubernetesNamespace": {
       "value": "radiusclaim-azure"
+    },
+    "daprAzureClientId": {
+      "value": ""
+    },
+    "daprAzurePrincipalId": {
+      "value": ""
+    },
+    "daprAzureTenantId": {
+      "value": ""
     }
   }
 }
