@@ -437,12 +437,25 @@ EOF
     -n radius-system \
     --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
-  # Mount the secret and set DOCKER_CONFIG — both kubectl commands are idempotent
-  kubectl set volume deployment applications-rp -n radius-system \
-    --add --name=oci-recipe-creds \
-    --secret-name=radius-oci-recipe-creds \
-    --mount-path=/oci-creds >/dev/null
+  # Add the secret volume to the pod spec (strategic merge — idempotent by volume name)
+  kubectl patch deployment applications-rp -n radius-system --type=strategic -p '{
+    "spec": {"template": {"spec": {"volumes": [
+      {"name": "oci-recipe-creds", "secret": {"secretName": "radius-oci-recipe-creds"}}
+    ]}}}
+  }' >/dev/null
 
+  # Add the volumeMount only if not already present
+  local already_mounted
+  already_mounted=$(kubectl get deployment applications-rp -n radius-system \
+    -o jsonpath='{.spec.template.spec.containers[0].volumeMounts[?(@.name=="oci-recipe-creds")].mountPath}' 2>/dev/null || true)
+  if [ -z "$already_mounted" ]; then
+    kubectl patch deployment applications-rp -n radius-system --type=json -p='[
+      {"op":"add","path":"/spec/template/spec/containers/0/volumeMounts/-",
+       "value":{"name":"oci-recipe-creds","mountPath":"/oci-creds","readOnly":true}}
+    ]' >/dev/null
+  fi
+
+  # Set DOCKER_CONFIG so the ORAS library inside applications-rp reads the mounted creds
   kubectl set env deployment applications-rp -n radius-system \
     DOCKER_CONFIG=/oci-creds >/dev/null
 
@@ -754,12 +767,23 @@ rad_version_check
 # Failing here avoids wasting time on recipe publishing before hitting the same error.
 if echo "${RECIPE_REGISTRY}" | grep -q "ghcr.io"; then
   if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
+    # Try to auto-populate from the gh CLI so the user doesn't have to set vars manually
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+      GHCR_USERNAME="${GHCR_USERNAME:-$(gh api user --jq '.login' 2>/dev/null || true)}"
+      GHCR_TOKEN="${GHCR_TOKEN:-$(gh auth token 2>/dev/null || true)}"
+      if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then
+        log_info "Auto-populated GHCR credentials from 'gh' CLI (user: ${GHCR_USERNAME})."
+      fi
+    fi
+  fi
+  if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
     log_warning "GHCR_TOKEN and/or GHCR_USERNAME are not set."
     log_warning "These are required if the recipe OCI packages at '${RECIPE_REGISTRY}' are private."
     log_warning "Bootstrap will fail later if packages are private and credentials are absent."
     log_warning "Set them now to avoid that:"
     log_warning "  export GHCR_USERNAME=<github-username>"
     log_warning "  export GHCR_TOKEN=<PAT-with-read:packages>"
+    log_warning "  # Or if 'gh' CLI is authenticated, bootstrap will auto-populate these."
   fi
 fi
 
