@@ -21,6 +21,20 @@ param subscriptionName string = 'notification-svc'
 ])
 param skuName string = 'Standard'
 
+@description('Microsoft Entra tenant ID used by the Dapr pubsub component.')
+param azureTenantId string = subscription().tenantId
+
+@description('Microsoft Entra client ID used by the Dapr pubsub component.')
+param azureClientId string = ''
+
+@description('Object ID of the Microsoft Entra principal that should receive Service Bus data-plane access.')
+param azurePrincipalId string = ''
+
+@description('Principal type for the Microsoft Entra identity used by the Dapr pubsub component.')
+param azurePrincipalType string = 'ServicePrincipal'
+
+var serviceBusDataOwnerRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '090c5cfd-751d-490a-894a-3ce6f1109419')
+
 resource namespace 'Microsoft.ServiceBus/namespaces@2024-01-01' = {
   name: namespaceName
   location: location
@@ -44,7 +58,7 @@ resource topic 'Microsoft.ServiceBus/namespaces/topics@2024-01-01' = {
   }
 }
 
-resource subscription 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
+resource topicSubscription 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024-01-01' = {
   parent: topic
   name: subscriptionName
   properties: {
@@ -53,32 +67,39 @@ resource subscription 'Microsoft.ServiceBus/namespaces/topics/subscriptions@2024
   }
 }
 
-resource authRule 'Microsoft.ServiceBus/namespaces/AuthorizationRules@2024-01-01' existing = {
-  parent: namespace
-  name: 'RootManageSharedAccessKey'
+resource serviceBusRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(azurePrincipalId)) {
+  name: guid(namespace.id, azurePrincipalId, 'servicebusDataOwner')
+  scope: namespace
+  properties: {
+    roleDefinitionId: serviceBusDataOwnerRoleDefinitionId
+    principalId: azurePrincipalId
+    principalType: azurePrincipalType
+  }
 }
 
-var authRuleKeys = authRule.listKeys()
+var pubsubMetadata = union({
+  namespaceName: {
+    value: '${namespace.name}.servicebus.windows.net'
+  }
+  disableEntityManagement: {
+    value: 'true'
+  }
+  azureTenantId: {
+    value: azureTenantId
+  }
+  azureEnvironment: {
+    value: 'AZUREPUBLICCLOUD'
+  }
+}, empty(azureClientId) ? {} : {
+  azureClientId: {
+    value: azureClientId
+  }
+})
 
-#disable-next-line outputs-should-not-contain-secrets
 output result object = {
   values: {
     type: 'pubsub.azure.servicebus.topics'
     version: 'v1'
-    metadata: {
-      namespaceName: {
-        value: '${namespace.name}.servicebus.windows.net'
-      }
-      disableEntityManagement: {
-        value: 'true'
-      }
-    }
-  }
-  secrets: {
-    metadata: {
-      connectionString: {
-        value: authRuleKeys.primaryConnectionString
-      }
-    }
+    metadata: pubsubMetadata
   }
 }

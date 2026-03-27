@@ -892,7 +892,7 @@ The script:
 > # For managed identity: export AZURE_PRINCIPAL_ID=<managed-identity-object-id>
 > export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
 > ```
-> It then keeps the statestore on the supported Microsoft Entra/RBAC path and the pubsub component on **one** auth path only (`connectionString` for the current operator flow).
+> It then keeps both statestore and pubsub on the supported Microsoft Entra/RBAC path — no connection strings or shared keys required.
 
 **Dry run first** (generates YAML without applying):
 
@@ -1191,10 +1191,10 @@ kubectl get component statestore pubsub -n "$WORKLOAD_NAMESPACE" -o yaml
   ```
   Shared-key re-enable is not the tenant-safe fix anymore.
 
-- If the pubsub component contains both `namespaceName` and `connectionString`, remove one before restarting. For the current operator path, keep `connectionString` only:
+- If the pubsub component is in a mixed auth state (both `namespaceName` and `connectionString` present), patch it to the workload identity path:
   ```bash
   kubectl patch component pubsub -n "$WORKLOAD_NAMESPACE" --type merge \
-    -p '{"spec":{"metadata":[{"name":"connectionString","secretKeyRef":{"name":"pubsub-secrets","key":"connectionString"}},{"name":"disableEntityManagement","value":"true"}]}}'
+    -p '{"spec":{"metadata":[{"name":"namespaceName","value":"<namespace>.servicebus.windows.net"},{"name":"azureClientId","value":"'"$AZURE_CLIENT_ID"'"},{"name":"disableEntityManagement","value":"true"}]}}'
   kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc -n "$WORKLOAD_NAMESPACE"
   ```
 
