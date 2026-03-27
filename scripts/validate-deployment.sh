@@ -9,7 +9,7 @@
 #   ./scripts/validate-deployment.sh <expense-api-base-url>
 #
 # Example:
-#   ./scripts/validate-deployment.sh https://expense-api.example.azurecontainerapps.io
+#   ./scripts/validate-deployment.sh https://expense-api.radiusclaim.your-ingress-ip.nip.io
 #
 # Optional environment variables:
 #   VALIDATION_OUTPUT_PATH - write machine-readable validation details for CI follow-up checks
@@ -126,7 +126,7 @@ if [ $# -ne 1 ]; then
     echo "Usage: $0 <expense-api-base-url>"
     echo ""
     echo "Example:"
-    echo "  $0 https://expense-api.example.azurecontainerapps.io"
+    echo "  $0 https://expense-api.radiusclaim.your-ingress-ip.nip.io"
     exit 1
 fi
 

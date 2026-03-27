@@ -448,3 +448,96 @@ az role assignment list \
 
 **Status:** ✅ ZERO-SECRET MILESTONE ACHIEVED
 
+
+---
+
+## 2026-03-27 — Issue #4: Dapr CRD Auto-Projection via Radius Application Model
+
+### Request
+Wesley requested that Dapr Component CRDs (statestore, pubsub, platform-secrets) be projected automatically by `rad deploy` instead of requiring the manual `deploy-dapr-components-workload-identity.sh` script for every deployment.
+
+### Analysis
+
+Radius `Applications.Dapr/*` resources DO project Dapr Component CRDs when:
+1. The recipe succeeds and emits a valid `result.values` with `type`, `version`, `metadata`
+2. The workload identity params are threaded through to all three recipes
+
+**Three gaps found:**
+1. `pubsub.bicep`: Used connection string only — no workload identity metadata, no RBAC assignment
+2. `secrets.bicep`: No `azureClientId` param or Key Vault RBAC assignment
+3. `azure-radius.bicep`: Only wired identity params to statestore; pubsub and secrets got `{ location }` only
+
+**What cannot be done in Radius recipes (cluster infrastructure):**
+- Enable OIDC issuer + workload identity addon on AKS
+- Create managed identity
+- Create federated identity credentials (requires OIDC issuer URL, Kubernetes subject)
+- Annotate Kubernetes service accounts
+
+### Implementation
+
+**`infra/radius/recipes/azure/pubsub.bicep`**
+- Added `azureClientId`, `azurePrincipalId`, `azurePrincipalType` params
+- Added `Azure Service Bus Data Owner` RBAC assignment (conditional on `!empty(azurePrincipalId)`)
+- Output: workload identity metadata when `azureClientId` set; connection string fallback when not
+- Fixed duplicate param declarations from prior partial edit
+
+**`infra/radius/recipes/azure/secrets.bicep`**
+- Added `azureClientId`, `azurePrincipalId`, `azurePrincipalType` params
+- Added `Key Vault Secrets User` RBAC assignment (conditional)
+- Output: `secretStoreMetadata` includes `azureClientId` when set
+
+**`infra/radius/environments/azure-radius.bicep`**
+- Extracted `identityParams` union object (from `daprAzureClientId`, `daprAzurePrincipalId`, `daprAzureTenantId`)
+- All three recipe parameter sets now union with `identityParams`
+- Added `pubsubAuthModel` and `secretStoreAuthModel` to output
+
+**`infra/radius/environments/azure-radius.parameters.json`**
+- Added `daprAzureClientId`, `daprAzurePrincipalId`, `daprAzureTenantId` with empty-string defaults
+
+**`scripts/deploy-dapr-components-workload-identity.sh`**
+- Added prominent header box labeling this as "CLUSTER BOOTSTRAP ONLY — run once per cluster"
+- Explains that `rad deploy` handles CRD projection after bootstrap
+
+**`scripts/README.md`**
+- Renamed section to `deploy-dapr-components-workload-identity.sh (Cluster Bootstrap — One-Time)`
+- Added clear scope statement and post-bootstrap instructions
+- Deprecated `deploy-dapr-components.sh` section updated to point to correct successor
+
+### Deployment Flow After This Change
+
+```
+First deployment (per cluster):
+  1. prepare-cluster.sh — AKS + Dapr + Radius
+  2. deploy-dapr-components-workload-identity.sh --setup-workload-identity
+     → OIDC, managed identity, federated creds, SA annotations
+  3. Record clientId + principalId → azure-radius.parameters.json
+
+Every subsequent deployment:
+  rad deploy infra/radius/environments/azure-radius.bicep  ← RBAC + env setup
+  rad deploy infra/radius/app.bicep                       ← Containers + CRDs projected
+```
+
+### Learnings
+
+1. **Radius does project Dapr CRDs**: The `Applications.Dapr/*` resources with recipes that emit `result.values.type/version/metadata` materialize Kubernetes Component CRDs. The gap was incomplete recipe wiring, not a Radius capability gap.
+
+2. **RBAC in recipes = self-contained**: Putting RBAC role assignments inside the recipe (conditional on `azurePrincipalId`) makes each recipe self-contained for its data-plane access. No external script needed for per-component RBAC grants after this.
+
+3. **Connection string fallback is valuable**: Keeping the connection string fallback in pubsub recipe (when `azureClientId` is empty) preserves compatibility with local dev and CI environments that don't have workload identity configured. Don't remove it.
+
+4. **Duplicate params are a bicep compile error**: When editing a file that was partially modified in a prior session, always view the full file before making additive edits. The pubsub.bicep had duplicate param declarations from a partial previous edit.
+
+5. **Cluster bootstrap is distinct from app deploy**: The boundary is clean — anything that requires AKS API, OIDC issuer URL, or Kubernetes API stays in the bootstrap script. Anything expressible as ARM Bicep goes in recipes. This boundary holds as long as Radius recipes remain ARM/Bicep-only.
+
+### Deliverables
+- Updated `infra/radius/recipes/azure/pubsub.bicep` + compiled JSON
+- Updated `infra/radius/recipes/azure/secrets.bicep` + compiled JSON
+- Updated `infra/radius/environments/azure-radius.bicep` + compiled JSON
+- Updated `infra/radius/environments/azure-radius.parameters.json`
+- Updated `scripts/deploy-dapr-components-workload-identity.sh` (header)
+- Updated `scripts/README.md`
+- ADR: `.squad/decisions/inbox/graham-dapr-crd-projection.md`
+- PR: squad/4-dapr-crd-projection
+
+### Status
+✅ COMPLETE — Dapr CRD projection fully wired via Radius application model

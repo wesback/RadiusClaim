@@ -63,11 +63,12 @@ For CI/CD deployment, verify these are configured:
 **Required Secrets:**
 ```bash
 # AZURE_SUBSCRIPTION_ID (also a variable for clarity)
-# AZURE_CLIENT_ID (for rad credential register azure sp / wi)
-# AZURE_CLIENT_SECRET (for rad credential register azure sp)
-# AZURE_TENANT_ID (for rad credential register azure sp / wi)
+# AZURE_CLIENT_ID (managed identity client ID for rad credential register azure wi)
+# AZURE_TENANT_ID (for rad credential register azure wi)
 # RADIUS_KUBECONFIG (raw kubeconfig content for the Kubernetes cluster with Radius)
 ```
+
+> **Zero-secrets model:** `AZURE_CLIENT_SECRET` is **not** used. Authentication runs through Azure Workload Identity (OIDC federated credentials). No client secret is stored in GitHub Secrets or in the cluster.
 
 **Required Variables:**
 ```bash
@@ -87,25 +88,29 @@ To verify in GitHub:
 3. Verify `RADIUS_KUBERNETES_CONTEXT` (optional) or leave unset to use current context
 4. Verify `RADIUS_KUBERNETES_NAMESPACE` (optional, defaults to `radiusclaim-azure`)
 
-If you have not created the workflow service principal yet, create a least-privilege one scoped to the target resource group:
+If you have not registered the managed identity with Radius yet, ensure the AKS cluster has OIDC issuer and workload identity enabled, then register the managed identity client ID:
 
 ```bash
 export AZURE_RESOURCE_GROUP="radiusclaim-rg"
 export AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
 
-az ad sp create-for-rbac \
-  --name "radiusclaim-github-actions" \
-  --role Contributor \
-  --scopes "/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP" \
-  --query '{clientId:appId,clientSecret:password,tenantId:tenant}' \
+# Verify the managed identity exists (created by deploy-dapr-components-workload-identity.sh)
+az identity show \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --name radiusclaim-workload-identity \
+  --query '{clientId:clientId,principalId:principalId}' \
   -o jsonc
+
+# Register the managed identity client ID with Radius (workload identity, no secret)
+rad credential register azure wi \
+  --client-id "<managed-identity-client-id>" \
+  --tenant-id "<azure-tenant-id>"
 ```
 
-Map the response to GitHub secrets as follows:
+Map values from the identity output to GitHub Secrets as follows:
 - `clientId` → `AZURE_CLIENT_ID`
-- `clientSecret` → `AZURE_CLIENT_SECRET`
-- `tenantId` → `AZURE_TENANT_ID`
-- current subscription ID → `AZURE_SUBSCRIPTION_ID`
+- Subscription ID from `az account show` → `AZURE_SUBSCRIPTION_ID`
+- Tenant ID from `az account show --query tenantId -o tsv` → `AZURE_TENANT_ID`
 
 ---
 
@@ -219,14 +224,14 @@ rad group switch radiusclaim -w <workspace-name>
 
 ### ✅ Azure Provider Credentials (Required for Azure-Backed Recipes)
 
-**Before deploying an environment with Azure backing services, register the Azure credential with Radius:**
+**Before deploying an environment with Azure backing services, register the managed identity credential with Radius using workload identity:**
 
 ```bash
-# Register Azure service principal credentials with the active Radius workspace
+# Register Azure workload identity credentials with the active Radius workspace.
 # This enables Radius to provision Azure resources (Blob Storage, Service Bus, Key Vault, etc.)
-rad credential register azure sp \
+# No client secret is required — authentication uses OIDC federated credentials.
+rad credential register azure wi \
   --client-id "$AZURE_CLIENT_ID" \
-  --client-secret "$AZURE_CLIENT_SECRET" \
   --tenant-id "$AZURE_TENANT_ID"
 
 # Verify the credential was registered
@@ -234,13 +239,11 @@ rad credential list
 # Expected: Shows azure credential with status
 ```
 
-If your Radius installation is configured for workload identity instead of a service principal, use:
-
-```bash
-rad credential register azure wi \
-  --client-id "$AZURE_CLIENT_ID" \
-  --tenant-id "$AZURE_TENANT_ID"
-```
+**Prerequisites for workload identity mode:**
+- AKS cluster must have OIDC issuer enabled: `az aks show -g <rg> -n <cluster> --query oidcIssuerProfile`
+- AKS cluster must have workload identity addon enabled: `az aks show -g <rg> -n <cluster> --query securityProfile.workloadIdentity`
+- Managed identity `radiusclaim-workload-identity` must exist in the resource group
+- `AZURE_CLIENT_ID` must be the managed identity's **client ID** (not a service principal app ID)
 
 **Why this matters:**
 - Radius uses the registered credential to authenticate with Azure when deploying recipes
@@ -249,7 +252,7 @@ rad credential register azure wi \
 - Each workspace must have the Azure credential registered independently
 
 **For CI/CD (GitHub Actions):**
-- The workflow automatically handles this by running `rad credential register azure sp ...` before deploying the environment
+- The workflow automatically handles this by running `rad credential register azure wi ...` before deploying the environment
 - See `.github/workflows/deploy-azure.yml` for the implementation
 
 ---
@@ -271,13 +274,12 @@ rad env switch azure
 
 ### Step 2: Register Azure Provider Credentials
 
-Before deploying the Azure environment with recipes, ensure the Azure credential is registered with Radius:
+Before deploying the Azure environment with recipes, ensure the workload identity credential is registered with Radius:
 
 ```bash
-# Register Azure credentials with an explicit auth mode
-rad credential register azure sp \
+# Register Azure workload identity credentials (no client secret required)
+rad credential register azure wi \
   --client-id "$AZURE_CLIENT_ID" \
-  --client-secret "$AZURE_CLIENT_SECRET" \
   --tenant-id "$AZURE_TENANT_ID"
 
 # Verify the credential is registered
@@ -287,13 +289,14 @@ rad credential list
 
 **Critical:** If you skip this step, the environment deployment will fail when Radius tries to provision Azure resources via recipes.
 
-For the tenant-compliant statestore path, also resolve the Microsoft Entra object ID that should receive Blob data-plane RBAC:
+For the tenant-compliant statestore path, also resolve the managed identity object ID that should receive Blob data-plane RBAC:
 
 ```bash
-export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
+export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az identity show \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --name radiusclaim-workload-identity \
+  --query principalId -o tsv)}"
 ```
-
-If your tenant blocks directory reads for the current operator identity, set `AZURE_PRINCIPAL_ID` explicitly instead of relying on `az ad sp show`.
 
 ### Step 3: Publish Radius Recipe Artifacts
 
@@ -399,7 +402,7 @@ kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
 #
 # If "No resources found" → run the backfill:
 
-./scripts/deploy-dapr-components.sh \
+./scripts/deploy-dapr-components-workload-identity.sh \
   --resource-group <your-resource-group> \
   --namespace "$WORKLOAD_NAMESPACE"
 
@@ -408,18 +411,16 @@ kubectl rollout restart deployment/expense-api deployment/workflow-engine deploy
   -n "$WORKLOAD_NAMESPACE"
 ```
 
-The backfill now uses Microsoft Entra auth for `statestore`, so make sure the same Radius Azure credential variables are still present in your shell:
+The backfill uses Microsoft Entra workload identity for `statestore` — no client secret is needed. Ensure the managed identity variables are set:
 
 ```bash
-export AZURE_CLIENT_ID="<azure-service-principal-client-id>"
-export AZURE_TENANT_ID="<azure-tenant-id>"
-# Service-principal auth only:
-export AZURE_CLIENT_SECRET="<azure-service-principal-client-secret>"
-# Optional if Graph lookup is blocked:
-export AZURE_PRINCIPAL_ID="<entra-object-id>"
+export AZURE_CLIENT_ID="<managed-identity-client-id>"   # from: az identity show --name radiusclaim-workload-identity --query clientId
+export AZURE_TENANT_ID="<azure-tenant-id>"              # from: az account show --query tenantId
+# Optional if the identity lookup is blocked:
+export AZURE_PRINCIPAL_ID="<managed-identity-principal-id>"
 ```
 
-`deploy-dapr-components.sh` will grant `Storage Blob Data Contributor` on the Blob account if the role assignment is missing, then generate a statestore component that uses `azureTenantId`, `azureClientId`, and `azureClientSecret` (or workload identity when no client secret is supplied).
+`deploy-dapr-components-workload-identity.sh` will grant `Storage Blob Data Contributor` and `Key Vault Secrets User` on the backing resources, then generate statestore and platform-secrets components that use OIDC token exchange — no `azureClientSecret` in the cluster.
 
 **Verification:**
 ```bash
@@ -574,10 +575,9 @@ rad env switch azure
 
 **Solution:**
 ```bash
-# Register Azure provider credentials with Radius
-rad credential register azure sp \
+# Register Azure workload identity credentials with Radius (no client secret required)
+rad credential register azure wi \
   --client-id "$AZURE_CLIENT_ID" \
-  --client-secret "$AZURE_CLIENT_SECRET" \
   --tenant-id "$AZURE_TENANT_ID"
 
 # Verify the credential was registered
@@ -679,7 +679,7 @@ kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
 
 **Fix — Run the component backfill script:**
 ```bash
-./scripts/deploy-dapr-components.sh \
+./scripts/deploy-dapr-components-workload-identity.sh \
   --resource-group <your-resource-group> \
   --namespace "$WORKLOAD_NAMESPACE"
 
@@ -714,7 +714,10 @@ kubectl get component statestore pubsub -n "$WORKLOAD_NAMESPACE" -o yaml
 
 **Fix path:**
 ```bash
-export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv)}"
+export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az identity show \
+  --resource-group "$AZURE_RESOURCE_GROUP" \
+  --name radiusclaim-workload-identity \
+  --query principalId -o tsv)}"
 
 ./scripts/deploy-dapr-components-workload-identity.sh \
   --resource-group <your-resource-group> \

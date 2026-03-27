@@ -30,17 +30,16 @@ param recipeRegistry string = 'ghcr.io/wesback/radiusclaim/recipes'
 @description('OCI tag used when resolving published Radius recipe artifacts.')
 param recipeTag string = 'latest'
 
-var stateStoreRecipeParameters = union({
-  location: location
-}, empty(daprAzureClientId) ? {} : {
-  azureClientId: daprAzureClientId
-}, empty(daprAzurePrincipalId) ? {} : {
-  azurePrincipalId: daprAzurePrincipalId
-}, empty(daprAzureTenantId) ? {} : {
-  azureTenantId: daprAzureTenantId
-}, empty(daprAzurePrincipalId) || empty(daprAzurePrincipalType) ? {} : {
-  azurePrincipalType: daprAzurePrincipalType
-})
+var identityParams = union(
+  empty(daprAzureClientId) ? {} : { azureClientId: daprAzureClientId },
+  empty(daprAzurePrincipalId) ? {} : { azurePrincipalId: daprAzurePrincipalId },
+  empty(daprAzureTenantId) ? {} : { azureTenantId: daprAzureTenantId },
+  (!empty(daprAzurePrincipalId) && !empty(daprAzurePrincipalType)) ? { azurePrincipalType: daprAzurePrincipalType } : {}
+)
+
+var stateStoreRecipeParameters = union({ location: location }, identityParams)
+var pubsubRecipeParameters = union({ location: location }, identityParams)
+var secretStoreRecipeParameters = union({ location: location }, identityParams)
 
 resource env 'Applications.Core/environments@2023-10-01-preview' = {
   name: environmentName
@@ -67,18 +66,14 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
         'azure-servicebus-pubsub': {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/pubsub:${recipeTag}'
-          parameters: {
-            location: location
-          }
+          parameters: pubsubRecipeParameters
         }
       }
       'Applications.Dapr/secretStores': {
         'azure-keyvault-secrets': {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/secrets:${recipeTag}'
-          parameters: {
-            location: location
-          }
+          parameters: secretStoreRecipeParameters
         }
       }
     }
@@ -100,6 +95,8 @@ output environmentModel object = {
     secretStore: 'azure-keyvault-secrets'
   }
   stateStoreAuthModel: !empty(daprAzureClientId) ? 'microsoft-entra-rbac' : 'recipe-default'
+  pubsubAuthModel: !empty(daprAzureClientId) ? 'microsoft-entra-rbac' : 'connection-string-fallback'
+  secretStoreAuthModel: !empty(daprAzureClientId) ? 'microsoft-entra-rbac' : 'recipe-default'
   portabilityNote: 'Radius remains the service wiring authority across AKS, Arc-enabled Kubernetes / Azure Local, and self-managed Kubernetes clusters; Azure-specific work stays in recipes and provider scope.'
   kubernetesTargets: [
     'aks'

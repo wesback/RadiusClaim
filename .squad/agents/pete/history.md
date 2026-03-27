@@ -255,3 +255,27 @@ All 8 findings from Pete's infrastructure scripts audit were successfully applie
 - Fix date: 2026-06-05
 - Requested by: Wesley Backelant
 - Error context: `AuthorizationFailed` on SPN `890caf69-5a38-4bf9-950d-0430352e7396` attempting role assignment and RG creation
+
+## Learnings
+
+### 2026-06-05 — Legacy ACA Cleanup (Issue #12)
+
+**Task:** Remove all Azure Container Apps references left from a prior architecture phase.
+
+**What was removed:**
+- `infra/radius/environments/azure.bicep` — The full ACA Bicep template (`Microsoft.App/managedEnvironments`, `daprComponents`, Log Analytics, ACR, Storage, Service Bus, Key Vault, role assignments). ~300 lines of dead code.
+- `infra/radius/environments/azure.json` — The compiled ARM output.
+- `infra/radius/environments/azure.parameters.json` — ACA-specific parameters.
+
+**Files updated (not deleted):**
+- `.github/workflows/deploy-azure.yml` — Removed the `az bicep build --file infra/radius/environments/azure.bicep` line from the validate step. The step previously validated 3 bicep files; now validates the 2 active ones only.
+- `scripts/validate-deployment.sh` — Lines 12 and 129 referenced `azurecontainerapps.io` as the example URL. Updated to `nip.io` format matching the AKS gateway pattern.
+- `docs/PRD.md` — Removed the `azure.bicep` row from the environment table; removed the "[LOW] Legacy ACA Environment Cleanup" backlog item; updated the ADR-0001 impact description to drop "ACA is legacy reference only".
+
+**Search pattern used:** `containerapp|Microsoft\.App/containerApps|azure-container-apps|ContainerApp|Azure Container App|ACA` across infra/, scripts/, docs/, .github/
+
+**Key insight:** The ACA template was already self-described as "legacy" and the PRD had it listed as a LOW cleanup item (#12). Zero application or CI code depended on it — removal was pure housekeeping with no functional risk.
+
+**Verification:** `bash -n scripts/*.sh` all pass; grep for ACA patterns returns zero results.
+
+**PR:** squad/12-aca-cleanup → closes #12

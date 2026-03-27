@@ -88,7 +88,7 @@ Orchestrates the expense approval lifecycle using Dapr Workflow. Runs activities
 | Progress tracking | ✅ Working | Custom status breadcrumbs at each step |
 | State transitions | ✅ Working | Guard clauses prevent invalid transitions |
 
-**Known gaps:** $100 threshold is hardcoded. ManualReviewRequested is a terminal state — no actual manual approval step exists. No rejection workflow implemented. Notification channel is hardcoded to "email".
+**Known gaps:** ManualReviewRequested is a terminal state — no actual manual approval step exists. No rejection workflow implemented. Notification channel is hardcoded to "email".
 
 #### notification-svc
 **Status:** ✅ Functional (logging only)
@@ -126,7 +126,6 @@ Models three containerized services with Dapr sidecars, three Dapr components (s
 |-------------|--------|--------|
 | `azure-radius.bicep` | AKS / Arc / self-managed K8s | ✅ Primary — production path |
 | `dev.bicep` | Local Kubernetes | ✅ Complete |
-| `azure.bicep` | Azure Container Apps | ⚠️ Legacy reference only — not in deployment path |
 
 #### Radius Recipes (Azure)
 **Status:** ✅ Complete
@@ -438,8 +437,8 @@ The phase-7-validation-checklist.md has unchecked exit criteria and no approval 
 **[MEDIUM] Local Radius Recipes (Redis-Backed)**  
 Local development uses Dapr component overlays directly, bypassing Radius. Creating local recipes (`infra/radius/recipes/local/`) that provision Redis-backed components through Radius would demonstrate full portability: same `app.bicep`, different environment, different recipes. Identified as a gap in Daisy's portability audit.
 
-**[MEDIUM] Configurable Approval Threshold**  
-The $100 auto-approve threshold is hardcoded in `ApproveExpenseActivity`. This should be configurable via Dapr secrets or environment variables, demonstrating how platform configuration flows into business logic without code changes.
+**[MEDIUM] Configurable Approval Threshold** ✅ *Implemented — Issue #7*  
+The auto-approve threshold is configurable via `APPROVAL_THRESHOLD_USD` env var (default: 100.0). Set in `appsettings.json` under `ApprovalThreshold:ThresholdUsd`; override via env var for zero-code-change deployments.
 
 **[MEDIUM] Expense Rejection Workflow**  
 `ExpenseRejected` event type and `ExpenseStatus.Rejected` are defined in contracts but never generated. Implementing the rejection path would complete the workflow lifecycle and make the notification-svc more interesting (different notification content per outcome).
@@ -454,9 +453,6 @@ The expense index (`expense-index` key) grows unboundedly. For a reference app, 
 
 **[LOW] Notification Transport Implementation**  
 Replace logging-only notifications with actual delivery (email via SendGrid, Slack webhook, etc.). This has been explicitly deferred but would complete the end-to-end story for demos that want to show real-world integration.
-
-**[LOW] Legacy ACA Environment Cleanup**  
-`infra/radius/environments/azure.bicep` is retained as a historical reference for Azure Container Apps. If the ACA path is truly obsolete, remove it to reduce confusion for new contributors.
 
 **[LOW] Multi-Cloud Recipes**  
 Create recipes for AWS (S3 + SNS/SQS + Secrets Manager) or GCP equivalents to demonstrate the portability promise beyond Azure. The architecture supports this — it's a recipe-authoring exercise, not an app change.
@@ -498,7 +494,7 @@ Decisions are maintained in `.squad/decisions.md`. The following are the most ar
 
 | Date | Decision | Status | Impact |
 |------|----------|--------|--------|
-| 2026-03-24 | **Kubernetes-First Deployment** (ADR-0001) | Implemented | Radius + K8s is the primary path; ACA is legacy reference only |
+| 2026-03-24 | **Kubernetes-First Deployment** (ADR-0001) | Implemented | Radius + K8s is the primary deployment path |
 | 2026-03-25 | **State-Store Auth Pivot to Microsoft Entra** | Implemented | Shared-key auth blocked by tenant policy; all recipes use RBAC |
 | 2026-03-25 | **Cluster Prep Separated from App Deployment** | Implemented | `prepare-cluster.sh` (one-time) vs. `bootstrap.sh` (repeatable) |
 | 2026-03-25 | **Bootstrap Default Location: belgiumcentral** | Implemented | Aligns script defaults with operator walkthrough guidance |
