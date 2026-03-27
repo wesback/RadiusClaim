@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/platform-common.sh"
+
+# DEPRECATED: This script uses Service Principal auth and is no longer the canonical deployment path.
+# Use deploy-dapr-components-workload-identity.sh instead.
+# This script is retained only for reference. It will be removed in a future cleanup.
+log_warning "DEPRECATED: This script uses Service Principal auth. Use deploy-dapr-components-workload-identity.sh instead."
+
 # deploy-dapr-components.sh
 #
 # Automates the deployment of Dapr Component objects into the Kubernetes cluster
@@ -69,19 +77,19 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "Error: Unknown option $1"
+      log_error "Unknown option $1"
       exit 2
       ;;
   esac
 done
 
-command -v rad >/dev/null 2>&1 || { echo "Error: rad CLI not found"; exit 1; }
-command -v kubectl >/dev/null 2>&1 || { echo "Error: kubectl not found"; exit 1; }
-command -v az >/dev/null 2>&1 || { echo "Error: az CLI not found"; exit 1; }
-command -v jq >/dev/null 2>&1 || { echo "Error: jq not found"; exit 1; }
+command -v rad >/dev/null 2>&1 || { log_error "rad CLI not found"; exit 1; }
+command -v kubectl >/dev/null 2>&1 || { log_error "kubectl not found"; exit 1; }
+command -v az >/dev/null 2>&1 || { log_error "az CLI not found"; exit 1; }
+command -v jq >/dev/null 2>&1 || { log_error "jq not found"; exit 1; }
 
 if [[ -z "$RESOURCE_GROUP" ]]; then
-  echo "Error: --resource-group is required"
+  log_error "--resource-group is required"
   exit 2
 fi
 

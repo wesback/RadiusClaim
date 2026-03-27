@@ -73,21 +73,26 @@ if [[ "$REGISTRY_HOST" == "ghcr.io" ]]; then
         fi
         echo "Successfully authenticated to ghcr.io"
     else
-        # Check if already authenticated to ghcr.io
-        if ! docker-credential-$(docker info -f '{{.CredentialsStore}}' 2>/dev/null || echo "desktop") list 2>/dev/null | grep -q "ghcr.io" 2>/dev/null; then
-            # Try a simpler check as fallback
-            if ! docker info 2>&1 | grep -q "ghcr.io" 2>/dev/null; then
-                echo "Warning: Publishing to ghcr.io but no GHCR_TOKEN found and docker may not be authenticated."
-                echo ""
-                echo "To authenticate, choose one of:"
-                echo "  1. Set GHCR_TOKEN (and optionally GHCR_USERNAME) and re-run this script"
-                echo "  2. Run 'echo \$TOKEN | docker login ghcr.io --username YOUR_GITHUB_USERNAME --password-stdin'"
-                echo "  3. Run 'docker login ghcr.io' and provide credentials interactively"
-                echo ""
-                echo "If you're already authenticated, you can ignore this warning."
-                echo "Publishing will proceed and fail clearly if authentication is actually missing."
-                echo ""
+        # Check if already authenticated to ghcr.io via credential store
+        local cred_store
+        cred_store="$(docker info -f '{{.CredentialsStore}}' 2>/dev/null || true)"
+        local already_authed=false
+        if [ -n "$cred_store" ]; then
+            if docker-credential-"${cred_store}" list 2>/dev/null | grep -q "ghcr.io"; then
+                already_authed=true
             fi
+        fi
+        if [ "$already_authed" = false ]; then
+            echo "Warning: Publishing to ghcr.io but no GHCR_TOKEN found and docker may not be authenticated."
+            echo ""
+            echo "To authenticate, choose one of:"
+            echo "  1. Set GHCR_TOKEN (and optionally GHCR_USERNAME) and re-run this script"
+            echo "  2. Run 'echo \$TOKEN | docker login ghcr.io --username YOUR_GITHUB_USERNAME --password-stdin'"
+            echo "  3. Run 'docker login ghcr.io' and provide credentials interactively"
+            echo ""
+            echo "If you're already authenticated, you can ignore this warning."
+            echo "Publishing will proceed and fail clearly if authentication is actually missing."
+            echo ""
         fi
     fi
 elif [ -n "${REGISTRY_USERNAME:-}" ] && [ -n "${REGISTRY_PASSWORD:-}" ]; then

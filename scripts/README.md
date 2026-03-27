@@ -204,6 +204,8 @@ If publishing fails with a 403 error, the script provides actionable diagnostics
 
 ### `deploy-dapr-components.sh`
 
+> ⚠️ **Deprecated:** Use `deploy-dapr-components-workload-identity.sh` instead. This script uses Service Principal auth and is retained only for reference.
+
 **Purpose:** Backfill Dapr Component CRDs into Kubernetes after a Radius app deployment when the component projection gap leaves sidecars without `statestore`, `pubsub`, or `platform-secrets`.
 
 **When to use:**

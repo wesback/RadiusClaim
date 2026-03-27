@@ -16,6 +16,7 @@ AKS_NODE_COUNT=2
 AKS_MIN_COUNT=1
 AKS_MAX_COUNT=3
 CREATE_AKS=false
+CREATE_SPN=false
 INSTALL_DAPR=false
 INSTALL_RADIUS=false
 YES=false
@@ -38,6 +39,7 @@ Optional:
   --location <region>           Azure region for AKS/resource group (default: ${LOCATION})
   --aks-cluster-name <name>     AKS cluster to verify or prepare
   --create-aks                  Create the AKS cluster when it does not exist
+  --create-spn                  Create an Azure service principal for Radius (skipped if credentials already set)
   --node-count <count>          Initial AKS node count (default: ${AKS_NODE_COUNT})
   --min-count <count>           AKS autoscaler minimum node count (default: ${AKS_MIN_COUNT})
   --max-count <count>           AKS autoscaler maximum node count (default: ${AKS_MAX_COUNT})
@@ -77,6 +79,10 @@ while [ $# -gt 0 ]; do
       ;;
     --create-aks)
       CREATE_AKS=true
+      shift
+      ;;
+    --create-spn)
+      CREATE_SPN=true
       shift
       ;;
     --node-count)
@@ -340,6 +346,94 @@ AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv 2>/dev/null)"
 AZURE_SUBSCRIPTION_NAME="$(az account show --query name -o tsv 2>/dev/null)"
 [ -n "$AZURE_SUBSCRIPTION_ID" ] || fail "Azure CLI is not logged in or no subscription is selected."
 
+# Service Principal for Radius Azure provider
+section "Azure Service Principal for Radius"
+if [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_CLIENT_SECRET:-}" ] && [ -n "${AZURE_TENANT_ID:-}" ]; then
+  log_success "Using existing Azure service principal credentials (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)"
+else
+  if [ "$CREATE_SPN" = false ]; then
+    fail "Azure service principal credentials are not set.
+Pass --create-spn to create one automatically, or export:
+  AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID"
+  fi
+  
+  log_info "Creating Azure service principal for Radius"
+  log_info "Radius requires a service principal to provision Azure-backed recipe resources."
+  
+  # Check if SPN already exists by name
+  SPN_NAME="radiusclaim-radius-sp"
+  EXISTING_APP_ID="$(az ad sp list --display-name "$SPN_NAME" --query "[0].appId" -o tsv 2>/dev/null || true)"
+  
+  if [ -n "$EXISTING_APP_ID" ]; then
+    log_warning "Service principal '${SPN_NAME}' already exists (App ID: ${EXISTING_APP_ID})"
+    log_info "You can reuse it by exporting AZURE_CLIENT_ID and AZURE_CLIENT_SECRET,"
+    log_info "or create a new one with a timestamp suffix."
+    
+    if ! prompt_confirm "Create a new service principal with timestamp suffix instead?"; then
+      log_error "Cannot proceed without service principal credentials."
+      echo ""
+      echo "To reuse the existing service principal, export these environment variables:"
+      echo "  export AZURE_CLIENT_ID='${EXISTING_APP_ID}'"
+      echo "  export AZURE_CLIENT_SECRET='<your-secret>'"
+      echo "  export AZURE_TENANT_ID='$(az account show --query tenantId -o tsv)'"
+      echo ""
+      echo "Then re-run this script."
+      exit 1
+    fi
+    
+    # Create new SPN with timestamp suffix
+    SPN_NAME="${SPN_NAME}-$(date +%Y%m%d-%H%M%S)"
+  else
+    if ! prompt_confirm "Create service principal '${SPN_NAME}' now?"; then
+      log_error "Service principal creation declined."
+      echo ""
+      echo "To create a service principal manually, run:"
+      echo "  az ad sp create-for-rbac --name '${SPN_NAME}' --role Contributor --scopes /subscriptions/${AZURE_SUBSCRIPTION_ID}"
+      echo ""
+      echo "Then export these environment variables and re-run this script:"
+      echo "  export AZURE_CLIENT_ID='<appId>'"
+      echo "  export AZURE_CLIENT_SECRET='<password>'"
+      echo "  export AZURE_TENANT_ID='<tenant>'"
+      exit 1
+    fi
+  fi
+  
+  # Create the service principal
+  log_info "Creating service principal '${SPN_NAME}'..."
+  SPN_JSON="$(az ad sp create-for-rbac \
+    --name "$SPN_NAME" \
+    --role Contributor \
+    --scopes "/subscriptions/${AZURE_SUBSCRIPTION_ID}" \
+    --output json)" || fail "Failed to create service principal."
+  
+  # Parse and export credentials
+  export AZURE_CLIENT_ID="$(printf '%s' "$SPN_JSON" | jq -r '.appId')"
+  export AZURE_CLIENT_SECRET="$(printf '%s' "$SPN_JSON" | jq -r '.password')"
+  export AZURE_TENANT_ID="$(printf '%s' "$SPN_JSON" | jq -r '.tenant')"
+  
+  [ -n "$AZURE_CLIENT_ID" ] || fail "Failed to parse AZURE_CLIENT_ID from service principal response."
+  [ -n "$AZURE_CLIENT_SECRET" ] || fail "Failed to parse AZURE_CLIENT_SECRET from service principal response."
+  [ -n "$AZURE_TENANT_ID" ] || fail "Failed to parse AZURE_TENANT_ID from service principal response."
+  
+  # Print prominent warning with credentials
+  echo ""
+  log_warning "⚠️  SAVE THESE CREDENTIALS NOW — the client secret cannot be retrieved again."
+  echo ""
+  echo "Service principal created:"
+  echo "  Name            : ${SPN_NAME}"
+  echo "  AZURE_CLIENT_ID : ${AZURE_CLIENT_ID}"
+  echo "  AZURE_CLIENT_SECRET : ${AZURE_CLIENT_SECRET}"
+  echo "  AZURE_TENANT_ID : ${AZURE_TENANT_ID}"
+  echo ""
+  echo "Add them to your shell profile or a .env file (excluded from git):"
+  echo "  export AZURE_CLIENT_ID='${AZURE_CLIENT_ID}'"
+  echo "  export AZURE_CLIENT_SECRET='${AZURE_CLIENT_SECRET}'"
+  echo "  export AZURE_TENANT_ID='${AZURE_TENANT_ID}'"
+  echo ""
+  
+  log_success "Service principal configured for this session"
+fi
+
 ensure_resource_group
 prepare_aks_cluster
 ensure_cluster_target_selected
@@ -358,6 +452,26 @@ install_dapr_if_needed
 install_radius_if_needed
 
 ensure_radius_workspace_context "$WORKSPACE_NAME" "$GROUP_NAME" "$KUBECTL_CONTEXT"
+
+# Register Azure credentials with Radius control plane
+# Radius needs these separately from bicep parameters to authenticate recipe deployments
+section "Registering Azure credentials with Radius"
+if "$RAD_BIN" credential show azure >/dev/null 2>&1; then
+  log_success "Azure credentials are already registered with Radius"
+else
+  if [ "$DRY_RUN" = true ]; then
+    run_cmd "$RAD_BIN" credential register azure sp \
+      --client-id "${AZURE_CLIENT_ID}" \
+      --client-secret "${AZURE_CLIENT_SECRET}" \
+      --tenant-id "${AZURE_TENANT_ID}"
+  else
+    run_cmd "$RAD_BIN" credential register azure sp \
+      --client-id "${AZURE_CLIENT_ID}" \
+      --client-secret "${AZURE_CLIENT_SECRET}" \
+      --tenant-id "${AZURE_TENANT_ID}"
+    log_success "Azure credentials registered with Radius"
+  fi
+fi
 
 section "Cluster prep complete"
 log_success "Cluster preparation is complete. Use bootstrap.sh for repeatable deployment."

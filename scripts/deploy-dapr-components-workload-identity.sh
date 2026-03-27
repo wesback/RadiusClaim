@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# deploy-dapr-components.sh with Workload Identity support
+SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/platform-common.sh"
+
+# deploy-dapr-components-workload-identity.sh with Workload Identity support
 #
 # Automates the deployment of Dapr Component objects with Azure Workload Identity.
 # This is the clean, long-term solution that replaces service-principal-with-client-secret auth.
@@ -92,24 +95,24 @@ while [[ $# -gt 0 ]]; do
       exit 0
       ;;
     *)
-      echo "Error: Unknown option $1"
+      log_error "Unknown option $1"
       exit 2
       ;;
   esac
 done
 
-command -v rad >/dev/null 2>&1 || { echo "Error: rad CLI not found"; exit 1; }
-command -v kubectl >/dev/null 2>&1 || { echo "Error: kubectl not found"; exit 1; }
-command -v az >/dev/null 2>&1 || { echo "Error: az CLI not found"; exit 1; }
-command -v jq >/dev/null 2>&1 || { echo "Error: jq not found"; exit 1; }
+command -v rad >/dev/null 2>&1 || { log_error "rad CLI not found"; exit 1; }
+command -v kubectl >/dev/null 2>&1 || { log_error "kubectl not found"; exit 1; }
+command -v az >/dev/null 2>&1 || { log_error "az CLI not found"; exit 1; }
+command -v jq >/dev/null 2>&1 || { log_error "jq not found"; exit 1; }
 
 if [[ -z "$RESOURCE_GROUP" ]]; then
-  echo "Error: --resource-group is required"
+  log_error "--resource-group is required"
   exit 2
 fi
 
 if [[ "$AUTH_MODE" != "workload-identity" && "$AUTH_MODE" != "service-principal" ]]; then
-  echo "Error: --auth-mode must be 'workload-identity' or 'service-principal'"
+  log_error "--auth-mode must be 'workload-identity' or 'service-principal'"
   exit 2
 fi
 
@@ -118,7 +121,7 @@ if [[ -z "$NAMESPACE" ]]; then
   ENV_NAMESPACE=$(echo "$ENV_JSON" | jq -r '.properties.compute.namespace // empty')
 
   if [[ -z "$ENV_NAMESPACE" ]]; then
-    echo "Error: Could not auto-detect namespace. Please provide --namespace"
+    log_error "Could not auto-detect namespace. Please provide --namespace"
     exit 3
   fi
 
@@ -129,7 +132,7 @@ AZURE_SUBSCRIPTION_ID=$(az account show --query id -o tsv 2>/dev/null || echo ""
 AZURE_TENANT_ID="${AZURE_TENANT_ID:-$(az account show --query tenantId -o tsv 2>/dev/null || echo "")}"
 
 if [[ -z "$AZURE_SUBSCRIPTION_ID" || -z "$AZURE_TENANT_ID" ]]; then
-  echo "Error: Could not determine Azure subscription or tenant ID"
+  log_error "Could not determine Azure subscription or tenant ID"
   exit 4
 fi
 
@@ -293,16 +296,30 @@ KEYVAULT_ID=$(az keyvault show \
   --resource-group "$RESOURCE_GROUP" \
   --query id \
   -o tsv 2>/dev/null || echo "")
-SERVICEBUS_CONN=$(az servicebus namespace authorization-rule keys list \
+SERVICEBUS_ID=$(az servicebus namespace show \
   --resource-group "$RESOURCE_GROUP" \
-  --namespace-name "$SERVICEBUS_NAMESPACE" \
-  --name RootManageSharedAccessKey \
-  --query primaryConnectionString \
+  --name "$SERVICEBUS_NAMESPACE" \
+  --query id \
   -o tsv 2>/dev/null || echo "")
 
-if [[ -z "$STORAGE_ACCOUNT_ID" ]] || [[ -z "$KEYVAULT_ID" ]] || [[ -z "$SERVICEBUS_CONN" ]]; then
-  echo "Error: Failed to retrieve required Azure resource details"
-  exit 4
+# Only get connection string if in service-principal mode
+if [[ "$AUTH_MODE" == "service-principal" ]]; then
+  SERVICEBUS_CONN=$(az servicebus namespace authorization-rule keys list \
+    --resource-group "$RESOURCE_GROUP" \
+    --namespace-name "$SERVICEBUS_NAMESPACE" \
+    --name RootManageSharedAccessKey \
+    --query primaryConnectionString \
+    -o tsv 2>/dev/null || echo "")
+  
+  if [[ -z "$STORAGE_ACCOUNT_ID" ]] || [[ -z "$KEYVAULT_ID" ]] || [[ -z "$SERVICEBUS_CONN" ]]; then
+    echo "Error: Failed to retrieve required Azure resource details"
+    exit 4
+  fi
+else
+  if [[ -z "$STORAGE_ACCOUNT_ID" ]] || [[ -z "$KEYVAULT_ID" ]] || [[ -z "$SERVICEBUS_ID" ]]; then
+    echo "Error: Failed to retrieve required Azure resource details"
+    exit 4
+  fi
 fi
 echo "  ✓ Resource IDs retrieved"
 echo ""
@@ -356,6 +373,33 @@ if [[ "$KEYVAULT_ROLE_ASSIGNMENT_COUNT" == "0" ]]; then
   fi
 else
   echo "  ✓ Key Vault Secrets User already granted"
+fi
+
+# Grant Service Bus Data Owner role (needed for workload identity mode)
+if [[ "$AUTH_MODE" == "workload-identity" ]]; then
+  SERVICEBUS_ROLE_ASSIGNMENT_COUNT=$(az role assignment list \
+    --assignee-object-id "$AZURE_PRINCIPAL_ID_VALUE" \
+    --role "Azure Service Bus Data Owner" \
+    --scope "$SERVICEBUS_ID" \
+    --query 'length(@)' \
+    -o tsv 2>/dev/null || echo "0")
+  
+  if [[ "$SERVICEBUS_ROLE_ASSIGNMENT_COUNT" == "0" ]]; then
+    echo "  → Granting Azure Service Bus Data Owner..."
+    if [[ "$DRY_RUN" == "true" ]]; then
+      echo "  [DRY RUN] Would grant Azure Service Bus Data Owner on $SERVICEBUS_NAMESPACE"
+    else
+      az role assignment create \
+        --assignee-object-id "$AZURE_PRINCIPAL_ID_VALUE" \
+        --assignee-principal-type ServicePrincipal \
+        --role "Azure Service Bus Data Owner" \
+        --scope "$SERVICEBUS_ID" \
+        --output none
+      echo "  ✓ Azure Service Bus Data Owner granted"
+    fi
+  else
+    echo "  ✓ Azure Service Bus Data Owner already granted"
+  fi
 fi
 echo ""
 
@@ -412,27 +456,30 @@ if [[ "$AUTH_MODE" == "workload-identity" ]]; then
   echo ""
 fi
 
-# Step 7: Create Kubernetes secrets
-echo "→ Creating Kubernetes secrets..."
-if [[ "$DRY_RUN" == "true" ]]; then
-  [[ "$AUTH_MODE" == "service-principal" ]] && echo "  [DRY RUN] Would create secret: azure-entra-auth"
-  echo "  [DRY RUN] Would create secret: pubsub-secrets"
-else
-  if [[ "$AUTH_MODE" == "service-principal" ]]; then
+# Step 7: Create Kubernetes secrets (only if needed)
+if [[ "$AUTH_MODE" == "service-principal" ]]; then
+  echo "→ Creating Kubernetes secrets..."
+  if [[ "$DRY_RUN" == "true" ]]; then
+    echo "  [DRY RUN] Would create secret: azure-entra-auth"
+    echo "  [DRY RUN] Would create secret: pubsub-secrets"
+  else
     kubectl create secret generic azure-entra-auth \
       --from-literal=azureClientSecret="$AZURE_CLIENT_SECRET_VALUE" \
       --namespace="$NAMESPACE" \
       --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+    kubectl create secret generic pubsub-secrets \
+      --from-literal=connectionString="$SERVICEBUS_CONN" \
+      --namespace="$NAMESPACE" \
+      --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+
+    echo "  ✓ Secrets created"
   fi
-
-  kubectl create secret generic pubsub-secrets \
-    --from-literal=connectionString="$SERVICEBUS_CONN" \
-    --namespace="$NAMESPACE" \
-    --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-
-  echo "  ✓ Secrets created"
+  echo ""
+else
+  echo "→ Skipping secret creation (workload identity mode - zero secrets required)"
+  echo ""
 fi
-echo ""
 
 # Step 8: Generate Dapr component manifests
 echo "→ Generating Dapr component manifests..."
@@ -487,6 +534,20 @@ spec:
   type: pubsub.azure.servicebus.topics
   version: v1
   metadata:
+EOF_COMPONENTS
+
+if [[ "$AUTH_MODE" == "workload-identity" ]]; then
+  cat >> dapr-components-generated.yaml <<EOF_COMPONENTS
+  - name: namespaceName
+    value: "$SERVICEBUS_NAMESPACE.servicebus.windows.net"
+  - name: azureClientId
+    value: "$AZURE_CLIENT_ID_VALUE"
+  - name: disableEntityManagement
+    value: "true"
+---
+EOF_COMPONENTS
+else
+  cat >> dapr-components-generated.yaml <<EOF_COMPONENTS
   - name: connectionString
     secretKeyRef:
       name: pubsub-secrets
@@ -494,6 +555,10 @@ spec:
   - name: disableEntityManagement
     value: "true"
 ---
+EOF_COMPONENTS
+fi
+
+cat >> dapr-components-generated.yaml <<EOF_COMPONENTS
 apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:

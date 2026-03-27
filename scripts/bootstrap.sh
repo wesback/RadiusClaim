@@ -76,6 +76,7 @@ AZURE_AUTH_MODE="${AZURE_AUTH_MODE:-auto}"
 SKIP_RECIPES=false
 SKIP_IMAGE_PUSH=false
 SKIP_VALIDATION=false
+AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-radiusclaim-aks}"
 DRY_RUN=false
 YES=false
 SKIP_APP_DEPLOY=false
@@ -175,6 +176,10 @@ while [ $# -gt 0 ]; do
       ;;
     --kube-context)
       KUBE_CONTEXT="$2"
+      shift 2
+      ;;
+    --cluster-name)
+      AKS_CLUSTER_NAME="$2"
       shift 2
       ;;
     --container-registry)
@@ -410,7 +415,7 @@ wait_for_namespace() {
   local namespace="$1"
   local attempt
 
-  if "$DRY_RUN"; then
+  if [ "$DRY_RUN" = true ]; then
     return 0
   fi
 
@@ -428,7 +433,7 @@ wait_for_key_vault_recovery() {
   local vault_name="$1"
   local attempt
 
-  if "$DRY_RUN"; then
+  if [ "$DRY_RUN" = true ]; then
     return 0
   fi
 
@@ -518,7 +523,7 @@ wait_for_deployment() {
   local deployment="$1"
   local attempt
 
-  if "$DRY_RUN"; then
+  if [ "$DRY_RUN" = true ]; then
     return 0
   fi
 
@@ -536,7 +541,7 @@ wait_for_deployment() {
 verify_components_present() {
   local components_json
 
-  if "$DRY_RUN"; then
+  if [ "$DRY_RUN" = true ]; then
     return 0
   fi
 
@@ -550,7 +555,7 @@ wait_for_sidecar_log() {
   local needle="$2"
   local attempt
 
-  if "$DRY_RUN"; then
+  if [ "$DRY_RUN" = true ]; then
     return 0
   fi
 
@@ -607,7 +612,7 @@ wait_for_healthz() {
   local url="$1"
   local attempt
 
-  if "$DRY_RUN"; then
+  if [ "$DRY_RUN" = true ]; then
     return 0
   fi
 
@@ -622,7 +627,7 @@ wait_for_healthz() {
 }
 
 start_port_forward() {
-  if "$DRY_RUN"; then
+  if [ "$DRY_RUN" = true ]; then
     VALIDATION_BASE_URL="http://127.0.0.1:18080"
     return 0
   fi
@@ -643,7 +648,7 @@ require_command curl
 require_command dapr
 require_command "$RAD_BIN"
 actionable_file "$SCRIPT_DIR/publish-radius-recipes.sh"
-actionable_file "$SCRIPT_DIR/deploy-dapr-components.sh"
+actionable_file "$SCRIPT_DIR/deploy-dapr-components-workload-identity.sh"
 actionable_file "$SCRIPT_DIR/validate-deployment.sh"
 actionable_file "$REPO_ROOT/infra/radius/app.bicep"
 actionable_file "$REPO_ROOT/infra/radius/environments/azure-radius.bicep"
@@ -817,7 +822,7 @@ echo "Refresh components : $([ "$SKIP_COMPONENT_REFRESH" = true ] && echo false 
 echo "Run validation     : $([ "$SKIP_VALIDATION" = true ] && echo false || echo true)"
 
 section "Radius environment setup"
-if "$DRY_RUN"; then
+if [ "$DRY_RUN" = true ]; then
   run_cmd "$RAD_BIN" env create "$ENV_NAME"
 else
   "$RAD_BIN" env create "$ENV_NAME" >/dev/null 2>&1 || true
@@ -895,7 +900,7 @@ if [ "$ENV_EXISTS" = false ]; then
     --azure-resource-group "${RESOURCE_GROUP}"
 fi
 
-if ! "$DRY_RUN"; then
+if [ "$DRY_RUN" != true ]; then
   DEPLOYED_ENV_NAMESPACE="$(fetch_env_namespace)"
   if [ -n "$DEPLOYED_ENV_NAMESPACE" ]; then
     KUBERNETES_NAMESPACE="$DEPLOYED_ENV_NAMESPACE"
@@ -914,7 +919,7 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
   # Pre-create the workload namespace and GHCR pull secret BEFORE rad deploy so
   # that Kubernetes can pull private images as soon as Radius creates the pods.
   section "Ensuring GHCR image pull secret (pre-deploy)"
-  if ! "$DRY_RUN"; then
+  if [ "$DRY_RUN" != true ]; then
     kubectl create namespace "$WORKLOAD_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
   fi
   if kubectl get secret ghcr-pull-secret -n "$WORKLOAD_NAMESPACE" >/dev/null 2>&1; then
@@ -957,10 +962,11 @@ fi
 if [ "$SKIP_COMPONENT_REFRESH" = false ]; then
   section "Backfilling Dapr components"
   wait_for_namespace "$WORKLOAD_NAMESPACE"
-  run_cmd env RAD_BIN="$RAD_BIN" "$SCRIPT_DIR/deploy-dapr-components.sh" \
+  run_cmd env RAD_BIN="$RAD_BIN" "$SCRIPT_DIR/deploy-dapr-components-workload-identity.sh" \
     --app-name "$APP_NAME" \
     --env-name "$ENV_NAME" \
     --resource-group "$RESOURCE_GROUP" \
+    --cluster-name "$AKS_CLUSTER_NAME" \
     --namespace "$WORKLOAD_NAMESPACE"
 
   verify_components_present
@@ -1005,6 +1011,6 @@ if [ "$RESOURCE_GROUP_CREATED" = true ]; then
   log_info "Bootstrap created Azure resource group '${RESOURCE_GROUP}'."
 fi
 
-if "$DRY_RUN"; then
+if [ "$DRY_RUN" = true ]; then
   log_info "Dry run complete. Re-run without --dry-run to execute the plan."
 fi

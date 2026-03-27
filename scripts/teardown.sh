@@ -20,6 +20,10 @@ AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-}"
 INCLUDE_RESOURCE_GROUP=false
 INCLUDE_SERVICE_PRINCIPALS=false
 INCLUDE_GHCR_ARTIFACTS=false
+INCLUDE_MANAGED_IDENTITY=false
+MI_NAME="radiusclaim-workload-identity"
+GHCR_OWNER_OVERRIDE=""
+GHCR_REPO_OVERRIDE=""
 DRY_RUN=false
 YES=false
 
@@ -42,13 +46,18 @@ Optional:
   --resource-group <name>           Azure resource group (default: ${RESOURCE_GROUP})
   --kube-context <ctx>              Kubernetes context (default: current context)
   --aks-cluster-name <name>         AKS cluster name to delete (default: none; optional)
-  --workspace <name>                Radius workspace name (default: ${WORKSPACE_NAME})
+  --workspace-name <name>           Radius workspace name (default: ${WORKSPACE_NAME})
+  --workspace <name>                Alias for --workspace-name (deprecated)
+  --group-name <name>               Radius group name (default: ${GROUP_NAME})
   --app-name <name>                 Radius application name (default: ${APP_NAME})
   --env-name <name>                 Radius environment name (default: ${ENV_NAME})
   --kubernetes-namespace <ns>       Radius environment namespace (default: ${KUBERNETES_NAMESPACE})
   --include-resource-group          Delete the entire Azure resource group (default: delete individual resources only)
   --include-service-principals      Also delete service principal app registrations
   --include-ghcr-artifacts          Also delete GHCR container/recipe images (requires gh CLI)
+  --include-managed-identity        Also delete the managed identity '${MI_NAME}' and its federated credentials
+  --ghcr-owner <owner>              GHCR owner (default: derived from git remote)
+  --ghcr-repo <repo>                GHCR repo (default: derived from git remote)
   --dry-run                         Print what would be deleted without executing
   --yes                             Skip confirmation prompts
   --help                            Show this help message
@@ -81,8 +90,17 @@ while [ $# -gt 0 ]; do
       AKS_CLUSTER_NAME="$2"
       shift 2
       ;;
-    --workspace)
+    --workspace-name)
       WORKSPACE_NAME="$2"
+      shift 2
+      ;;
+    --workspace)
+      log_warning "--workspace is deprecated, use --workspace-name"
+      WORKSPACE_NAME="$2"
+      shift 2
+      ;;
+    --group-name)
+      GROUP_NAME="$2"
       shift 2
       ;;
     --app-name)
@@ -108,6 +126,18 @@ while [ $# -gt 0 ]; do
     --include-ghcr-artifacts)
       INCLUDE_GHCR_ARTIFACTS=true
       shift
+      ;;
+    --include-managed-identity)
+      INCLUDE_MANAGED_IDENTITY=true
+      shift
+      ;;
+    --ghcr-owner)
+      GHCR_OWNER_OVERRIDE="$2"
+      shift 2
+      ;;
+    --ghcr-repo)
+      GHCR_REPO_OVERRIDE="$2"
+      shift 2
       ;;
     --dry-run)
       DRY_RUN=true
@@ -276,6 +306,33 @@ delete_azure_role_assignments() {
   log_success "Role assignments on '${RESOURCE_GROUP}' removed"
 }
 
+delete_managed_identity() {
+  section "Managed identity '${MI_NAME}'"
+
+  if ! rg_exists; then
+    log_info "Resource group '${RESOURCE_GROUP}' does not exist — skipping managed identity"
+    return 0
+  fi
+
+  local mi_id
+  mi_id="$(az identity show --name "$MI_NAME" --resource-group "$RESOURCE_GROUP" --query id -o tsv 2>/dev/null || true)"
+
+  if [ -z "$mi_id" ]; then
+    log_info "Managed identity '${MI_NAME}' not found in '${RESOURCE_GROUP}' — skipping"
+    return 0
+  fi
+
+  # Federated credentials are deleted automatically when the MI is deleted,
+  # but list them first so the operator can see what was cleaned up.
+  local fed_count
+  fed_count="$(az identity federated-credential list --identity-name "$MI_NAME" --resource-group "$RESOURCE_GROUP" --query "length(@)" -o tsv 2>/dev/null || echo "0")"
+  [ "$fed_count" -gt 0 ] && log_info "ℹ Removing ${fed_count} federated credential(s) with managed identity"
+
+  log_info "Deleting managed identity '${MI_NAME}' ..."
+  run_cmd az identity delete --name "$MI_NAME" --resource-group "$RESOURCE_GROUP"
+  log_success "Managed identity '${MI_NAME}' deleted"
+}
+
 delete_aks_cluster() {
   section "AKS cluster '${AKS_CLUSTER_NAME}'"
 
@@ -391,9 +448,35 @@ delete_ghcr_artifacts() {
     return 0
   fi
 
+  # Derive owner/repo from git remote, with override support via --ghcr-owner / --ghcr-repo
   local owner repo
-  owner="wesback"
-  repo="radiusclaim"
+  if [ -n "${GHCR_OWNER_OVERRIDE:-}" ]; then
+    owner="$GHCR_OWNER_OVERRIDE"
+  else
+    local remote
+    remote="$(git -C "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" config --get remote.origin.url 2>/dev/null || true)"
+    if [[ "$remote" =~ github.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
+      owner="$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')"
+    else
+      owner="wesback"
+      log_warning "Could not derive GHCR owner from git remote — falling back to '${owner}'. Use --ghcr-owner to override."
+    fi
+  fi
+
+  if [ -n "${GHCR_REPO_OVERRIDE:-}" ]; then
+    repo="$GHCR_REPO_OVERRIDE"
+  else
+    local remote
+    remote="$(git -C "$(git rev-parse --show-toplevel 2>/dev/null || echo .)" config --get remote.origin.url 2>/dev/null || true)"
+    if [[ "$remote" =~ github.com[:/]([^/]+)/([^/.]+)(\.git)?$ ]]; then
+      repo="$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:upper:]' '[:lower:]')"
+    else
+      repo="radiusclaim"
+      log_warning "Could not derive GHCR repo from git remote — falling back to '${repo}'. Use --ghcr-repo to override."
+    fi
+  fi
+
+  log_info "GHCR owner: ${owner}, repo: ${repo}"
 
   local packages=(
     "recipes/state-store"
@@ -458,6 +541,7 @@ echo "  AKS cluster:           ${AKS_CLUSTER_NAME:-<not specified>}"
 echo "  Delete resource group: ${INCLUDE_RESOURCE_GROUP}"
 echo "  Delete SPs:            ${INCLUDE_SERVICE_PRINCIPALS}"
 echo "  Delete GHCR artifacts: ${INCLUDE_GHCR_ARTIFACTS}"
+echo "  Delete managed id:     ${INCLUDE_MANAGED_IDENTITY}"
 echo "  Dry run:               ${DRY_RUN}"
 echo
 
@@ -491,6 +575,11 @@ delete_azure_role_assignments
 
 # 5 — AKS cluster (opt-in via --aks-cluster-name)
 delete_aks_cluster
+
+# 5a — Managed identity (opt-in, or auto when --include-resource-group since RG deletion removes it anyway)
+if [ "$INCLUDE_MANAGED_IDENTITY" = true ] || [ "$INCLUDE_RESOURCE_GROUP" = true ]; then
+  delete_managed_identity
+fi
 
 # 6 & 7 — Azure resources (individual or entire RG)
 if [ "$INCLUDE_RESOURCE_GROUP" = true ]; then
