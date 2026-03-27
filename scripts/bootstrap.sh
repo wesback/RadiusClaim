@@ -749,6 +749,20 @@ actionable_file "$REPO_ROOT/infra/radius/environments/azure-radius.parameters.js
 actionable_file "$REPO_ROOT/infra/radius/recipes/azure/state-store.bicep"
 rad_version_check
 
+# Warn early if GHCR credentials are absent. They are required at deploy time when
+# recipe OCI artifacts at RECIPE_REGISTRY are stored in a private GHCR package.
+# Failing here avoids wasting time on recipe publishing before hitting the same error.
+if echo "${RECIPE_REGISTRY}" | grep -q "ghcr.io"; then
+  if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
+    log_warning "GHCR_TOKEN and/or GHCR_USERNAME are not set."
+    log_warning "These are required if the recipe OCI packages at '${RECIPE_REGISTRY}' are private."
+    log_warning "Bootstrap will fail later if packages are private and credentials are absent."
+    log_warning "Set them now to avoid that:"
+    log_warning "  export GHCR_USERNAME=<github-username>"
+    log_warning "  export GHCR_TOKEN=<PAT-with-read:packages>"
+  fi
+fi
+
 AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv 2>/dev/null)"
 AZURE_SUBSCRIPTION_NAME="$(az account show --query name -o tsv 2>/dev/null)"
 AZURE_TENANT_ID_CURRENT="$(az account show --query tenantId -o tsv 2>/dev/null)"
