@@ -448,6 +448,18 @@ delete_ghcr_artifacts() {
     return 0
   fi
 
+  # Pre-flight check: verify gh token has required scopes
+  local auth_status
+  auth_status="$(gh auth status --hostname github.com 2>&1 || true)"
+  if ! echo "$auth_status" | grep -q "Token scopes:"; then
+    log_warning "Could not verify gh token scopes — GHCR cleanup may fail"
+  elif ! echo "$auth_status" | grep "Token scopes:" | grep -q "delete:packages"; then
+    log_error "✗ GHCR deletion requires additional token scopes"
+    log_info "ℹ Run: gh auth refresh -s delete:packages,read:packages"
+    log_info "ℹ Then re-run teardown with --include-ghcr-artifacts"
+    return 1
+  fi
+
   # Derive owner/repo from git remote, with override support via --ghcr-owner / --ghcr-repo
   local owner repo
   if [ -n "${GHCR_OWNER_OVERRIDE:-}" ]; then
@@ -492,10 +504,27 @@ delete_ghcr_artifacts() {
     # URL-encode the package name: forward slashes must be %2F for GitHub API
     local encoded_name="${full_name//\//%2F}"
     log_info "Deleting package versions for '${full_name}' ..."
-    if run_cmd gh api -X DELETE "/user/packages/container/${encoded_name}" 2>/dev/null; then
+    
+    # Capture both stdout and stderr, and the exit code
+    local output exit_code
+    output=$(run_cmd gh api -X DELETE "/user/packages/container/${encoded_name}" 2>&1) || exit_code=$?
+    
+    if [ -z "${exit_code:-}" ]; then
       log_success "Package '${full_name}' deleted"
     else
-      log_warning "Could not delete '${full_name}' — may not exist or requires manual removal via GitHub UI"
+      # Parse the error response for specific status codes
+      if echo "$output" | grep -q '"status": "403"'; then
+        log_error "✗ GHCR deletion requires additional token scopes"
+        log_info "ℹ Run: gh auth refresh -s delete:packages,read:packages"
+        log_info "ℹ Then re-run teardown with --include-ghcr-artifacts"
+        return 1
+      elif echo "$output" | grep -q '"status": "404"'; then
+        # Package doesn't exist — this is fine, skip silently
+        log_info "Package '${full_name}' not found (already deleted or never existed)"
+      else
+        # Other error — show generic warning
+        log_warning "Could not delete '${full_name}' — ${output}"
+      fi
     fi
   done
 }

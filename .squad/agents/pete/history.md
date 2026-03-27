@@ -124,6 +124,32 @@ When the cluster is next recreated, all Dapr components will authenticate via Az
 
 ## Learnings
 
+### 2026-06-05 — GHCR Token Scope Error Handling
+
+**Problem:** `teardown.sh` GHCR deletion now correctly finds packages (URL encoding fix), but fails with 403 when `gh` token lacks `delete:packages` and `read:packages` scopes. The error message was misleading — "may not exist or requires manual removal via GitHub UI" — when the real issue was missing token scopes.
+
+**Fix applied:**
+
+1. **Pre-flight scope check:** Added `gh auth status --hostname github.com` parsing to detect missing `delete:packages` scope BEFORE attempting any deletions. If scope is missing, displays clear error message with exact fix command and exits early with `return 1`.
+
+2. **Per-deletion error parsing:** Changed from `2>/dev/null` silent failure to capturing `gh api` stderr output and parsing JSON response for HTTP status codes:
+   - `403` → Clear auth error with recovery instructions: "✗ GHCR deletion requires additional token scopes / ℹ Run: gh auth refresh -s delete:packages,read:packages / ℹ Then re-run teardown with --include-ghcr-artifacts". Returns 1 immediately (no point retrying remaining packages).
+   - `404` → Informational message: "Package not found (already deleted or never existed)" — skip silently.
+   - Other errors → Generic warning with actual error output.
+
+3. **Early exit on 403:** When a 403 is detected during deletion, the function returns immediately instead of attempting remaining packages. All packages use the same token, so they'll all fail with the same error.
+
+**User experience:** Operators now get clear, actionable guidance when token scopes are insufficient, with the exact command to fix it (`gh auth refresh -s delete:packages,read:packages`).
+
+**Verification:** `bash -n scripts/teardown.sh` passes with no syntax errors.
+
+**References:**
+- Fix date: 2026-06-05
+- Requested by: Wesley Backelant
+- Related: GHCR URL encoding fix (same session)
+
+---
+
 ### 2026-06-05 — Audit Fixes Applied (Fixes 1–8)
 
 All 8 audit findings from the 2026-06-05 audit were fixed in a single session.
