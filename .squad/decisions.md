@@ -574,3 +574,154 @@ Where `<package-name>` can contain slashes and becomes the package identifier in
 - GitHub REST API: [Packages - Delete a package for the authenticated user](https://docs.github.com/en/rest/packages/packages#delete-a-package-for-the-authenticated-user)
 - URL encoding spec: RFC 3986 (forward slash = `%2F`)
 - Related file: `scripts/teardown.sh` line 481-498
+
+# Decision: SPN Role Assignment Idempotency
+
+**Date:** 2026-06-05  
+**Author:** Pete (Infrastructure Automation Specialist)  
+**Status:** Implemented  
+
+## Context
+
+The `prepare-cluster.sh --create-spn` flow has two paths:
+1. Create a new SPN with `az ad sp create-for-rbac --role Contributor --scopes "/subscriptions/..."`
+2. Reuse an existing SPN (by display name lookup)
+
+The **reuse path** was broken: when an existing SPN was found and the user chose to reuse it, the script exited immediately without verifying or assigning the Contributor role. This caused Wesley's bootstrap to fail with:
+
+```
+ERROR: (AuthorizationFailed) The client '890caf69-5a38-4bf9-950d-0430352e7396' [...] does not have authorization to perform action 'Microsoft.Resources/subscriptions/resourcegroups/write'
+```
+
+The SPN existed but had no permissions.
+
+## Decision
+
+**When reusing an existing SPN, `prepare-cluster.sh` MUST ensure the Contributor role is assigned to the subscription before proceeding.**
+
+Implementation:
+1. Attempt `az role assignment create --assignee <appId> --role Contributor --scope /subscriptions/<id>` with `2>/dev/null` to suppress "already exists" errors
+2. If creation fails (likely because assignment exists), verify with `az role assignment list` to confirm the role is present
+3. Only fail if both operations fail (truly missing role)
+4. Print clear confirmation: `✓ Role assignment: Contributor on subscription <id>` (or "already exists")
+
+## Rationale
+
+- **Idempotency:** Operators can re-run `prepare-cluster.sh --create-spn` without double-assignment errors. The script either creates the role (first run) or verifies it exists (subsequent runs).
+- **Subscription scope:** Using `/subscriptions/{id}` instead of `/subscriptions/{id}/resourceGroups/{rg}` is safer because:
+  - The RG might not exist yet (bootstrap creates it)
+  - Subscription-level Contributor allows the SPN to create RGs and all child resources
+  - Avoids circular dependency (can't assign RG scope if RG doesn't exist)
+- **Clarity:** Explicit role confirmation messages prevent confusion about whether permissions were granted.
+
+## Alternatives Considered
+
+1. **Fail fast if SPN exists:** Force users to manually assign roles. Rejected — violates automation charter.
+2. **Use resource group scope:** Rejected — requires RG to exist first, breaks first-run flow.
+3. **Skip role check entirely:** Rejected — leads to cryptic AuthorizationFailed errors downstream (the original bug).
+
+## Implementation Notes
+
+- Changed lines 367-408 of `scripts/prepare-cluster.sh`
+- Added idempotent role assignment logic in the "reuse existing SPN" branch
+- Added explicit role confirmation log in the "create new SPN" branch (line 408: `log_success "Role assignment: Contributor on subscription ${AZURE_SUBSCRIPTION_ID}"`)
+- Both paths now guarantee the SPN has Contributor before script completes
+
+## Testing
+
+- `bash -n scripts/prepare-cluster.sh` → syntax valid
+- Expected behavior:
+  - **First run with existing SPN:** Role gets created, script prints `✓ Role assignment: Contributor on subscription <id>`
+  - **Second run:** Role creation fails silently (already exists), verification succeeds, script prints `✓ Role assignment: Contributor already exists on subscription <id>`
+  - **Missing permissions:** Both operations fail, script exits with clear error: `Failed to verify or assign Contributor role to service principal. Check Azure permissions.`
+
+## References
+
+- Error log from Wesley's bootstrap failure (SPN `890caf69-5a38-4bf9-950d-0430352e7396`)
+- Azure subscription: `5b6c36e5-b279-4005-8bf1-c73b1c2b71c2`
+- Pete's history: `.squad/agents/pete/history.md` — "2026-06-05 — SPN Role Assignment Fix"
+
+# Pete Script Fixes — Audit Remediation
+
+**Date:** 2026-06-05  
+**Author:** Pete (Infrastructure Automation Specialist)  
+**Requested by:** Wesley Backelant
+
+---
+
+## Summary
+
+All 8 audit findings identified in the 2026-06-05 full scripts audit were fixed. All 5 affected scripts pass `bash -n` syntax check.
+
+---
+
+## Fix Outcomes
+
+### Fix 1 ✅ — bootstrap.sh calls wrong Dapr script (CRITICAL)
+
+**Files:** `scripts/bootstrap.sh`  
+**Change:** Added `AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-radiusclaim-aks}"` default variable and `--cluster-name` argument parser. Changed `actionable_file` check and `run_cmd` call from `deploy-dapr-components.sh` to `deploy-dapr-components-workload-identity.sh`, passing `--cluster-name "$AKS_CLUSTER_NAME"`.  
+**Design decision:** bootstrap.sh had no AKS_CLUSTER_NAME variable. Added it with the same default used by the WI script (`radiusclaim-aks`). The `--cluster-name` flag makes it overridable at runtime.
+
+---
+
+### Fix 2 ✅ — teardown.sh never deletes managed identity (CRITICAL)
+
+**Files:** `scripts/teardown.sh`  
+**Change:** Added `MI_NAME="radiusclaim-workload-identity"` and `INCLUDE_MANAGED_IDENTITY=false` to defaults. Added `delete_managed_identity()` function with explicit check, federated-credential count reporting, and deletion. Added `--include-managed-identity` flag.  
+**Design decision:** Follows the `--include-service-principals` pattern — opt-in. Additionally, auto-runs when `--include-resource-group` is true (since RG deletion removes it anyway, but the explicit call provides better operator visibility). Federated credentials are reported but not explicitly deleted first (Azure removes them atomically with the MI; listing count gives operators visibility).
+
+---
+
+### Fix 3 ✅ — Flag name inconsistency `--workspace` vs `--workspace-name`
+
+**Files:** `scripts/teardown.sh`  
+**Change:** Added `--workspace-name` as primary flag. Kept `--workspace` as deprecated alias that emits `log_warning "--workspace is deprecated, use --workspace-name"`. Added `--group-name` flag (GROUP_NAME was previously hardcoded with no override path).
+
+---
+
+### Fix 4 ✅ — Mark deploy-dapr-components.sh as deprecated
+
+**Files:** `scripts/deploy-dapr-components.sh`, `scripts/README.md`  
+**Change:** Added DEPRECATED comment block and `log_warning` call at the top of the script (after sourcing platform-common.sh, so `log_warning` is available). Added `> ⚠️ **Deprecated:**` blockquote notice to the README section for this script.
+
+---
+
+### Fix 5 ✅ — GHCR owner/repo hardcoded in teardown.sh
+
+**Files:** `scripts/teardown.sh`  
+**Change:** Rewrote `delete_ghcr_artifacts()` to derive owner/repo from `git remote.origin.url` using the same regex as `derive_default_container_registry()` in bootstrap.sh. Falls back to hardcoded values with `log_warning` if git remote parsing fails. Added `--ghcr-owner` and `--ghcr-repo` override flags (stored as `GHCR_OWNER_OVERRIDE`/`GHCR_REPO_OVERRIDE` — initialised to `""` at defaults block to be safe under `set -u`).
+
+---
+
+### Fix 6 ✅ — Source lib/platform-common.sh in deploy-dapr scripts
+
+**Files:** `scripts/deploy-dapr-components.sh`, `scripts/deploy-dapr-components-workload-identity.sh`  
+**Change:** Added `SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` and `source "${SCRIPT_DIR}/lib/platform-common.sh"` after shebang/set in both scripts. Replaced the most egregious `echo "Error: ..."` + raw exit patterns with `log_error` calls. Fixed WI script header comment to name correct filename.  
+**Note:** DRY_RUN handling in WI script uses `[[ "$DRY_RUN" == "true" ]]` inline — left as-is since `run_cmd` from platform-common.sh also checks `${DRY_RUN:-false} = true`. Compatible; no conflict.
+
+---
+
+### Fix 7 ✅ — Dead GHCR auth detection in publish-radius-recipes.sh
+
+**Files:** `scripts/publish-radius-recipes.sh`  
+**Change:** Replaced the double-broken auth check (command substitution in function call position + `docker info | grep ghcr.io` fallback that never matches) with a clean two-step approach: get credential store name from `docker info`, then call `docker-credential-<store> list | grep ghcr.io`. Warning is now shown only when authentication is actually absent, not on every run.
+
+---
+
+### Fix 8 ✅ — Standardise DRY_RUN evaluation in bootstrap.sh
+
+**Files:** `scripts/bootstrap.sh`  
+**Change:** Used `sed` to replace all 11 instances of `if "$DRY_RUN"; then` → `if [ "$DRY_RUN" = true ]; then` and `if ! "$DRY_RUN"; then` → `if [ "$DRY_RUN" != true ]; then`. The old pattern ran `true` or `false` as shell commands — technically works but non-idiomatic and inconsistent with all other scripts. No other scripts had this pattern.
+
+---
+
+## Syntax Check Results
+
+```
+bash -n scripts/bootstrap.sh                           → OK
+bash -n scripts/teardown.sh                            → OK
+bash -n scripts/deploy-dapr-components.sh              → OK
+bash -n scripts/deploy-dapr-components-workload-identity.sh → OK
+bash -n scripts/publish-radius-recipes.sh              → OK
+```

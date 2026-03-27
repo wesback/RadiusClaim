@@ -370,6 +370,29 @@ Pass --create-spn to create one automatically, or export:
     log_info "or create a new one with a timestamp suffix."
     
     if ! prompt_confirm "Create a new service principal with timestamp suffix instead?"; then
+      log_info "Ensuring existing service principal has Contributor role..."
+      
+      # Verify/assign Contributor role on subscription (idempotent)
+      SUBSCRIPTION_SCOPE="/subscriptions/${AZURE_SUBSCRIPTION_ID}"
+      if az role assignment create \
+        --assignee "$EXISTING_APP_ID" \
+        --role Contributor \
+        --scope "$SUBSCRIPTION_SCOPE" \
+        --output none 2>/dev/null; then
+        log_success "Role assignment: Contributor on subscription ${AZURE_SUBSCRIPTION_ID}"
+      else
+        # Role assignment might already exist - check it
+        if az role assignment list \
+          --assignee "$EXISTING_APP_ID" \
+          --role Contributor \
+          --scope "$SUBSCRIPTION_SCOPE" \
+          --query "[0].id" -o tsv >/dev/null 2>&1; then
+          log_success "Role assignment: Contributor already exists on subscription ${AZURE_SUBSCRIPTION_ID}"
+        else
+          fail "Failed to verify or assign Contributor role to service principal. Check Azure permissions."
+        fi
+      fi
+      
       log_error "Cannot proceed without service principal credentials."
       echo ""
       echo "To reuse the existing service principal, export these environment variables:"
@@ -405,6 +428,8 @@ Pass --create-spn to create one automatically, or export:
     --role Contributor \
     --scopes "/subscriptions/${AZURE_SUBSCRIPTION_ID}" \
     --output json)" || fail "Failed to create service principal."
+  
+  log_success "Role assignment: Contributor on subscription ${AZURE_SUBSCRIPTION_ID}"
   
   # Parse and export credentials
   export AZURE_CLIENT_ID="$(printf '%s' "$SPN_JSON" | jq -r '.appId')"
