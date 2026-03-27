@@ -335,6 +335,7 @@ prepare_aks_cluster() {
       --min-count "$AKS_MIN_COUNT" \
       --max-count "$AKS_MAX_COUNT" \
       --generate-ssh-keys \
+      --only-show-errors \
       --output none
   fi
 

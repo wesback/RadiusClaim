@@ -763,3 +763,17 @@ export AZURE_TENANT_ID="$saved_tenant_id"
 - `az role assignment create` when assigning roles to a service principal
 - `az group create` when creating resource groups (if SPN doesn't have Contributor yet)
 - Any other `az` command requiring elevated permissions the SPN doesn't have
+
+### 2026-03-27: Decision — PRD Created for RadiusClaim
+**By:** Graham (Platform Dev)
+**Date:** 2026-03-27
+**Status:** COMPLETED
+**What:** Created a comprehensive Product Requirements Document at `docs/PRD.md`, derived from full codebase analysis and team decision history.
+**Why:** Wesley requested a PRD that captures what's built, what's partially complete, and what remains for a production-ready reference app. The PRD consolidates findings from source code review (3 services, shared contracts), infrastructure analysis (Radius app model, recipes, environments, scripts), CI/CD pipeline review, and all architectural decisions to date.
+
+**Key Findings:**
+- Core application flow (submit → approve → reimburse → notify) is fully functional
+- Infrastructure story (Radius + Dapr + workload identity) is complete at the deployment level
+- Highest-priority gaps: manual approval step for escalated expenses, automated test suite, Dapr CRD auto-projection, pubsub recipe workload identity migration, Phase 7 validation sign-off
+
+**Deliverable:** `docs/PRD.md`

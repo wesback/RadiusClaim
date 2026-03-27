@@ -190,3 +190,68 @@ All 8 findings from Pete's infrastructure scripts audit were successfully applie
 **Commit:** `0fe8322` — "fix(scripts): Pete's 8-point audit remediation"
 
 **Status:** ✅ All scripts pass `bash -n` syntax check. Ready for bootstrap automation.
+
+---
+
+### 2026-06-05 — SPN Role Assignment Fix (Reuse Path)
+
+**Problem:** When `prepare-cluster.sh --create-spn` finds an existing SPN by name (`radiusclaim-radius-sp`), the user can choose to reuse it. However, the script immediately exits at line 381 WITHOUT verifying or assigning the Contributor role. This caused Wesley's bootstrap to fail with `AuthorizationFailed` — the SPN existed but lacked permissions to create resource groups.
+
+**Root cause:** The existing SPN reuse path (lines 367-382) handled credentials but completely skipped role assignment verification. The script assumed an existing SPN was already correctly configured.
+
+**Fix applied:**
+
+1. **Idempotent role assignment:** When reusing an existing SPN, the script now attempts `az role assignment create` with the Contributor role on the subscription scope. This succeeds if the role doesn't exist, and fails silently if it does (2>/dev/null redirect).
+
+2. **Verification fallback:** If role creation fails (likely because it already exists), the script uses `az role assignment list` to verify the Contributor role is actually present. Only if both operations fail does the script report a fatal error.
+
+3. **Clear confirmation:** After ensuring the role exists, the script prints: `✓ Role assignment: Contributor on subscription <id>` (or "already exists" variant).
+
+4. **New SPN path unchanged:** When creating a brand new SPN (lines 419-425), the script already had `--role Contributor --scopes "/subscriptions/${AZURE_SUBSCRIPTION_ID}"` in the `az ad sp create-for-rbac` call. Added explicit confirmation log after creation: `✓ Role assignment: Contributor on subscription <id>`.
+
+**Idempotency guarantee:** The fix uses `az role assignment create` (which is NOT idempotent by default) but catches failures and verifies with `az role assignment list`. This pattern ensures:
+- First run: role gets created
+- Subsequent runs: creation fails silently, verification succeeds, script continues
+- No double-assignment errors, no false failures
+
+**Subscription scope choice:** The script assigns Contributor at `/subscriptions/{subscriptionId}` rather than resource group scope because:
+- The RG might not exist yet (bootstrap creates it)
+- Subscription-level Contributor allows the SPN to create RGs and all child resources
+- More idempotent for bootstrap/teardown cycles
+
+**Syntax check:** `bash -n scripts/prepare-cluster.sh` passes.
+
+**References:**
+- Fix date: 2026-06-05
+- Requested by: Wesley Backelant
+- Error context: `AuthorizationFailed` on SPN `890caf69-5a38-4bf9-950d-0430352e7396` attempting to create RG `radiusclaim-rg`
+
+---
+
+### 2026-06-05 — SPN Credential Isolation Fix (Catch-22)
+
+**Problem:** When `prepare-cluster.sh --create-spn` is run with `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` already set in the environment, the Azure CLI authenticates AS the service principal for ALL commands — including role assignment and resource group creation. This creates a Catch-22: the SPN is trying to assign Contributor to itself or create resource groups, but it doesn't have `Microsoft.Authorization/roleAssignments/write` or `Microsoft.Resources/subscriptions/resourcegroups/write` permissions yet.
+
+**Root cause:** The script didn't isolate user credentials from SPN credentials. When SPN env vars are set, `az` uses them for authentication, causing privileged operations (role assignments, RG creation) to run as the unprivileged SPN instead of the user's own Azure identity.
+
+**Fix applied:**
+
+1. **Existing SPN reuse path (lines 372-405):** When reusing an existing SPN, the script now:
+   - Saves the SPN env vars to local variables (`saved_client_id`, `saved_client_secret`, `saved_tenant_id`)
+   - Unsets `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID` before role assignment
+   - Runs `az role assignment create` as the user's own credentials
+   - Restores the SPN env vars after role assignment completes (or on failure)
+   
+2. **Resource group creation (lines 158-184):** Applied the same pattern:
+   - Saves SPN env vars before `az group create`
+   - Unsets them so the command runs as the user
+   - Restores them after the command completes
+   
+**Why this works:** The user's Azure identity (from `az login`) has sufficient permissions to create resource groups and assign roles. By temporarily unsetting the SPN env vars, we let the user's credentials take over for these privileged operations, then restore the SPN env vars so subsequent `rad credential register azure sp` still works correctly.
+
+**Verification:** `bash -n scripts/prepare-cluster.sh` passes.
+
+**References:**
+- Fix date: 2026-06-05
+- Requested by: Wesley Backelant
+- Error context: `AuthorizationFailed` on SPN `890caf69-5a38-4bf9-950d-0430352e7396` attempting role assignment and RG creation
