@@ -1,15 +1,16 @@
 using RadiusClaim.Contracts;
 using Dapr.Client;
 using Dapr.Workflow;
+using Microsoft.Extensions.Options;
 using WorkflowEngine.Models;
 
 namespace WorkflowEngine.Activities;
 
 internal sealed class ApproveExpenseActivity(
     DaprClient daprClient,
+    IOptions<ApprovalOptions> approvalOptions,
     ILogger<ApproveExpenseActivity> logger) : WorkflowActivity<ExpenseSubmission, ApprovalDecision>
 {
-    private const decimal AutoApproveThreshold = 100.00m;
     private const string AutoApprovalDecisionSource = "AutoApprovedUnderThreshold";
     private const string ManualReviewDecisionSource = "ManualReviewThresholdReached";
 
@@ -33,7 +34,8 @@ internal sealed class ApproveExpenseActivity(
                 $"Expense '{input.ExpenseId}' correlation mismatch. Expected '{input.CorrelationId}', found '{record.CorrelationId}'.");
         }
 
-        var isAutoApproved = input.Amount < AutoApproveThreshold;
+        var threshold = approvalOptions.Value.ThresholdUsd;
+        var isAutoApproved = input.Amount < threshold;
         var nextStatus = isAutoApproved ? ExpenseStatus.Approved : ExpenseStatus.ManualReviewRequested;
         var decision = new ApprovalDecision(
             nextStatus,

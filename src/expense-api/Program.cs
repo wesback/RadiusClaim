@@ -155,6 +155,24 @@ expenses.MapGet("/{id}/workflow", async (
     return Results.Ok(workflowSnapshot);
 });
 
+// POST /expenses/{id}/approve — signals the paused workflow to approve the expense.
+expenses.MapPost("/{id}/approve", async (
+    string id,
+    ExpenseApprovalActionRequest? body,
+    DaprClient daprClient,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+    await HandleExpenseApprovalActionAsync(id, approved: true, body?.Reason, daprClient, logger, cancellationToken));
+
+// POST /expenses/{id}/reject — signals the paused workflow to reject the expense.
+expenses.MapPost("/{id}/reject", async (
+    string id,
+    ExpenseApprovalActionRequest? body,
+    DaprClient daprClient,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+    await HandleExpenseApprovalActionAsync(id, approved: false, body?.Reason, daprClient, logger, cancellationToken));
+
 expenses.MapGet("/{id}", async (string id, DaprClient daprClient, CancellationToken cancellationToken) =>
 {
     if (string.IsNullOrWhiteSpace(id))
@@ -427,6 +445,96 @@ static async Task TryStartExpenseWorkflowAsync(
     }
 }
 
+static async Task<IResult> HandleExpenseApprovalActionAsync(
+    string id,
+    bool approved,
+    string? reason,
+    DaprClient daprClient,
+    ILogger logger,
+    CancellationToken cancellationToken)
+{
+    if (string.IsNullOrWhiteSpace(id))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["id"] = ["Expense id is required."]
+        });
+    }
+
+    var normalizedId = id.Trim();
+    var record = await daprClient.GetStateAsync<ExpenseRecord>(
+        RadiusClaimDapr.Components.StateStore,
+        RadiusClaimDapr.StateKeys.Expense(normalizedId),
+        consistencyMode: ConsistencyMode.Strong,
+        cancellationToken: cancellationToken);
+
+    if (record is null)
+    {
+        return Results.NotFound();
+    }
+
+    if (record.Status != ExpenseStatus.ManualReviewRequested)
+    {
+        return Results.Conflict(new
+        {
+            error = $"Expense '{normalizedId}' is not awaiting manual approval. Current status: {record.Status}.",
+            status = record.Status.ToString()
+        });
+    }
+
+    try
+    {
+        using var workflowClient = DaprClient.CreateInvokeHttpClient(RadiusClaimDapr.AppIds.WorkflowEngine);
+        var decisionBody = new { approved, reason };
+        using var response = await workflowClient.PostAsJsonAsync(
+            $"workflows/{Uri.EscapeDataString(record.CorrelationId)}/decide",
+            decisionBody,
+            cancellationToken);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            return Results.Problem(
+                title: "Workflow instance not found.",
+                detail: $"No running workflow found for expense '{normalizedId}'.",
+                statusCode: StatusCodes.Status404NotFound);
+        }
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            return Results.Conflict(new
+            {
+                error = "The workflow is no longer waiting for a decision.",
+                expenseId = normalizedId
+            });
+        }
+
+        response.EnsureSuccessStatusCode();
+
+        logger.LogInformation(
+            "Expense '{ExpenseId}' {Decision} signal sent to workflow '{InstanceId}'.",
+            normalizedId,
+            approved ? "approval" : "rejection",
+            record.CorrelationId);
+
+        return Results.Accepted(
+            $"/expenses/{normalizedId}/workflow",
+            new { expenseId = normalizedId, decision = approved ? "Approved" : "Rejected" });
+    }
+    catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+    {
+        logger.LogWarning(
+            ex,
+            "Could not send {Decision} signal to workflow for expense '{ExpenseId}'.",
+            approved ? "approval" : "rejection",
+            normalizedId);
+
+        return Results.Problem(
+            title: "Could not deliver decision to workflow.",
+            detail: "The approval/rejection signal could not be forwarded to the workflow engine.",
+            statusCode: StatusCodes.Status502BadGateway);
+    }
+}
+
 static async Task<ExpenseWorkflowSnapshot> GetExpenseWorkflowSnapshotAsync(
     ExpenseRecord record,
     ILogger logger,
@@ -602,5 +710,8 @@ internal sealed record ExpenseWorkflowSnapshot(
     DateTimeOffset? CreatedAtUtc,
     DateTimeOffset? LastUpdatedAtUtc,
     string? FailureDetails);
+
+/// <summary>Optional body for approve/reject endpoints. Both fields are optional.</summary>
+internal sealed record ExpenseApprovalActionRequest(string? Reason = null);
 
 public partial class Program;

@@ -32,4 +32,10 @@ public static class RadiusClaimDapr
     {
         public const string ExpenseApproval = "ExpenseApprovalWorkflow";
     }
+
+    public static class WorkflowEvents
+    {
+        /// <summary>Event name raised by approve/reject API endpoints to resume a paused workflow.</summary>
+        public const string ExpenseDecision = "expense-decision";
+    }
 }
