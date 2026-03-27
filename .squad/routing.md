@@ -33,6 +33,7 @@ How to decide who handles what.
 | `squad:simone` | Handle transaction, compensation, and truthful failure-path revisions | Simone |
 | `squad:warren` | Handle write-path ordering, response truthfulness, and submission-path revisions | Warren |
 | `squad:graham` | Handle Radius, ACA, secrets, and deployment wiring | Graham |
+| `squad:pete` | Handle bash scripts, az CLI ops, AKS, Dapr components, workload identity, bootstrap/teardown lifecycle | Pete |
 | `squad:karen` | Own test-focused issues or reviewer follow-up | Karen |
 | `squad:eddie` | Own docs, demos, and narrative improvements | Eddie |
 | `squad:copilot` | Assign to @copilot for autonomous work (if enabled) | @copilot 🤖 |

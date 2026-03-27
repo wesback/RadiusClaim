@@ -21,6 +21,7 @@
 | Rory | Backend Consistency Specialist | `.squad/agents/rory/charter.md` | ✅ Active |
 | Simone | Backend Transaction Specialist | `.squad/agents/simone/charter.md` | ✅ Active |
 | Warren | Backend Write-Path Specialist | `.squad/agents/warren/charter.md` | ✅ Active |
+| Pete | Infrastructure Automation Specialist | `.squad/agents/pete/charter.md` | ✅ Active |
 | Scribe | Session Logger | `.squad/agents/scribe/charter.md` | 📋 Silent |
 | Ralph | Work Monitor | — | 🔄 Monitor |
 

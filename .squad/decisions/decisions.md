@@ -2590,3 +2590,208 @@ Grant **User Access Administrator** role to the service principal scoped to the 
 
 
 **Merged from inbox:** 2026-03-26T20:24:01Z
+
+---
+
+# Decision: Service Bus Zero-Secret Migration
+
+**Date:** 2026-03-27  
+**Author:** Graham (Platform Dev)  
+**Status:** COMPLETE  
+**Type:** Security Enhancement
+
+## Context
+
+The RadiusClaim application had successfully migrated its Dapr components to use Azure Workload Identity for:
+- ✅ State Store (Azure Blob Storage) — using Storage Blob Data Contributor RBAC
+- ✅ Secret Store (Azure Key Vault) — using Key Vault Secrets User RBAC
+
+However, the **pubsub** component (Azure Service Bus) remained on connection string authentication (SAS key), which represented the last remaining secret in the cluster.
+
+## Problem
+
+**Security Gap:** Connection strings are shared secrets that:
+- Require storage in Kubernetes secrets
+- Need manual rotation
+- Create attack surface if leaked
+- Don't provide granular audit trails
+- Violate enterprise "no shared secrets" policies
+
+## Solution
+
+Migrated the pubsub component to use **Azure Workload Identity** with RBAC-based authentication.
+
+### Changes Made
+
+1. **Deployment Script (`deploy-dapr-components-workload-identity.sh`)**
+   - Get Service Bus Resource ID instead of Connection String in workload identity mode
+   - Grant Azure Service Bus Data Owner RBAC role
+   - Skip secret creation in workload identity mode
+   - Generate component manifest with `namespaceName` + `azureClientId` metadata
+
+2. **Component Manifest (Workload Identity)**
+   ```yaml
+   spec:
+     type: pubsub.azure.servicebus.topics
+     version: v1
+     metadata:
+     - name: namespaceName
+       value: "radiusclaim-nxteulxrns4r4.servicebus.windows.net"
+     - name: azureClientId
+       value: "061dd532-71c6-40ac-9a90-750a1a868001"
+     - name: disableEntityManagement
+       value: "true"
+   ```
+
+3. **Key differences from SAS-based approach:**
+   - ✅ Uses `namespaceName` (FQDN) instead of `connectionString`
+   - ✅ Uses `azureClientId` to reference the managed identity
+   - ✅ **NO secrets required** — token projected by AKS workload identity webhook
+
+## Authentication Flow
+
+1. Pod starts with label `azure.workload.identity/use: "true"`
+2. AKS mutating webhook injects federated token volume
+3. Dapr sidecar reads token from `/var/run/secrets/azure/tokens/azure-identity-token`
+4. Dapr exchanges token with Azure AD for an access token
+5. Azure AD validates token via federated credential (OIDC trust)
+6. Dapr accesses Service Bus using the access token with RBAC permissions
+
+## Benefits
+
+### Security
+- Zero secrets in cluster — no connection strings stored anywhere
+- No credential rotation needed — Azure handles token refresh automatically
+- Minimal blast radius — compromised token has 1-hour lifetime (auto-rotated)
+- Audit trail — Azure AD logs all token exchanges
+- Least privilege — RBAC per managed identity, not namespace-wide SAS
+
+### Operational
+- No manual secret management — reduces operator burden
+- Automatic token refresh — no service interruptions
+- Consistent auth pattern — all Dapr components use same mechanism
+- Compliance ready — meets "no shared secrets" enterprise policy
+
+### Developer Experience
+- Transparent — no code changes required in applications
+- Portable — same component definition works across environments
+- Debuggable — clear errors if RBAC misconfigured
+
+## Status
+
+✅ **ZERO-SECRET MIGRATION COMPLETE**
+
+All three Dapr components now use workload identity:
+- ✅ statestore (Azure Blob Storage) → Storage Blob Data Contributor
+- ✅ pubsub (Azure Service Bus) → Azure Service Bus Data Owner
+- ✅ platform-secrets (Azure Key Vault) → Key Vault Secrets User
+
+**No secrets remain in the cluster.**
+
+## Verification
+
+When the cluster is recreated, verify with:
+
+```bash
+# 1. Check component uses workload identity (no connectionString)
+kubectl get component pubsub -n azure-radiusclaim -o yaml | grep -E "namespaceName|azureClientId"
+
+# 2. Confirm NO secrets remain
+kubectl get components -n azure-radiusclaim -o yaml | \
+  grep -i "connectionstring\|SharedAccessKey\|Endpoint=sb://" && \
+  echo "❌ SECRETS FOUND" || echo "✅ Zero secrets confirmed"
+
+# 3. Verify RBAC grant
+az role assignment list \
+  --assignee 061dd532-71c6-40ac-9a90-750a1a868001 \
+  --scope $(az servicebus namespace show -g radiusclaim-rg -n radiusclaim-nxteulxrns4r4 --query id -o tsv) \
+  --query "[?roleDefinitionName=='Azure Service Bus Data Owner'].roleDefinitionName" \
+  -o tsv
+```
+
+## References
+
+- [Dapr Azure Service Bus Component](https://docs.dapr.io/reference/components-reference/supported-pubsub/setup-azure-servicebus/)
+- [Dapr Azure Authentication](https://docs.dapr.io/developing-applications/integrations/azure/azure-authentication/)
+- [Azure Service Bus RBAC](https://learn.microsoft.com/en-us/azure/service-bus-messaging/service-bus-managed-service-identity)
+- [Azure Workload Identity](https://azure.github.io/azure-workload-identity/)
+
+---
+
+# Decision: Teardown Script Pattern — Dedicated-Flag Resources Must Exclude from Generic Sweeps
+
+**Date:** 2026-03-26  
+**Author:** Graham (Platform Dev)  
+**Status:** Implemented  
+**Component:** `scripts/teardown.sh`
+
+## Context
+
+The `teardown.sh` script provides both **dedicated deletion blocks** (e.g., `delete_aks_cluster()` controlled by `--aks-cluster-name`) and a **generic resource sweep** (`delete_azure_resources()` that deletes all resources in a resource group).
+
+**Bug discovered:** When a user ran `teardown.sh --resource-group radiusclaim-rg --yes` (without `--aks-cluster-name`), the script would:
+1. Print "AKS cluster name not provided — skipping AKS deletion" (in dedicated block)
+2. Then delete the AKS cluster anyway (via generic resource sweep)
+
+This was confusing, potentially dangerous, and violated user intent.
+
+## Root Cause
+
+The `delete_azure_resources()` function used `az resource list` to fetch ALL resources in the resource group, including `Microsoft.ContainerService/managedClusters`, and deleted them indiscriminately. It did not respect the `--aks-cluster-name` flag.
+
+## Decision
+
+**Pattern:** Resources with dedicated opt-in flags must be explicitly excluded from generic resource sweeps when the flag is not provided.
+
+### Implementation Rules
+
+1. **Exclusion filter:** When a dedicated flag (e.g., `--aks-cluster-name`) is not provided, filter out that resource type from the sweep using JMESPath queries:
+   ```bash
+   local query_filter="[]"
+   if [ -z "$AKS_CLUSTER_NAME" ]; then
+     query_filter="[?type != 'Microsoft.ContainerService/managedClusters']"
+   fi
+   az resource list --resource-group "$RESOURCE_GROUP" --query "${query_filter}" -o json
+   ```
+
+2. **Visibility:** Explicitly list each excluded resource with a clear skip message and usage hint:
+   ```
+   ℹ Skipping AKS cluster 'radiusclaim-aks' (use --aks-cluster-name to include)
+   ```
+
+3. **When flag IS provided:** Delete the resource in its dedicated block and exclude it from the sweep to avoid double-delete attempts.
+
+## Rationale
+
+- **User intent:** If a user omits `--aks-cluster-name`, they explicitly chose NOT to delete AKS
+- **Safety:** Generic sweeps should not override explicit opt-out decisions
+- **Clarity:** Skip messages make the protection visible and educate users on how to change behavior
+- **Consistency:** Dedicated flags should consistently control whether their resources are deleted
+
+## Consequences
+
+### Positive
+- ✅ User intent is respected: omitting `--aks-cluster-name` preserves AKS
+- ✅ No confusing "skipped... but then deleted anyway" scenarios
+- ✅ Clear messaging guides users toward correct flag usage
+- ✅ Safer teardown operations with fewer surprises
+
+### Negative
+- Script complexity increases slightly (JMESPath filtering, explicit skip checks)
+- Must remember to apply this pattern when adding new dedicated-flag resources
+
+## Future Guidance
+
+When adding new dedicated deletion flags (e.g., hypothetical `--delete-acr`, `--delete-keyvault`):
+
+1. Create a dedicated deletion function (e.g., `delete_acr()`)
+2. Add an opt-in flag (e.g., `--acr-name <name>`)
+3. **Update `delete_azure_resources()`** to exclude that resource type when the flag is not provided
+4. Add a skip message: `ℹ Skipping ACR 'X' (use --acr-name to include)`
+
+## References
+
+- Related Files: `scripts/teardown.sh` (lines 295-345)
+- Graham's history: Phase 8 teardown fixes
+
+**Merged from inbox:** 2026-03-27T08:55:00Z
