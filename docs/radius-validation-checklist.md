@@ -6,7 +6,7 @@
 
 > **Start here for the full operator flow:** Use [`docs/end-to-end-setup-walkthrough.md`](./end-to-end-setup-walkthrough.md) if you need the resource-group-to-browser journey. Keep this checklist open as the companion preflight and troubleshooting reference.
 >
-> **First-time cluster prep:** `./scripts/prepare-cluster.sh` owns the cluster boundary (AKS verify/create, `kubectl` context, Dapr, Radius). On a fresh cluster, include `--install-dapr --install-radius`; without them the script only verifies those control planes and stops if they are missing. `./scripts/bootstrap.sh` is the repeatable deploy step after that.
+> **First-time cluster prep:** `./scripts/prepare-cluster.sh` owns the cluster boundary (AKS verify/create, `kubectl` context, Dapr, Radius). On a fresh cluster, include `--install-dapr --install-radius` (and optionally `--create-spn` to provision a fresh service principal). Without them the script only verifies those control planes and stops if they are missing. `./scripts/bootstrap.sh` is the repeatable deploy step after that; use `--create-spn` if refreshing stale Azure credentials.
 
 ---
 

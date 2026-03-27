@@ -299,3 +299,95 @@ All 8 findings from Pete's infrastructure scripts audit were successfully applie
 **Verification:** `bash -n scripts/prepare-cluster.sh` passes.
 
 **PR:** squad/16-ghcr-pull-secret closes #16
+
+### 2026-06-05 -- SP Existence Validation Before Accepting Env Credentials
+
+**Problem:** `prepare-cluster.sh` blindly accepted `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` / `AZURE_TENANT_ID` without verifying the SP exists. When a stale or deleted SP client ID was exported, the script logged a success and continued, only to fail later in `bootstrap.sh`'s `resolve_azure_principal_id()` with a cryptic empty-result error from `az ad sp show`.
+
+**Root cause pattern:** Trusting user-exported env vars at face value. The identity may have been deleted from Azure AD while the env vars lingered in a shell session or CI secret store.
+
+**Fix applied:**
+
+- Added an SP existence check immediately after the three env vars are detected, before the `log_success`.
+- Used the same save/restore pattern already present at lines 432–466 (for the reuse-existing-SP flow): unset the three SP env vars so `az` queries using the operator's own login context (not the SP itself, which may have restricted Graph permissions or no token at all), then restore unconditionally before any early exit.
+- Query: `az ad sp show --id "$_saved_client_id" --query id -o tsv 2>/dev/null || true` — returns empty string on 404, no exception.
+- On empty result: `log_error` + three `log_info` action items + `fail`. Error message names the client ID, the tenant, and the two remediation paths (create new with `--create-spn`, or export valid creds).
+- Happy path (SP exists): proceeds to `log_success` unchanged.
+
+**Key convention:** Always restore env vars *before* calling `fail` — `fail` calls `log_error` and `exit 1` so any restore after it would be dead code. Restore first, check, then fail.
+
+**Verification:** `bash -n scripts/prepare-cluster.sh` passes. Modified section viewed and confirmed correct.
+
+### 2026-06-05 -- Early SP Guard in bootstrap.sh
+
+**Problem:** `bootstrap.sh` calls `resolve_azure_principal_id()` at two separate points (RBAC pre-check and principal resolution before the plan section). When `AZURE_CLIENT_ID` references a deleted/stale SP, both calls emit the "⚠️ Cannot resolve principal ID" stderr block, producing duplicate noise before the script ultimately fails at line 797.
+
+**Root cause:** No early validation of `AZURE_CLIENT_ID` in `bootstrap.sh` main body; `prepare-cluster.sh` has this guard but `bootstrap.sh` can be run directly.
+
+**Fix applied:**
+
+- Added a single SP existence guard immediately before the first `resolve_azure_principal_id` call.
+- Uses the same save/restore pattern as `prepare-cluster.sh` lines 182–192: save the three SP env vars, `unset` them so `az` runs under the operator's own login context, run `az ad sp show`, restore unconditionally before any exit.
+- Variable names prefixed `_sp_guard_` (not `local` — guard is in the script main body, not inside a function).
+- On failure: `log_error` naming the client ID + two `log_info` remediation steps + `fail`. Prevents both downstream `resolve_azure_principal_id` calls from executing.
+- On success: guard exits cleanly, both subsequent calls proceed normally and the SP lookup inside them will succeed.
+- Guards `AZURE_PRINCIPAL_ID` short-circuit: if `AZURE_PRINCIPAL_ID` is already explicitly set, the guard is skipped (it's not needed — `resolve_azure_principal_id` will return it directly without any SP lookup).
+
+**Key convention confirmed:** Restore env vars *before* calling `fail` — never after.
+
+**Verification:** `bash -n scripts/bootstrap.sh` passes.
+
+### 2026-06-06 -- Source-Aware Remediation for Stale SP Guard
+
+**Problem:** When `AZURE_CLIENT_ID` was auto-detected from a stored Radius credential (not set by the user), and that SP no longer exists in Azure AD, the early guard in `bootstrap.sh` emitted "Unset AZURE_CLIENT_ID" — wrong advice because the user never set that variable.
+
+**Root cause:** The guard had a single static error message regardless of whether `AZURE_CLIENT_ID` came from the user's environment or was auto-populated from `rad credential show azure`.
+
+**Fix applied:**
+
+- Before the auto-detection block, check if `AZURE_CLIENT_ID` is already in env and set `_AZURE_CLIENT_ID_SOURCE="env"`.
+- Inside the auto-detection assignment (line ~729), set `_AZURE_CLIENT_ID_SOURCE="radius-credential"`.
+- In the guard failure branch, check `_AZURE_CLIENT_ID_SOURCE`:
+  - `"radius-credential"` → emit stale-Radius-credential message with `rad credential unregister azure` + `--create-spn` re-run instructions.
+  - `"env"` (or unset) → keep original "Unset AZURE_CLIENT_ID" message.
+- `unset _AZURE_CLIENT_ID_SOURCE` in both the failure path and the success path cleanup.
+
+**Key learning:** When a script auto-fills env vars from stored state, track the source of each fill so downstream error messages can give contextually accurate remediation — especially when the fix is completely different depending on who set the value.
+
+**Verification:** `bash -n scripts/bootstrap.sh` passes.
+
+### 2026-06-06 -- SP Guard Restructure: `--create-spn` Wins Over Stale Env Vars
+
+**Problem:** In `scripts/prepare-cluster.sh`, when `AZURE_CLIENT_ID/SECRET/TENANT_ID` were set but stale (SP deleted), the guard always called `fail` — even when `--create-spn` was passed. The flag's intent was completely blocked.
+
+**Root cause:** The original structure restored env vars immediately after the `az ad sp show` check and then unconditionally failed if SP was missing. The `CREATE_SPN` flag was only checked in the `else` branch (no env vars set), so it had no effect when stale vars were present.
+
+**Fix applied:**
+
+- Introduced `_create_new_spn=false` flag before the outer `if`.
+- In the SP-missing branch, now checks `CREATE_SPN`: if `true`, logs a warning, leaves env vars unset, sets `_create_new_spn=true`; if `false`, restores vars and fails with actionable guidance.
+- Moved all SP creation code out of the `else` branch into a separate `if [ "$_create_new_spn" = true ]` block, so both paths (no env vars, or stale env vars + `--create-spn`) share one creation code path without duplication.
+- Fixed a pre-existing bug: `local` keyword used at top-level script scope (inside the `else` branch, not a function) — replaced with plain variable assignments (`_reuse_saved_*`).
+
+**Key learning:** When a flag (`--create-spn`) is intended to override auto-detected or stale state, the flag check must appear *inside* the branch that detects that state — not only in a sibling `else` branch that is never reached. Use a `_create_new_spn`-style flag to unify divergent entry paths into a single implementation block, avoiding code duplication.
+
+**Verification:** `bash -n scripts/prepare-cluster.sh` passes.
+
+### 2026-06-06 -- Add `--create-spn` to bootstrap.sh (Stale Radius Credential Path)
+
+**Problem:** `scripts/bootstrap.sh` auto-detects `AZURE_CLIENT_ID` from the stored Radius credential. When that SP is stale/deleted, the early guard hard-fails with a message telling the user to re-run with `--create-spn` — but bootstrap.sh didn't support that flag at all. It would reject `--create-spn` as an unknown option.
+
+**Root cause:** The `--create-spn` flag and SP creation logic existed only in `prepare-cluster.sh`. The bootstrap error message referenced it but the flag was never added to bootstrap's arg parser or execution flow.
+
+**Fix applied:**
+
+- Added `CREATE_SPN=false` variable initialization alongside other bootstrap flags.
+- Added `--create-spn` to the usage text and argument parsing loop.
+- Modified the early SP existence guard: when `CREATE_SPN=true` and SP is stale, it now warns (instead of failing) and clears `AZURE_CLIENT_ID/SECRET/TENANT_ID` plus `_AZURE_CLIENT_ID_SOURCE` so downstream logic sees no existing creds.
+- Added a full SP creation block (mirroring `prepare-cluster.sh`) between the guard and `resolve_azure_principal_id`. Handles: existing SP by name (reuse-or-suffix prompt), fresh creation with `az ad sp create-for-rbac`, credential output with save warning.
+- Added an `elif` catch: if `AZURE_CLIENT_ID` is empty and `CREATE_SPN=false`, fails early with actionable guidance (covers the case where no creds exist and no flag was passed).
+- Sets `SHOULD_REGISTER_AZURE_CREDENTIAL=true` and `AZURE_CREDENTIAL_REGISTERED=false` after SP creation so the downstream Radius credential registration fires automatically.
+
+**Key learning:** When an error message tells the user to pass a flag, that flag must actually exist in the script. Always trace the full user journey: if the remediation path you advertise isn't implemented, the user hits a second, more confusing error. Cross-script feature parity matters — if both `prepare-cluster.sh` and `bootstrap.sh` can encounter the same stale-SP scenario, both need the `--create-spn` escape hatch.
+
+**Verification:** `bash -n scripts/bootstrap.sh` passes.

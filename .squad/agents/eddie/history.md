@@ -223,3 +223,46 @@ This is **critical** because previously, env var setup was buried in Steps 6–8
 
 ### Learning
 - Architecture docs should open with the "why this combination" question and close with repeatable takeaways. Platform audiences want to know the division of responsibility before they look at diagrams.
+
+## Bootstrap Scripts Documentation Update — `--create-spn` Flag (Current Session)
+
+### Context
+Three fixes were delivered to `bootstrap.sh` and `prepare-cluster.sh`:
+1. **`--create-spn` is now functional in `bootstrap.sh`** — detects stale Azure credentials and creates fresh service principal if flag is passed
+2. **`prepare-cluster.sh` outputs correct next-step command** — includes `--create-spn` in suggested bootstrap command when creating new SP
+3. **jq parse error fixed in `bootstrap.sh`** — handles non-JSON preamble from `rad env show -o json`
+
+### Task
+Audit documentation files to ensure examples and guidance align with the new `--create-spn` capability.
+
+### Changes Made
+
+1. **docs/end-to-end-setup-walkthrough.md**
+   - Line 25: Added `--create-spn` to `prepare-cluster.sh` command in "First deployment" quick start
+   - Line 43: Added `--create-spn` to `bootstrap.sh` command in "First deployment" quick start
+   - Line 91: Added `--create-spn` to `prepare-cluster.sh` command in "Step 1: Prepare Your Cluster"
+   - Line 161: Added `--create-spn` to `bootstrap.sh` command in "Step 2: Deploy the Application"
+
+2. **README.md**
+   - Line 117: Added `--create-spn` to `prepare-cluster.sh` command in "Operator fast path"
+   - Line 125: Added `--create-spn` to `bootstrap.sh` command in "Operator fast path"
+   - Lines 128–130: Added explanatory note: "`--create-spn` required only for first run; use when creating fresh SP or refreshing stale credentials"
+
+3. **docs/radius-validation-checklist.md**
+   - Line 11: Updated intro note to mention `--create-spn` for fresh SP provisioning and stale credential refresh
+
+### Files Verified (No Changes Needed)
+- `docs/phase-1-validation.md` — No bootstrap/prepare-cluster mentions
+- `docs/phase-7-validation-checklist.md` — No bootstrap/prepare-cluster mentions
+- `docs/phase-7-demo-walkthrough.md` — Mentions bootstrap context but no command examples needing update
+- `docs/local-dev.md` — Local Kubernetes path; no bootstrap/prepare-cluster mentions
+
+### Narrative Principle
+Updated docs reflect the actual operator flow:
+- **First deployment:** Both scripts use `--create-spn` (prepare-cluster may detect and create; bootstrap registers/refreshes with Radius)
+- **Subsequent deployments:** `--create-spn` omitted (credentials already provisioned)
+- **Credential refresh:** Add `--create-spn` to bootstrap if Azure creds go stale (e.g., expired secrets, revoked app registration)
+
+### Learning
+- Deployment script documentation must track when flags become functional. The `--create-spn` flag existed in help text but wasn't implemented for months; when it becomes real, examples need quick surgical updates to stay truthful.
+- Command examples are truth claims. One stale example ("run without `--create-spn`") can cost operators 20 minutes of troubleshooting when credentials fail. Keep examples in sync with script capability.

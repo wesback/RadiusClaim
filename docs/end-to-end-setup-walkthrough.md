@@ -27,6 +27,7 @@ RadiusClaim is designed to deploy via **two scripts** that handle the full workf
   --location belgiumcentral \
   --aks-cluster-name radiusclaim-aks \
   --create-aks \
+  --create-spn \
   --install-dapr \
   --install-radius \
   --yes
@@ -35,6 +36,7 @@ RadiusClaim is designed to deploy via **two scripts** that handle the full workf
 # Requires Azure credentials — see "Environment Variables" in the Quick Start below
 ./scripts/bootstrap.sh \
   --resource-group radiusclaim-rg \
+  --create-spn \
   --yes
 ```
 
@@ -93,6 +95,7 @@ Run this once to create or verify your AKS cluster and install Dapr + Radius:
   --location belgiumcentral \
   --aks-cluster-name radiusclaim-aks \
   --create-aks \
+  --create-spn \
   --install-dapr \
   --install-radius \
   --yes
@@ -158,6 +161,7 @@ After cluster prep completes and credentials are set, deploy RadiusClaim:
 ```bash
 ./scripts/bootstrap.sh \
   --resource-group radiusclaim-rg \
+  --create-spn \
   --yes
 ```
 
