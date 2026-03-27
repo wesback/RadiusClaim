@@ -325,6 +325,7 @@ The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys to Ku
 | `AZURE_CLIENT_SECRET` | Azure service principal client secret used when registering Radius Azure credentials in CI | ✅ Yes |
 | `AZURE_TENANT_ID` | Azure tenant ID used when registering Radius Azure credentials in CI | ✅ Yes |
 | `RADIUS_KUBECONFIG` | Raw kubeconfig content for the Kubernetes cluster that hosts Radius and the app workloads | ✅ Yes |
+| `GHCR_TOKEN` | GitHub personal access token with `read:packages` scope -- used by `prepare-cluster.sh` to create the `ghcr-pull-secret` image pull secret so AKS can pull images from `ghcr.io/wesback` | ✅ Yes (for `prepare-cluster.sh`) |
 
 ### Required Repository Variables
 
