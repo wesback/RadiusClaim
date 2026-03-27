@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using RadiusClaim.Contracts;
 using Dapr.Workflow;
+using WorkflowEngine;
 using WorkflowEngine.Activities;
 using WorkflowEngine.Models;
 using WorkflowEngine.Workflows;
@@ -18,6 +19,28 @@ builder.Services.AddDaprWorkflow(options =>
     options.RegisterActivity<ApproveExpenseActivity>();
     options.RegisterActivity<ProcessReimbursementActivity>();
     options.RegisterActivity<PublishNotificationActivity>();
+    options.RegisterActivity<RecordApprovalActivity>();
+    options.RegisterActivity<RejectExpenseActivity>();
+});
+
+// Bind from appsettings.json; override with APPROVAL_THRESHOLD_USD / APPROVAL_TIMEOUT_HOURS env vars if set.
+builder.Services.Configure<ApprovalOptions>(builder.Configuration.GetSection("ApprovalThreshold"));
+builder.Services.PostConfigure<ApprovalOptions>(options =>
+{
+    var rawThreshold = builder.Configuration["APPROVAL_THRESHOLD_USD"];
+    if (!string.IsNullOrEmpty(rawThreshold) &&
+        decimal.TryParse(rawThreshold, System.Globalization.NumberStyles.Any,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsedThreshold))
+    {
+        options.ThresholdUsd = parsedThreshold;
+    }
+
+    var rawTimeout = builder.Configuration["APPROVAL_TIMEOUT_HOURS"];
+    if (!string.IsNullOrEmpty(rawTimeout) &&
+        int.TryParse(rawTimeout, out var parsedTimeout) && parsedTimeout > 0)
+    {
+        options.ManualApprovalTimeoutHours = parsedTimeout;
+    }
 });
 
 var app = builder.Build();
@@ -107,6 +130,77 @@ app.MapGet("/workflows/{instanceId}", async (
     return workflowState?.Exists == true
         ? Results.Ok(ToWorkflowStatusResponse(normalizedInstanceId, workflowState))
         : Results.NotFound();
+});
+
+// POST /workflows/{instanceId}/decide — raises the manual-approval event to resume a paused workflow.
+// Called by expense-api approve/reject endpoints via service invocation.
+app.MapPost("/workflows/{instanceId}/decide", async (
+    string instanceId,
+    ManualDecisionRequest decisionRequest,
+    DaprWorkflowClient workflowClient,
+    ILogger<Program> logger,
+    CancellationToken cancellationToken) =>
+{
+    if (string.IsNullOrWhiteSpace(instanceId))
+    {
+        return Results.ValidationProblem(new Dictionary<string, string[]>
+        {
+            ["instanceId"] = ["Workflow instance id is required."]
+        });
+    }
+
+    var normalizedInstanceId = instanceId.Trim();
+    var workflowState = await workflowClient.GetWorkflowStateAsync(
+        normalizedInstanceId,
+        getInputsAndOutputs: false,
+        cancellationToken);
+
+    if (workflowState?.Exists != true)
+    {
+        return Results.NotFound();
+    }
+
+    if (!workflowState.IsWorkflowRunning)
+    {
+        return Results.Conflict(new
+        {
+            error = "Workflow is not running and cannot accept a decision.",
+            instanceId = normalizedInstanceId,
+            runtimeStatus = workflowState.RuntimeStatus.ToString()
+        });
+    }
+
+    var reason = string.IsNullOrWhiteSpace(decisionRequest.Reason)
+        ? (decisionRequest.Approved ? null : "Manual rejection by approver")
+        : decisionRequest.Reason;
+
+    var decisionEvent = new ManualDecisionEvent(decisionRequest.Approved, reason);
+
+    try
+    {
+        await workflowClient.RaiseEventAsync(
+            normalizedInstanceId,
+            ExpenseApprovalWorkflow.ManualDecisionEventName,
+            decisionEvent,
+            cancellationToken);
+
+        logger.LogInformation(
+            "Decision '{Decision}' raised for workflow '{InstanceId}'.",
+            decisionRequest.Approved ? "Approved" : "Rejected",
+            normalizedInstanceId);
+
+        return Results.Accepted(
+            $"/workflows/{normalizedInstanceId}",
+            new { instanceId = normalizedInstanceId, decision = decisionRequest.Approved ? "Approved" : "Rejected" });
+    }
+    catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+    {
+        logger.LogError(ex, "Failed to raise decision event for workflow '{InstanceId}'.", normalizedInstanceId);
+        return Results.Problem(
+            title: "Decision could not be submitted.",
+            detail: "The manual decision event could not be raised for this workflow instance.",
+            statusCode: StatusCodes.Status500InternalServerError);
+    }
 });
 
 app.MapGet("/", () => TypedResults.Ok(new WorkflowEngineDescriptor(
@@ -237,5 +331,10 @@ internal sealed record WorkflowStatusResponse(
     ExpenseApprovalWorkflowResult? Output,
     ExpenseSubmission? Input,
     string? FailureDetails);
+
+/// <summary>Request body for the POST /workflows/{instanceId}/decide endpoint.</summary>
+internal sealed record ManualDecisionRequest(
+    bool Approved,
+    string? Reason = null);
 
 public partial class Program;

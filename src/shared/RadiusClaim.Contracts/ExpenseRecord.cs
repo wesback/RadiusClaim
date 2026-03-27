@@ -9,4 +9,5 @@ public sealed record ExpenseRecord(
     string Description,
     ExpenseStatus Status,
     DateTimeOffset SubmittedAtUtc,
-    DateTimeOffset LastUpdatedAtUtc);
+    DateTimeOffset LastUpdatedAtUtc,
+    string? RejectionReason = null);
