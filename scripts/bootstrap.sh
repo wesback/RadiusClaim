@@ -188,6 +188,18 @@ while [ $# -gt 0 ]; do
       AKS_CLUSTER_NAME="$2"
       shift 2
       ;;
+    --cluster-name=*)
+      AKS_CLUSTER_NAME="${1#--cluster-name=}"
+      shift
+      ;;
+    --aks-cluster-name)
+      AKS_CLUSTER_NAME="$2"
+      shift 2
+      ;;
+    --aks-cluster-name=*)
+      AKS_CLUSTER_NAME="${1#--aks-cluster-name=}"
+      shift
+      ;;
     --container-registry)
       CONTAINER_REGISTRY="$2"
       shift 2
@@ -1278,7 +1290,7 @@ if [ "$SETUP_WORKLOAD_IDENTITY" = true ]; then
       log_info "AKS cluster '${AKS_CLUSTER_NAME}' not found; using discovered cluster '${discovered}'."
       AKS_CLUSTER_NAME="$discovered"
     else
-      fail "No AKS cluster found in resource group '${RESOURCE_GROUP}'. Pass --aks-cluster-name explicitly."
+      fail "No AKS cluster found in resource group '${RESOURCE_GROUP}'. Pass --cluster-name <name> explicitly."
     fi
   fi
   run_cmd az aks update \
