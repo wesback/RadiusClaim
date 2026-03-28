@@ -194,13 +194,26 @@ jobs:
             --parameters recipeRegistry="$GHCR_PREFIX/recipes" \
             --parameters recipeTag="$IMAGE_TAG"
 
+      - name: Ensure GHCR image pull secret in workload namespace
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          # Pre-create namespace so the secret can be seeded before rad deploy
+          kubectl create namespace "$RADIUS_KUBERNETES_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry ghcr-pull-secret \
+            --docker-server=ghcr.io \
+            --docker-username="${{ github.actor }}" \
+            --docker-password="${{ github.token }}" \
+            -n "$RADIUS_KUBERNETES_NAMESPACE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       - name: Deploy application through Radius to Kubernetes with public expense-api gateway
         run: |
           export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
           ./rad deploy infra/radius/app.bicep \
             --parameters containerRegistry="$GHCR_PREFIX" \
             --parameters imageTag="$IMAGE_TAG" \
-            --parameters deploymentTarget='radius'
+            --parameters deploymentTarget='radius' \
+            --parameters ghcrImagePullRef='ghcr-pull-secret'
 
       - name: Validate Kubernetes wiring through Radius
         run: |
