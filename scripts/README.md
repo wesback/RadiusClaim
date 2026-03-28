@@ -75,7 +75,110 @@ Run `./scripts/bootstrap.sh --resource-group <name>` to deploy the RadiusClaim a
 
 ---
 
+### `build-and-push.sh` (Local Development Build+Push)
+
+**Purpose:** Build and push RadiusClaim service images to GHCR for local development and testing before running `rad deploy`.
+
+**What it does:**
+- Builds all three service images (expense-api, workflow-engine, notification-svc)
+- Tags images with the current git short SHA (or custom tag via `--tag`)
+- Pushes to GHCR (or custom registry via `--registry`)
+- Supports cross-platform builds (e.g., ARM Mac → AKS with `--platform linux/amd64`)
+- Prints the `rad deploy` command to run next
+
+**When to use:**
+- Local development when you need to test image changes before bootstrap
+- Building images for a specific platform (e.g., ARM Mac developers targeting AKS)
+- Testing custom image tags or registry configurations
+
+**Usage:**
+```bash
+./scripts/build-and-push.sh [--registry PREFIX] [--tag TAG] [--platform PLATFORM]
+```
+
+**Examples:**
+```bash
+# Default: auto-detect GHCR registry from git remote, tag with current SHA
+./scripts/build-and-push.sh
+
+# ARM Mac building for AKS (linux/amd64)
+./scripts/build-and-push.sh --platform linux/amd64
+
+# Custom registry and tag
+./scripts/build-and-push.sh \
+  --registry myregistry.azurecr.io/radiusclaim \
+  --tag v1.2.3
+
+# Custom tag only (auto-detect registry)
+./scripts/build-and-push.sh --tag feature-xyz
+```
+
+**Prerequisites:**
+- Docker CLI installed and running
+- Authenticated to target registry:
+  - For GHCR: `docker login ghcr.io` or `echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin`
+  - For ACR: `az acr login --name <registry-name>`
+- Git repository (for auto-detecting registry and SHA)
+
+**Output:**
+After successful push, the script prints the `rad deploy` command with the correct parameters:
+```
+All images pushed. To deploy locally:
+
+  rad deploy infra/radius/app.bicep \
+    --parameters containerRegistry="ghcr.io/owner/radiusclaim" \
+    --parameters imageTag="abc1234" \
+    --parameters deploymentTarget=local
+```
+
+**Local Development Workflow:**
+
+1. **Authenticate to GHCR** (one-time per session):
+   ```bash
+   # Option 1: Use GitHub CLI
+   echo $(gh auth token) | docker login ghcr.io -u $(gh api user --jq .login) --password-stdin
+   
+   # Option 2: Use environment variables
+   echo $GHCR_TOKEN | docker login ghcr.io -u $GHCR_USERNAME --password-stdin
+   ```
+
+2. **Build and push images**:
+   ```bash
+   # ARM Mac users targeting AKS
+   ./scripts/build-and-push.sh --platform linux/amd64
+   
+   # All other cases
+   ./scripts/build-and-push.sh
+   ```
+
+3. **Deploy locally with rad CLI**:
+   ```bash
+   # Use the command printed by build-and-push.sh, or manually specify:
+   rad deploy infra/radius/app.bicep \
+     --parameters containerRegistry="ghcr.io/your-username/radiusclaim" \
+     --parameters imageTag="abc1234" \
+     --parameters deploymentTarget=local
+   ```
+
+4. **Verify deployment**:
+   ```bash
+   kubectl get pods -n radiusclaim-azure-radiusclaim
+   kubectl port-forward -n radiusclaim-azure-radiusclaim svc/expense-api 8080:8080 &
+   ./scripts/validate-deployment.sh http://127.0.0.1:8080
+   ```
+
+**Notes:**
+- Builds use the repository root as Docker context, so Dockerfiles can access shared code
+- Default registry is derived from `git remote get-url origin` (GitHub org/repo → GHCR)
+- Default tag is the current git short SHA (`git rev-parse --short HEAD`)
+- For ARM Mac users: Always use `--platform linux/amd64` when targeting AKS clusters
+- Images are built sequentially, so expect 5-10 minutes for all three services
+
+---
+
 ### `bootstrap.sh` (App Deployment & Component Backfill)
+
+**Purpose:** Deploy the RadiusClaim application, Dapr components, and validate the deployment (replaces manual Steps 7–12 of the end-to-end walkthrough). **Assumes cluster is already prepared** with `prepare-cluster.sh` or equivalent manual setup.
 
 **Purpose:** Deploy the RadiusClaim application, Dapr components, and validate the deployment (replaces manual Steps 7–12 of the end-to-end walkthrough). **Assumes cluster is already prepared** with `prepare-cluster.sh` or equivalent manual setup.
 

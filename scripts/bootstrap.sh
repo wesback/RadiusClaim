@@ -88,6 +88,7 @@ SETUP_WORKLOAD_IDENTITY=false
 RESOURCE_GROUP_CREATED=false
 PORT_FORWARD_PID=""
 VALIDATION_BASE_URL=""
+GHCR_PACKAGES_PRIVATE="${GHCR_PACKAGES_PRIVATE:-false}"
 
 usage() {
   cat <<USAGE
@@ -130,8 +131,9 @@ Required Azure auth env vars when bootstrap must register Radius credentials:
 Optional override for data-plane RBAC:
   AZURE_PRINCIPAL_ID (Microsoft Entra object ID for the client ID above)
 Optional GHCR pull secret (required for private GHCR images on AKS):
-  GHCR_USERNAME  GitHub username for the pull secret (e.g. wesback)
-  GHCR_TOKEN     GitHub PAT with read:packages scope
+  GHCR_USERNAME         GitHub username for the pull secret (e.g. wesback)
+  GHCR_TOKEN            GitHub PAT with read:packages scope
+  GHCR_PACKAGES_PRIVATE Set to "true" if GHCR packages are private (default: false)
 
 Behavior note:
   For Azure-backed platform-secrets, bootstrap preflights the deterministic Key Vault
@@ -298,6 +300,24 @@ fetch_env_id() {
 
 radius_azure_credential_registered() {
   "$RAD_BIN" credential list 2>/dev/null | grep -qi 'azure'
+}
+
+# Determine if a GHCR pull secret is needed based on registry type and privacy setting
+needs_ghcr_pull_secret() {
+  # Using ACR with managed identity — no pull secret needed
+  if echo "${CONTAINER_REGISTRY:-}" | grep -q "azurecr.io"; then
+    return 1
+  fi
+  
+  # Using GHCR but packages are public — no pull secret needed
+  if echo "${CONTAINER_REGISTRY:-}" | grep -q "ghcr.io"; then
+    if [[ "${GHCR_PACKAGES_PRIVATE:-false}" != "true" ]]; then
+      return 1
+    fi
+  fi
+  
+  # Private GHCR or other private registry — pull secret needed
+  return 0
 }
 
 resolve_azure_auth_mode() {
@@ -656,9 +676,14 @@ wait_for_sidecar_log() {
 # Patch the default service account in the workload namespace so Kubernetes uses
 # ghcr-pull-secret for every pod — including those Radius spawns after deploy.
 # This is idempotent: safe to run on every bootstrap and on re-deploys.
-# Skipped silently when GHCR_TOKEN is not set (no private registry creds available).
+# Skipped when pull secret is not needed (public GHCR, ACR with managed identity).
 patch_pull_secret_to_serviceaccount() {
   local namespace="$1"
+
+  # Skip if pull secret is not needed
+  if ! needs_ghcr_pull_secret; then
+    return 0
+  fi
 
   if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
     return 0
@@ -704,6 +729,102 @@ patch_pull_secret_to_serviceaccount() {
   else
     echo "  ✓ No ImagePullBackOff pods found in '${namespace}'"
   fi
+}
+
+# ---------------------------------------------------------------------------
+# Radius stuck-state recovery
+# ---------------------------------------------------------------------------
+# When a previous `rad deploy` times out or is interrupted, Radius may leave
+# container resources in "Updating" (or other in-progress) provisioning states.
+# A subsequent deploy is rejected with HTTP 409 Conflict:
+#   "The target resource is in progress state: Updating."
+# This function detects those stuck resources and deletes them so the next
+# deploy can recreate them cleanly.
+cleanup_stuck_radius_resources() {
+  local app_name="$1"
+  local group_name="$2"
+  local workspace_name="$3"
+
+  if [ "$DRY_RUN" = true ]; then
+    echo "[dry-run] Would check for stuck Radius container resources in group '${group_name}'"
+    return 0
+  fi
+
+  local resource_json
+  resource_json="$("$RAD_BIN" resource list Applications.Core/containers \
+    -g "$group_name" -w "$workspace_name" -o json 2>/dev/null || true)"
+
+  # If we can't list resources (group doesn't exist, no app yet), nothing to clean.
+  if [ -z "$resource_json" ]; then
+    return 0
+  fi
+
+  # Extract valid JSON (rad CLI sometimes prefixes non-JSON output).
+  resource_json="$(echo "$resource_json" | sed -n '/^\[/,$p')"
+  if [ -z "$resource_json" ] || ! echo "$resource_json" | jq empty 2>/dev/null; then
+    return 0
+  fi
+
+  # Find containers whose provisioningState is NOT Succeeded (covers Updating,
+  # Failed, Deleting, or any other non-terminal state).
+  local stuck_resources
+  stuck_resources="$(echo "$resource_json" \
+    | jq -r '.[] | select(.properties.status.outputResources != null) | select(.properties.provisioningState != "Succeeded") | .name // empty' 2>/dev/null || true)"
+
+  if [ -z "$stuck_resources" ]; then
+    return 0
+  fi
+
+  log_warning "Detected Radius container resources in non-ready state — cleaning up before redeploy..."
+  local resource_name
+  while IFS= read -r resource_name; do
+    [ -n "$resource_name" ] || continue
+    local state
+    state="$(echo "$resource_json" \
+      | jq -r --arg n "$resource_name" '.[] | select(.name == $n) | .properties.provisioningState // "unknown"' 2>/dev/null || echo "unknown")"
+    log_info "  Deleting stuck container '${resource_name}' (state: ${state})"
+    "$RAD_BIN" resource delete "Applications.Core/containers/${resource_name}" \
+      -g "$group_name" -w "$workspace_name" --yes 2>/dev/null || true
+  done <<< "$stuck_resources"
+
+  log_success "Stuck resources cleared — rad deploy can proceed."
+}
+
+# Wraps `rad deploy` with automatic recovery from the stuck-state Conflict error.
+# If the first deploy fails with "in progress state", cleans up the stuck
+# resources and retries exactly once.
+rad_deploy_with_recovery() {
+  local deploy_output
+  local deploy_rc=0
+
+  if [ "$DRY_RUN" = true ]; then
+    run_cmd "$RAD_BIN" "$@"
+    return $?
+  fi
+
+  deploy_output="$("$RAD_BIN" "$@" 2>&1)" && deploy_rc=0 || deploy_rc=$?
+
+  if [ "$deploy_rc" -eq 0 ]; then
+    # Print captured output so section log stays consistent.
+    [ -n "$deploy_output" ] && echo "$deploy_output"
+    return 0
+  fi
+
+  # Check if this is the known stuck-state conflict.
+  if echo "$deploy_output" | grep -q "in progress state"; then
+    log_warning "rad deploy failed due to stuck Radius resources (Conflict: in progress state)."
+    log_info "Attempting automatic recovery..."
+
+    cleanup_stuck_radius_resources "$APP_NAME" "$GROUP_NAME" "$WORKSPACE_NAME"
+
+    log_info "Retrying rad deploy..."
+    "$RAD_BIN" "$@"
+    return $?
+  fi
+
+  # Not a stuck-state error — surface the original failure.
+  echo "$deploy_output" >&2
+  return "$deploy_rc"
 }
 
 build_and_push_service() {
@@ -1305,20 +1426,28 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
   if [ "$DRY_RUN" != true ]; then
     kubectl create namespace "$WORKLOAD_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
   fi
-  if kubectl get secret ghcr-pull-secret -n "$WORKLOAD_NAMESPACE" >/dev/null 2>&1; then
-    echo "  ✓ ghcr-pull-secret already exists in $WORKLOAD_NAMESPACE"
-  elif [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USERNAME:-}" ]; then
-    run_cmd kubectl create secret docker-registry ghcr-pull-secret \
-      --docker-server=ghcr.io \
-      --docker-username="${GHCR_USERNAME}" \
-      --docker-password="${GHCR_TOKEN}" \
-      -n "$WORKLOAD_NAMESPACE"
-    echo "  ✓ ghcr-pull-secret created in $WORKLOAD_NAMESPACE"
+  
+  if needs_ghcr_pull_secret; then
+    if kubectl get secret ghcr-pull-secret -n "$WORKLOAD_NAMESPACE" >/dev/null 2>&1; then
+      echo "  ✓ ghcr-pull-secret already exists in $WORKLOAD_NAMESPACE"
+    elif [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USERNAME:-}" ]; then
+      run_cmd kubectl create secret docker-registry ghcr-pull-secret \
+        --docker-server=ghcr.io \
+        --docker-username="${GHCR_USERNAME}" \
+        --docker-password="${GHCR_TOKEN}" \
+        -n "$WORKLOAD_NAMESPACE"
+      echo "  ✓ ghcr-pull-secret created in $WORKLOAD_NAMESPACE"
+    else
+      log_warning "GHCR_USERNAME/GHCR_TOKEN not set — private GHCR images may fail to pull."
+      log_warning "Set GHCR_USERNAME and GHCR_TOKEN before running bootstrap, or create the secret manually:"
+      echo "    kubectl create secret docker-registry ghcr-pull-secret --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT> -n $WORKLOAD_NAMESPACE"
+    fi
   else
-    log_warning "GHCR_USERNAME/GHCR_TOKEN not set — private GHCR images may fail to pull."
-    log_warning "Set GHCR_USERNAME and GHCR_TOKEN before running bootstrap, or create the secret manually:"
-    echo "    kubectl create secret docker-registry ghcr-pull-secret --docker-server=ghcr.io --docker-username=<user> --docker-password=<PAT> -n $WORKLOAD_NAMESPACE"
+    echo "  ℹ Skipping pull secret — using public GHCR or managed identity auth."
   fi
+
+  section "Checking for stuck Radius resources (pre-deploy)"
+  cleanup_stuck_radius_resources "$APP_NAME" "$GROUP_NAME" "$WORKSPACE_NAME"
 
   section "Deploying Radius application"
   APP_DEPLOY_ARGS=(
@@ -1329,9 +1458,14 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
     --parameters "imageTag=${IMAGE_TAG}"
     --parameters "deploymentTarget=${DEPLOYMENT_TARGET}"
     --parameters "useWorkloadIdentity=true"
-    --parameters "ghcrImagePullRef=ghcr-pull-secret"
   )
-  run_cmd "$RAD_BIN" "${APP_DEPLOY_ARGS[@]}"
+  
+  # Only pass ghcrImagePullRef if we need a pull secret
+  if needs_ghcr_pull_secret && [ -n "${GHCR_TOKEN:-}" ] && [ -n "${GHCR_USERNAME:-}" ]; then
+    APP_DEPLOY_ARGS+=(--parameters "ghcrImagePullRef=ghcr-pull-secret")
+  fi
+  
+  rad_deploy_with_recovery "${APP_DEPLOY_ARGS[@]}"
 fi
 
 if [ "$SKIP_APP_DEPLOY" = false ]; then
