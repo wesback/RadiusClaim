@@ -569,3 +569,32 @@ Every subsequent deployment:
 
 ### Status
 ✅ COMPLETE — Dapr CRD projection fully wired via Radius application model
+
+### 2026-01-XX — CI Workflow imagePullSecret Hardening (Issue #34)
+
+**Problem:** `.github/workflows/deploy-azure.yml` pushed service images to GHCR but never created the `ghcr-pull-secret` in the workload namespace before running `rad deploy`. This caused `ImagePullBackOff` errors when GHCR packages were private or authentication was required.
+
+**Root Cause:** The CI workflow copied the pattern from `bootstrap.sh` for building and pushing images but omitted the defensive imagePullSecret creation step and the `--parameters ghcrImagePullRef` flag on `rad deploy`.
+
+**Solution Applied:**
+1. Added a new step "Ensure GHCR image pull secret in workload namespace" between "Deploy Azure-backed Radius environment..." and "Deploy application through Radius..."
+2. This step:
+   - Pre-creates the namespace using `kubectl create namespace --dry-run=client -o yaml | kubectl apply -f -`
+   - Creates `ghcr-pull-secret` using GitHub Actions context (`github.actor` + `github.token`)
+   - Uses `--dry-run=client -o yaml | kubectl apply -f -` for idempotency
+3. Updated the `rad deploy infra/radius/app.bicep` command to include `--parameters ghcrImagePullRef='ghcr-pull-secret'`
+
+**Key Learnings:**
+1. **Defense in depth matters:** Even if the long-term plan is to make GHCR packages public (issue #33), the CI workflow should be hardened to work in both scenarios. This makes the deployment robust against transient auth issues or policy changes.
+
+2. **Timing is critical:** The imagePullSecret creation must happen AFTER the kubeconfig is written (in "Configure Radius workspace...") but BEFORE `rad deploy` runs. The kubeconfig is needed to run kubectl commands.
+
+3. **Idempotency patterns:** Using `--dry-run=client -o yaml | kubectl apply -f -` makes the step safe to run repeatedly, matching the pattern used in `bootstrap.sh`.
+
+4. **Consistency across deployment paths:** This change brings the CI workflow into alignment with the manual deployment path (bootstrap.sh), reducing cognitive load and making troubleshooting easier.
+
+**Deliverables:**
+- Updated `.github/workflows/deploy-azure.yml` with imagePullSecret step
+- PR: #37 (squad/34-fix-deploy-azure-imagepullsecret)
+
+**Status:** ✅ COMPLETE — CI workflow now creates imagePullSecret defensively before rad deploy
