@@ -81,15 +81,9 @@ var defaultSecretStoreParams = {
 
 // When the backing includes explicit parameters (e.g., local recipes), use them verbatim.
 // Otherwise fall back to the Azure-computed defaults to preserve backwards compatibility.
-var stateStoreRecipeParams = contains(stateStoreBacking, 'parameters')
-  ? stateStoreBacking.parameters
-  : defaultStateStoreParams
-var pubsubRecipeParams = contains(pubsubBacking, 'parameters')
-  ? pubsubBacking.parameters
-  : defaultPubsubParams
-var secretStoreRecipeParams = contains(secretStoreBacking, 'parameters')
-  ? secretStoreBacking.parameters
-  : defaultSecretStoreParams
+var stateStoreRecipeParams = stateStoreBacking.?parameters ?? defaultStateStoreParams
+var pubsubRecipeParams = pubsubBacking.?parameters ?? defaultPubsubParams
+var secretStoreRecipeParams = secretStoreBacking.?parameters ?? defaultSecretStoreParams
 var workloadIdentityPodLabels = useWorkloadIdentity == 'true' ? { 'azure.workload.identity/use': 'true' } : {}
 var pullSecrets = empty(ghcrImagePullRef) ? [] : [{ name: ghcrImagePullRef }]
 var publicGatewayHost = empty(publicGatewayHostname)

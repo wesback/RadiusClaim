@@ -83,6 +83,8 @@ SKIP_APP_DEPLOY=false
 SKIP_COMPONENT_REFRESH=false
 SHOULD_REGISTER_AZURE_CREDENTIAL=false
 SHOULD_PUBLISH_RECIPES=false
+CREATE_SPN=false
+SETUP_WORKLOAD_IDENTITY=false
 RESOURCE_GROUP_CREATED=false
 PORT_FORWARD_PID=""
 VALIDATION_BASE_URL=""
@@ -112,6 +114,8 @@ Optional:
   --recipe-tag <tag>            Radius recipe tag (default: same as --image-tag)
   --image-platform <platform>   Use docker buildx for a target platform (e.g. linux/amd64)
   --azure-auth-mode <mode>      Azure credential auth mode: auto, sp, or wi (default: ${AZURE_AUTH_MODE})
+  --create-spn                  Create an Azure service principal for Radius (skipped if valid credentials exist)
+  --setup-workload-identity     Enable OIDC issuer and workload identity on the AKS cluster (requires az CLI)
   --validation-url <url>        Explicit expense-api base URL for validation
   --skip-recipes                Skip recipe publishing even if artifacts look stale
   --skip-image-push             Skip Docker build/push for service images
@@ -214,6 +218,14 @@ while [ $# -gt 0 ]; do
       SKIP_RECIPES=true
       shift
       ;;
+    --create-spn)
+      CREATE_SPN=true
+      shift
+      ;;
+    --setup-workload-identity)
+      SETUP_WORKLOAD_IDENTITY=true
+      shift
+      ;;
     --skip-image-push)
       SKIP_IMAGE_PUSH=true
       shift
@@ -273,11 +285,15 @@ rad_app_exists() {
 }
 
 fetch_env_namespace() {
-  "$RAD_BIN" env show "$ENV_NAME" -o json 2>/dev/null | jq -r '.properties.compute.namespace // empty'
+  "$RAD_BIN" env show "$ENV_NAME" -o json 2>/dev/null \
+    | sed -n '/^{/,$p' \
+    | jq -r '.properties.compute.namespace // empty' 2>/dev/null || true
 }
 
 fetch_env_id() {
-  "$RAD_BIN" env show "$ENV_NAME" -o json 2>/dev/null | jq -r '.id // empty'
+  "$RAD_BIN" env show "$ENV_NAME" -o json 2>/dev/null \
+    | sed -n '/^{/,$p' \
+    | jq -r '.id // empty' 2>/dev/null || true
 }
 
 radius_azure_credential_registered() {
@@ -356,6 +372,74 @@ current_secret_store_recipe_name() {
 check_recipe_artifact_access() {
   local artifact_name="$1"
   docker manifest inspect "${RECIPE_REGISTRY}/${artifact_name}:${RECIPE_TAG}" >/dev/null 2>&1
+}
+
+# Test if a recipe OCI artifact is accessible WITHOUT credentials (anonymous access).
+# This mirrors what the Radius operator sees: it runs in radius-system with no Docker
+# login, so private packages cause a 401 at deploy time even if the user can pull them.
+check_recipe_anonymous_access() {
+  local artifact_name="$1"
+  local tmpdir
+  tmpdir=$(mktemp -d)
+  printf '{}' > "$tmpdir/config.json"
+  local result=0
+  DOCKER_CONFIG="$tmpdir" docker manifest inspect "${RECIPE_REGISTRY}/${artifact_name}:${RECIPE_TAG}" >/dev/null 2>&1 || result=$?
+  rm -rf "$tmpdir"
+  return $result
+}
+
+# Verify that all recipe OCI artifacts are publicly accessible (no credentials needed).
+# Radius's applications-rp operator pulls Bicep recipe artifacts using the ORAS Go library,
+# which runs inside the Kubernetes pod with no Docker credentials. Private GHCR packages
+# therefore always result in a 401 at deploy time — there is no supported Helm value or
+# rad CLI flag to supply OCI credentials to the operator.
+#
+# The correct solution for a demo/development project is to make the GHCR recipe packages
+# public. Recipe artifacts contain only Bicep templates — no secrets or credentials.
+# See docs/adr/ghcr-recipe-packages-public.md for the full rationale.
+#
+# GitHub does NOT provide a REST API to change container package visibility; it must be
+# done once via the GitHub web UI per-package.
+require_public_recipe_access() {
+  if [ "${DRY_RUN:-false}" = true ]; then
+    log_info "Dry run — skipping OCI artifact public-access check."
+    return 0
+  fi
+
+  local private_packages=()
+  for artifact in state-store pubsub secrets; do
+    if ! check_recipe_anonymous_access "$artifact"; then
+      private_packages+=("$artifact")
+    fi
+  done
+
+  if [ ${#private_packages[@]} -eq 0 ]; then
+    log_success "  ✓ All recipe OCI artifacts are publicly accessible."
+    return 0
+  fi
+
+  # Extract owner from registry path, e.g. ghcr.io/wesback/radiusclaim/recipes → wesback
+  local registry_owner
+  registry_owner=$(echo "${RECIPE_REGISTRY}" | cut -d'/' -f2)
+
+  log_error "The following recipe OCI packages are private and Radius cannot pull them:"
+  for artifact in "${private_packages[@]}"; do
+    log_error "  • ${RECIPE_REGISTRY}/${artifact}:${RECIPE_TAG}"
+  done
+  log_error ""
+  log_error "Recipe packages must be public. They contain only Bicep templates — no secrets."
+  log_error "Make them public once via the GitHub web UI (Settings → Change visibility → Public):"
+  log_error ""
+  for artifact in "${private_packages[@]}"; do
+    local pkg_path
+    pkg_path=$(echo "${RECIPE_REGISTRY#*/}" | sed "s|/|%2F|g")
+    pkg_path="${pkg_path}%2F${artifact}"
+    log_error "  https://github.com/users/${registry_owner}/packages/container/${pkg_path}/settings"
+  done
+  log_error ""
+  log_error "After making the packages public, re-run bootstrap."
+
+  fail "Recipe OCI artifacts are private. Make them public in the GitHub web UI (URLs above) and re-run."
 }
 
 resolve_app_secret_vault_name() {
@@ -569,15 +653,83 @@ wait_for_sidecar_log() {
   fail "Dapr sidecar for '${deployment}' did not report '${needle}'."
 }
 
+# Patch the default service account in the workload namespace so Kubernetes uses
+# ghcr-pull-secret for every pod — including those Radius spawns after deploy.
+# This is idempotent: safe to run on every bootstrap and on re-deploys.
+# Skipped silently when GHCR_TOKEN is not set (no private registry creds available).
+patch_pull_secret_to_serviceaccount() {
+  local namespace="$1"
+
+  if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
+    return 0
+  fi
+
+  if [ "$DRY_RUN" = true ]; then
+    log_info "[dry-run] Would patch default service account in '${namespace}' with ghcr-pull-secret."
+    return 0
+  fi
+
+  # Radius may recreate the namespace on re-deploy, clearing any pre-deploy secrets.
+  # Re-create the secret here (post-deploy) to guarantee it exists before patching SA.
+  if ! kubectl get secret ghcr-pull-secret -n "$namespace" >/dev/null 2>&1; then
+    log_info "Re-creating ghcr-pull-secret in '${namespace}' (cleared by Radius namespace lifecycle)."
+    kubectl create secret docker-registry ghcr-pull-secret \
+      --docker-server=ghcr.io \
+      --docker-username="${GHCR_USERNAME}" \
+      --docker-password="${GHCR_TOKEN}" \
+      -n "$namespace" >/dev/null
+  fi
+
+  # Patch is a merge — if imagePullSecrets already contains the entry, kubectl is a no-op.
+  local current
+  current="$(kubectl get sa default -n "$namespace" -o jsonpath='{.imagePullSecrets}' 2>/dev/null || echo '')"
+  if echo "$current" | grep -q "ghcr-pull-secret"; then
+    echo "  ✓ default service account in '${namespace}' already has ghcr-pull-secret"
+  else
+    kubectl patch serviceaccount default -n "$namespace" \
+      --patch '{"imagePullSecrets":[{"name":"ghcr-pull-secret"}]}' >/dev/null
+    echo "  ✓ Patched default service account in '${namespace}' with imagePullSecrets: ghcr-pull-secret"
+  fi
+
+  # Evict pods stuck in ImagePullBackOff — they won't self-heal once the SA is patched
+  # unless they are rescheduled.  Deletion triggers immediate recreation.
+  local stuck_pods
+  stuck_pods="$(kubectl get pods -n "$namespace" -o json 2>/dev/null \
+    | jq -r '.items[] | select(.status.containerStatuses[]?.state.waiting.reason == "ImagePullBackOff") | .metadata.name' \
+    || true)"
+  if [ -n "$stuck_pods" ]; then
+    echo "  Deleting ImagePullBackOff pods so they restart with updated credentials:"
+    echo "$stuck_pods" | xargs kubectl delete pod -n "$namespace" --ignore-not-found >/dev/null
+    echo "  ✓ Stuck pods deleted"
+  else
+    echo "  ✓ No ImagePullBackOff pods found in '${namespace}'"
+  fi
+}
+
 build_and_push_service() {
   local service_name="$1"
   local dockerfile_path="$2"
   local image_ref="${CONTAINER_REGISTRY}/${service_name}:${IMAGE_TAG}"
 
-  if [ -n "$IMAGE_PLATFORM" ]; then
+  # Auto-detect platform mismatch: if IMAGE_PLATFORM is not set, check whether
+  # the local build host arch differs from the cluster node arch. AKS always runs
+  # linux/amd64; building on Apple Silicon (arm64) without --platform produces an
+  # arm64 image that AKS nodes cannot run ("no match for platform in manifest").
+  local effective_platform="$IMAGE_PLATFORM"
+  if [ -z "$effective_platform" ]; then
+    local host_arch cluster_arch
+    host_arch="$(uname -m)"
+    cluster_arch="$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}' 2>/dev/null || true)"
+    if [ "$host_arch" = "arm64" ] && [ "$cluster_arch" = "amd64" ]; then
+      effective_platform="linux/amd64"
+      log_info "Auto-detected platform mismatch (host: arm64, cluster: amd64). Building for linux/amd64."
+    fi
+  fi
+
+  if [ -n "$effective_platform" ]; then
     run_cmd docker buildx build \
       --file "$dockerfile_path" \
-      --platform "$IMAGE_PLATFORM" \
+      --platform "$effective_platform" \
       --tag "$image_ref" \
       --push \
       "$REPO_ROOT"
@@ -656,6 +808,31 @@ actionable_file "$REPO_ROOT/infra/radius/environments/azure-radius.parameters.js
 actionable_file "$REPO_ROOT/infra/radius/recipes/azure/state-store.bicep"
 rad_version_check
 
+# Auto-populate GHCR credentials from the gh CLI when available.
+# These are needed for:
+#   1. Publishing recipe Bicep artifacts to GHCR (docker login in publish-radius-recipes.sh)
+#   2. Creating ghcr-pull-secret so Kubernetes can pull application container images
+# Note: recipe OCI artifacts must be PUBLIC so Radius can pull them without credentials.
+#       See require_public_recipe_access() and docs/adr/ghcr-recipe-packages-public.md.
+if echo "${RECIPE_REGISTRY}" | grep -q "ghcr.io"; then
+  if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+      GHCR_USERNAME="${GHCR_USERNAME:-$(gh api user --jq '.login' 2>/dev/null || true)}"
+      GHCR_TOKEN="${GHCR_TOKEN:-$(gh auth token 2>/dev/null || true)}"
+      if [ -n "${GHCR_USERNAME:-}" ] && [ -n "${GHCR_TOKEN:-}" ]; then
+        log_info "Auto-populated GHCR credentials from 'gh' CLI (user: ${GHCR_USERNAME})."
+      fi
+    fi
+  fi
+  if [ -z "${GHCR_TOKEN:-}" ] || [ -z "${GHCR_USERNAME:-}" ]; then
+    log_warning "GHCR_TOKEN and/or GHCR_USERNAME are not set."
+    log_warning "These are needed to publish recipes and create the app image pull secret."
+    log_warning "Set them or authenticate with 'gh auth login' to auto-populate:"
+    log_warning "  export GHCR_USERNAME=<github-username>"
+    log_warning "  export GHCR_TOKEN=<PAT-with-write:packages>"
+  fi
+fi
+
 AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv 2>/dev/null)"
 AZURE_SUBSCRIPTION_NAME="$(az account show --query name -o tsv 2>/dev/null)"
 AZURE_TENANT_ID_CURRENT="$(az account show --query tenantId -o tsv 2>/dev/null)"
@@ -712,6 +889,9 @@ if radius_azure_credential_registered; then
   # Auto-fill AZURE_CLIENT_ID / AZURE_TENANT_ID from existing credential when not set.
   # This lets operators re-run bootstrap with user-identity az login without
   # exporting every SP env var by hand.
+  if [ -n "${AZURE_CLIENT_ID:-}" ]; then
+    _AZURE_CLIENT_ID_SOURCE="env"
+  fi
   if [ -z "${AZURE_CLIENT_ID:-}" ] || [ -z "${AZURE_TENANT_ID:-}" ]; then
     _rad_cred_json="$("$RAD_BIN" credential show azure -o json 2>/dev/null | sed -n '/^{/,$p' || true)"
     if [ -n "$_rad_cred_json" ]; then
@@ -723,6 +903,7 @@ if radius_azure_credential_registered; then
         .AzureCredentials.WorkloadIdentity.TenantID // empty' 2>/dev/null || true)"
       if [ -z "${AZURE_CLIENT_ID:-}" ] && [ -n "$_cred_client_id" ]; then
         AZURE_CLIENT_ID="$_cred_client_id"
+        _AZURE_CLIENT_ID_SOURCE="radius-credential"
         log_info "Auto-detected AZURE_CLIENT_ID from existing Radius credential: ${AZURE_CLIENT_ID}"
       fi
       if [ -z "${AZURE_TENANT_ID:-}" ] && [ -n "$_cred_tenant_id" ]; then
@@ -734,6 +915,179 @@ if radius_azure_credential_registered; then
   fi
 else
   AZURE_CREDENTIAL_REGISTERED=false
+fi
+
+# Early guard: if AZURE_CLIENT_ID is set and AZURE_PRINCIPAL_ID is not, verify the
+# service principal actually exists before calling resolve_azure_principal_id.
+# Without this, a stale AZURE_CLIENT_ID causes the duplicate "⚠️ Cannot resolve"
+# warning block to appear twice (once per resolve_azure_principal_id call below).
+if [ -n "${AZURE_CLIENT_ID:-}" ] && [ -z "${AZURE_PRINCIPAL_ID:-}" ]; then
+  _sp_guard_saved_client_id="${AZURE_CLIENT_ID}"
+  _sp_guard_saved_client_secret="${AZURE_CLIENT_SECRET:-}"
+  _sp_guard_saved_tenant_id="${AZURE_TENANT_ID:-}"
+  unset AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
+
+  _sp_guard_result="$(az ad sp show --id "$_sp_guard_saved_client_id" --query id -o tsv 2>/dev/null || true)"
+
+  export AZURE_CLIENT_ID="$_sp_guard_saved_client_id"
+  export AZURE_CLIENT_SECRET="$_sp_guard_saved_client_secret"
+  export AZURE_TENANT_ID="$_sp_guard_saved_tenant_id"
+  unset _sp_guard_saved_client_id _sp_guard_saved_client_secret _sp_guard_saved_tenant_id
+
+  if [ -z "$_sp_guard_result" ]; then
+    unset _sp_guard_result
+    if [ "$CREATE_SPN" = true ]; then
+      # --create-spn was passed — warn about the stale creds and clear them so
+      # the SP creation block below starts with a clean slate.
+      if [ "${_AZURE_CLIENT_ID_SOURCE:-}" = "radius-credential" ]; then
+        log_warning "Radius credential references a stale SP '${AZURE_CLIENT_ID}'. It will be replaced by a new service principal."
+      else
+        log_warning "Service principal '${AZURE_CLIENT_ID}' does not exist. Ignoring stale credentials and creating a new service principal..."
+      fi
+      unset AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
+      _AZURE_CLIENT_ID_SOURCE=""
+      AZURE_CREDENTIAL_REGISTERED=false
+    elif [ "${_AZURE_CLIENT_ID_SOURCE:-}" = "radius-credential" ]; then
+      log_error "The Radius credential stored for this workspace references a stale or deleted service principal."
+      log_info  "  SP ID '${AZURE_CLIENT_ID}' no longer exists in the current Azure AD tenant."
+      log_info  "  To fix this:"
+      log_info  "    1. Clear the stale credential:"
+      log_info  "         rad credential unregister azure"
+      log_info  "    2. Re-run bootstrap with --create-spn to register a fresh service principal:"
+      log_info  "         ./scripts/bootstrap.sh --create-spn [other flags]"
+      unset _AZURE_CLIENT_ID_SOURCE
+      fail "Cannot resolve the Microsoft Entra principal — service principal does not exist."
+    else
+      log_error "Service principal '${AZURE_CLIENT_ID}' does not exist in the current Azure AD tenant."
+      log_info  "This AZURE_CLIENT_ID is stale or from a different tenant. Unset it and re-run."
+      log_info  "To fix this:"
+      log_info  "  1. Unset AZURE_CLIENT_ID (and AZURE_CLIENT_SECRET / AZURE_TENANT_ID) and re-run."
+      log_info  "  2. Or export credentials for a service principal that exists in the current tenant:"
+      log_info  "       az ad sp list --show-mine --query '[].appId' -o tsv"
+      unset _AZURE_CLIENT_ID_SOURCE
+      fail "Cannot resolve the Microsoft Entra principal — service principal does not exist."
+    fi
+  fi
+  unset _sp_guard_result _AZURE_CLIENT_ID_SOURCE
+fi
+
+# SP creation block — runs when --create-spn is passed and no valid AZURE_CLIENT_ID
+# is set (either cleared by the stale guard above, or never set in the first place).
+if [ -z "${AZURE_CLIENT_ID:-}" ] && [ "$CREATE_SPN" = true ]; then
+  section "Creating Azure service principal"
+  log_info "Creating Azure service principal for Radius"
+  log_info "Radius requires a service principal to provision Azure-backed recipe resources."
+
+  SPN_NAME="radiusclaim-radius-sp"
+  EXISTING_APP_ID="$(az ad sp list --display-name "$SPN_NAME" --query "[0].appId" -o tsv 2>/dev/null || true)"
+
+  if [ -n "$EXISTING_APP_ID" ]; then
+    log_warning "Service principal '${SPN_NAME}' already exists (App ID: ${EXISTING_APP_ID})"
+    log_info "You can reuse it by exporting AZURE_CLIENT_ID and AZURE_CLIENT_SECRET,"
+    log_info "or create a new one with a timestamp suffix."
+
+    if ! prompt_confirm "Create a new service principal with timestamp suffix instead?"; then
+      log_info "Ensuring existing service principal has Contributor role..."
+
+      _reuse_saved_client_id="${AZURE_CLIENT_ID:-}"
+      _reuse_saved_client_secret="${AZURE_CLIENT_SECRET:-}"
+      _reuse_saved_tenant_id="${AZURE_TENANT_ID:-}"
+      unset AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
+
+      SUBSCRIPTION_SCOPE="/subscriptions/${AZURE_SUBSCRIPTION_ID}"
+      if az role assignment create \
+        --assignee "$EXISTING_APP_ID" \
+        --role Contributor \
+        --scope "$SUBSCRIPTION_SCOPE" \
+        --output none 2>/dev/null; then
+        log_success "Role assignment: Contributor on subscription ${AZURE_SUBSCRIPTION_ID}"
+      else
+        if az role assignment list \
+          --assignee "$EXISTING_APP_ID" \
+          --role Contributor \
+          --scope "$SUBSCRIPTION_SCOPE" \
+          --query "[0].id" -o tsv >/dev/null 2>&1; then
+          log_success "Role assignment: Contributor already exists on subscription ${AZURE_SUBSCRIPTION_ID}"
+        else
+          export AZURE_CLIENT_ID="$_reuse_saved_client_id"
+          export AZURE_CLIENT_SECRET="$_reuse_saved_client_secret"
+          export AZURE_TENANT_ID="$_reuse_saved_tenant_id"
+          fail "Failed to verify or assign Contributor role to service principal. Check Azure permissions."
+        fi
+      fi
+
+      export AZURE_CLIENT_ID="$_reuse_saved_client_id"
+      export AZURE_CLIENT_SECRET="$_reuse_saved_client_secret"
+      export AZURE_TENANT_ID="$_reuse_saved_tenant_id"
+      unset _reuse_saved_client_id _reuse_saved_client_secret _reuse_saved_tenant_id
+
+      log_error "Cannot proceed without service principal credentials."
+      echo ""
+      echo "To reuse the existing service principal, export these environment variables:"
+      echo "  export AZURE_CLIENT_ID='${EXISTING_APP_ID}'"
+      echo "  export AZURE_CLIENT_SECRET='<your-secret>'"
+      echo "  export AZURE_TENANT_ID='$(az account show --query tenantId -o tsv)'"
+      echo ""
+      echo "Then re-run this script."
+      exit 1
+    fi
+
+    SPN_NAME="${SPN_NAME}-$(date +%Y%m%d-%H%M%S)"
+  else
+    if ! prompt_confirm "Create service principal '${SPN_NAME}' now?"; then
+      log_error "Service principal creation declined."
+      echo ""
+      echo "To create a service principal manually, run:"
+      echo "  az ad sp create-for-rbac --name '${SPN_NAME}' --role Contributor --scopes /subscriptions/${AZURE_SUBSCRIPTION_ID}"
+      echo ""
+      echo "Then export these environment variables and re-run this script:"
+      echo "  export AZURE_CLIENT_ID='<appId>'"
+      echo "  export AZURE_CLIENT_SECRET='<password>'"
+      echo "  export AZURE_TENANT_ID='<tenant>'"
+      exit 1
+    fi
+  fi
+
+  log_info "Creating service principal '${SPN_NAME}'..."
+  SPN_JSON="$(az ad sp create-for-rbac \
+    --name "$SPN_NAME" \
+    --role Contributor \
+    --scopes "/subscriptions/${AZURE_SUBSCRIPTION_ID}" \
+    --output json)" || fail "Failed to create service principal."
+
+  log_success "Role assignment: Contributor on subscription ${AZURE_SUBSCRIPTION_ID}"
+
+  export AZURE_CLIENT_ID="$(printf '%s' "$SPN_JSON" | jq -r '.appId')"
+  export AZURE_CLIENT_SECRET="$(printf '%s' "$SPN_JSON" | jq -r '.password')"
+  export AZURE_TENANT_ID="$(printf '%s' "$SPN_JSON" | jq -r '.tenant')"
+
+  [ -n "$AZURE_CLIENT_ID" ] || fail "Failed to parse AZURE_CLIENT_ID from service principal response."
+  [ -n "$AZURE_CLIENT_SECRET" ] || fail "Failed to parse AZURE_CLIENT_SECRET from service principal response."
+  [ -n "$AZURE_TENANT_ID" ] || fail "Failed to parse AZURE_TENANT_ID from service principal response."
+
+  echo ""
+  log_warning "⚠️  SAVE THESE CREDENTIALS NOW — the client secret cannot be retrieved again."
+  echo ""
+  echo "Service principal created:"
+  echo "  Name            : ${SPN_NAME}"
+  echo "  AZURE_CLIENT_ID : ${AZURE_CLIENT_ID}"
+  echo "  AZURE_CLIENT_SECRET : ${AZURE_CLIENT_SECRET}"
+  echo "  AZURE_TENANT_ID : ${AZURE_TENANT_ID}"
+  echo ""
+  echo "Add them to your shell profile or a .env file (excluded from git):"
+  echo "  export AZURE_CLIENT_ID='${AZURE_CLIENT_ID}'"
+  echo "  export AZURE_CLIENT_SECRET='${AZURE_CLIENT_SECRET}'"
+  echo "  export AZURE_TENANT_ID='${AZURE_TENANT_ID}'"
+  echo ""
+
+  log_success "Service principal configured for this session"
+  SHOULD_REGISTER_AZURE_CREDENTIAL=true
+  AZURE_CREDENTIAL_REGISTERED=false
+elif [ -z "${AZURE_CLIENT_ID:-}" ] && [ "$CREATE_SPN" = false ]; then
+  # No AZURE_CLIENT_ID and no --create-spn — can't continue
+  fail "Azure service principal credentials are not set.
+Pass --create-spn to create one automatically, or export:
+  AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID"
 fi
 
 AZURE_PRINCIPAL_ID_FOR_RBAC="$(resolve_azure_principal_id)"
@@ -791,6 +1145,32 @@ if kubectl get namespace "$WORKLOAD_NAMESPACE" >/dev/null 2>&1 && kubectl get co
 fi
 
 AZURE_AUTH_MODE_RESOLVED="$(resolve_azure_auth_mode)"
+
+# Enable OIDC issuer + workload identity on AKS if requested (must run before
+# credential registration so the cluster is ready for wi mode).
+if [ "$SETUP_WORKLOAD_IDENTITY" = true ]; then
+  section "Enabling OIDC issuer and workload identity on AKS cluster"
+  # Auto-discover the cluster name if the configured default doesn't exist.
+  if ! az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" &>/dev/null; then
+    discovered="$(az aks list --resource-group "$RESOURCE_GROUP" --query '[0].name' -o tsv 2>/dev/null || true)"
+    if [ -n "$discovered" ]; then
+      log_info "AKS cluster '${AKS_CLUSTER_NAME}' not found; using discovered cluster '${discovered}'."
+      AKS_CLUSTER_NAME="$discovered"
+    else
+      fail "No AKS cluster found in resource group '${RESOURCE_GROUP}'. Pass --aks-cluster-name explicitly."
+    fi
+  fi
+  run_cmd az aks update \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$AKS_CLUSTER_NAME" \
+    --enable-oidc-issuer \
+    --enable-workload-identity
+  # Force wi mode if not already set
+  if [ "$AZURE_AUTH_MODE" = "auto" ]; then
+    AZURE_AUTH_MODE="wi"
+    AZURE_AUTH_MODE_RESOLVED="wi"
+  fi
+fi
 test -n "${AZURE_CLIENT_ID:-}" || fail "AZURE_CLIENT_ID is required for the Microsoft Entra statestore path."
 test -n "${AZURE_TENANT_ID:-}" || fail "AZURE_TENANT_ID is required for the Microsoft Entra statestore path."
 AZURE_PRINCIPAL_ID_RESOLVED="$(resolve_azure_principal_id)"
@@ -855,6 +1235,9 @@ if [ "$SHOULD_PUBLISH_RECIPES" = true ]; then
   section "Publishing Radius recipes"
   run_cmd env RAD_BIN="$RAD_BIN" "$SCRIPT_DIR/publish-radius-recipes.sh" "$RECIPE_REGISTRY" "$RECIPE_TAG"
 fi
+
+section "Verifying recipe OCI artifacts are publicly accessible"
+require_public_recipe_access
 
 section "Deploying Radius environment"
 
@@ -952,8 +1335,11 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
 fi
 
 if [ "$SKIP_APP_DEPLOY" = false ]; then
-  section "Waiting for workloads"
+  section "Wiring GHCR pull secret to service account"
   wait_for_namespace "$WORKLOAD_NAMESPACE"
+  patch_pull_secret_to_serviceaccount "$WORKLOAD_NAMESPACE"
+
+  section "Waiting for workloads"
   wait_for_deployment expense-api
   wait_for_deployment workflow-engine
   wait_for_deployment notification-svc

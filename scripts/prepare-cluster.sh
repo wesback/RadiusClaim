@@ -405,36 +405,77 @@ AZURE_SUBSCRIPTION_NAME="$(az account show --query name -o tsv 2>/dev/null)"
 
 # Service Principal for Radius Azure provider
 section "Azure Service Principal for Radius"
+
+_create_new_spn=false
+
 if [ -n "${AZURE_CLIENT_ID:-}" ] && [ -n "${AZURE_CLIENT_SECRET:-}" ] && [ -n "${AZURE_TENANT_ID:-}" ]; then
-  log_success "Using existing Azure service principal credentials (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)"
+  log_info "Verifying service principal exists in Azure AD (AZURE_CLIENT_ID=${AZURE_CLIENT_ID})"
+
+  # Save/restore pattern so az runs under operator's own login
+  _saved_client_id="${AZURE_CLIENT_ID}"
+  _saved_client_secret="${AZURE_CLIENT_SECRET}"
+  _saved_tenant_id="${AZURE_TENANT_ID}"
+  unset AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
+
+  _sp_exists="$(az ad sp show --id "$_saved_client_id" --query id -o tsv 2>/dev/null || true)"
+
+  if [ -n "$_sp_exists" ]; then
+    # Restore and use existing valid credentials
+    export AZURE_CLIENT_ID="$_saved_client_id"
+    export AZURE_CLIENT_SECRET="$_saved_client_secret"
+    export AZURE_TENANT_ID="$_saved_tenant_id"
+    log_success "Using existing Azure service principal credentials (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)"
+  else
+    if [ "$CREATE_SPN" = true ]; then
+      log_warning "Service principal '${_saved_client_id}' does not exist. Ignoring stale credentials and creating a new service principal..."
+      # Leave env vars unset so the creation block starts clean
+      _create_new_spn=true
+    else
+      # Restore env vars before failing so the environment is left consistent
+      export AZURE_CLIENT_ID="$_saved_client_id"
+      export AZURE_CLIENT_SECRET="$_saved_client_secret"
+      export AZURE_TENANT_ID="$_saved_tenant_id"
+      log_error "Service principal '${AZURE_CLIENT_ID}' does not exist in the current Azure AD tenant."
+      log_info  "The AZURE_CLIENT_ID you exported references a stale or deleted service principal."
+      log_info  "To fix this, either:"
+      log_info  "  1. Unset AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / AZURE_TENANT_ID and re-run"
+      log_info  "     with --create-spn to create a fresh service principal."
+      log_info  "  2. Export credentials for a service principal that exists in tenant '${_saved_tenant_id}'."
+      fail "Cannot proceed with a non-existent service principal."
+    fi
+  fi
 else
+  _create_new_spn=true
+fi
+
+if [ "$_create_new_spn" = true ]; then
   if [ "$CREATE_SPN" = false ]; then
     fail "Azure service principal credentials are not set.
 Pass --create-spn to create one automatically, or export:
   AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID"
   fi
-  
+
   log_info "Creating Azure service principal for Radius"
   log_info "Radius requires a service principal to provision Azure-backed recipe resources."
-  
+
   # Check if SPN already exists by name
   SPN_NAME="radiusclaim-radius-sp"
   EXISTING_APP_ID="$(az ad sp list --display-name "$SPN_NAME" --query "[0].appId" -o tsv 2>/dev/null || true)"
-  
+
   if [ -n "$EXISTING_APP_ID" ]; then
     log_warning "Service principal '${SPN_NAME}' already exists (App ID: ${EXISTING_APP_ID})"
     log_info "You can reuse it by exporting AZURE_CLIENT_ID and AZURE_CLIENT_SECRET,"
     log_info "or create a new one with a timestamp suffix."
-    
+
     if ! prompt_confirm "Create a new service principal with timestamp suffix instead?"; then
       log_info "Ensuring existing service principal has Contributor role..."
-      
+
       # Temporarily unset SPN env vars so az uses the user's own login
-      local saved_client_id="${AZURE_CLIENT_ID:-}"
-      local saved_client_secret="${AZURE_CLIENT_SECRET:-}"
-      local saved_tenant_id="${AZURE_TENANT_ID:-}"
+      _reuse_saved_client_id="${AZURE_CLIENT_ID:-}"
+      _reuse_saved_client_secret="${AZURE_CLIENT_SECRET:-}"
+      _reuse_saved_tenant_id="${AZURE_TENANT_ID:-}"
       unset AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
-      
+
       # Verify/assign Contributor role on subscription (idempotent)
       SUBSCRIPTION_SCOPE="/subscriptions/${AZURE_SUBSCRIPTION_ID}"
       if az role assignment create \
@@ -453,18 +494,18 @@ Pass --create-spn to create one automatically, or export:
           log_success "Role assignment: Contributor already exists on subscription ${AZURE_SUBSCRIPTION_ID}"
         else
           # Restore env vars before exiting
-          export AZURE_CLIENT_ID="$saved_client_id"
-          export AZURE_CLIENT_SECRET="$saved_client_secret"
-          export AZURE_TENANT_ID="$saved_tenant_id"
+          export AZURE_CLIENT_ID="$_reuse_saved_client_id"
+          export AZURE_CLIENT_SECRET="$_reuse_saved_client_secret"
+          export AZURE_TENANT_ID="$_reuse_saved_tenant_id"
           fail "Failed to verify or assign Contributor role to service principal. Check Azure permissions."
         fi
       fi
-      
+
       # Restore SPN env vars
-      export AZURE_CLIENT_ID="$saved_client_id"
-      export AZURE_CLIENT_SECRET="$saved_client_secret"
-      export AZURE_TENANT_ID="$saved_tenant_id"
-      
+      export AZURE_CLIENT_ID="$_reuse_saved_client_id"
+      export AZURE_CLIENT_SECRET="$_reuse_saved_client_secret"
+      export AZURE_TENANT_ID="$_reuse_saved_tenant_id"
+
       log_error "Cannot proceed without service principal credentials."
       echo ""
       echo "To reuse the existing service principal, export these environment variables:"
@@ -475,7 +516,7 @@ Pass --create-spn to create one automatically, or export:
       echo "Then re-run this script."
       exit 1
     fi
-    
+
     # Create new SPN with timestamp suffix
     SPN_NAME="${SPN_NAME}-$(date +%Y%m%d-%H%M%S)"
   else
@@ -492,7 +533,7 @@ Pass --create-spn to create one automatically, or export:
       exit 1
     fi
   fi
-  
+
   # Create the service principal
   log_info "Creating service principal '${SPN_NAME}'..."
   SPN_JSON="$(az ad sp create-for-rbac \
@@ -500,18 +541,18 @@ Pass --create-spn to create one automatically, or export:
     --role Contributor \
     --scopes "/subscriptions/${AZURE_SUBSCRIPTION_ID}" \
     --output json)" || fail "Failed to create service principal."
-  
+
   log_success "Role assignment: Contributor on subscription ${AZURE_SUBSCRIPTION_ID}"
-  
+
   # Parse and export credentials
   export AZURE_CLIENT_ID="$(printf '%s' "$SPN_JSON" | jq -r '.appId')"
   export AZURE_CLIENT_SECRET="$(printf '%s' "$SPN_JSON" | jq -r '.password')"
   export AZURE_TENANT_ID="$(printf '%s' "$SPN_JSON" | jq -r '.tenant')"
-  
+
   [ -n "$AZURE_CLIENT_ID" ] || fail "Failed to parse AZURE_CLIENT_ID from service principal response."
   [ -n "$AZURE_CLIENT_SECRET" ] || fail "Failed to parse AZURE_CLIENT_SECRET from service principal response."
   [ -n "$AZURE_TENANT_ID" ] || fail "Failed to parse AZURE_TENANT_ID from service principal response."
-  
+
   # Print prominent warning with credentials
   echo ""
   log_warning "⚠️  SAVE THESE CREDENTIALS NOW — the client secret cannot be retrieved again."
@@ -527,7 +568,7 @@ Pass --create-spn to create one automatically, or export:
   echo "  export AZURE_CLIENT_SECRET='${AZURE_CLIENT_SECRET}'"
   echo "  export AZURE_TENANT_ID='${AZURE_TENANT_ID}'"
   echo ""
-  
+
   log_success "Service principal configured for this session"
 fi
 
@@ -589,7 +630,11 @@ if [ -n "$GHCR_TOKEN" ]; then
 else
   echo "GHCR pull secret   : skipped -- set GHCR_TOKEN or pass --ghcr-token"
 fi
-echo "Next command       : ./scripts/bootstrap.sh --resource-group ${RESOURCE_GROUP} --yes"
+if [ "$CREATE_SPN" = true ]; then
+  echo "Next command       : ./scripts/bootstrap.sh --resource-group ${RESOURCE_GROUP} --create-spn --yes"
+else
+  echo "Next command       : ./scripts/bootstrap.sh --resource-group ${RESOURCE_GROUP} --yes"
+fi
 
 if [ "$DRY_RUN" = true ]; then
   log_info "Dry run complete. Re-run without --dry-run to execute the plan."

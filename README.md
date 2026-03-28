@@ -116,15 +116,18 @@ Radius generates the Kubernetes manifests and Dapr component specs — no hand-w
   --resource-group radiusclaim-rg \
   --aks-cluster-name radiusclaim-aks \
   --create-aks \
+  --create-spn \
   --install-dapr \
   --install-radius \
   --yes
 
-./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
+./scripts/bootstrap.sh --resource-group radiusclaim-rg --create-spn --yes
 
 # Later deployments on the same prepared cluster
 ./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
 ```
+
+> **Note on `--create-spn`:** This flag is required only when creating a fresh service principal for the first time. Both `prepare-cluster.sh` and `bootstrap.sh` support it. Use `--create-spn` on the first run of either script; subsequent deployments to the same cluster do not need the flag. If you have stale or expired Azure credentials in the cluster, adding `--create-spn` to `bootstrap.sh` will detect and replace them.
 
 **Dapr component backfill (required after first deployment):** Radius may report `Applications.Dapr/*` resources as Succeeded without projecting `components.dapr.io` CRDs into Kubernetes. After `rad deploy infra/radius/app.bicep`, verify components exist in the workload namespace (`kubectl get components.dapr.io -n radiusclaim-azure-radiusclaim`). If missing, run `./scripts/deploy-dapr-components.sh --resource-group <rg> --namespace radiusclaim-azure-radiusclaim` to backfill. See the [end-to-end walkthrough](./docs/end-to-end-setup-walkthrough.md) Step 9a for details.
 

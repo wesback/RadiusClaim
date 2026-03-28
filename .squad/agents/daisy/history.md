@@ -224,3 +224,35 @@ Create local dev recipes (would complete portability story).
 ### Status
 
 ✅ COMPLETE — Audit report merged into `.squad/decisions.md`
+
+---
+
+## 2026-03-28: GHCR ImagePullBackOff Deep Dive
+
+### What happened
+Wesley hit `ImagePullBackOff` / `401 Unauthorized` on all three services during local Radius deployment. All pods failed to pull from `ghcr.io/wesback/radiusclaim/*:2f18c7b`.
+
+### Investigation findings
+
+1. **Repo is PUBLIC, but service image packages are PRIVATE.** Confirmed via `gh api /user/packages`. Recipe packages (`recipes/state-store`, `pubsub`, `secrets`) are public — someone set those manually. Service images (`expense-api`, `workflow-engine`, `notification-svc`) were never made public.
+
+2. **`deploy-azure.yml` has no pull secret logic.** The CI workflow builds/pushes images (line 122-136) but never creates a Kubernetes `imagePullSecret` or passes `ghcrImagePullRef` to `rad deploy`. Compare with `bootstrap.sh` which does both (lines 1398-1431).
+
+3. **No local dev image build script.** `bootstrap.sh` has `build_and_push_service()` (line 805) but it's a full Azure bootstrap — overkill for local iteration. No lightweight build-and-push exists.
+
+4. **Pull secret code in bootstrap.sh is dead for ACR path.** Confirmed pre-existing finding from portability audit. Also now dead for public GHCR path.
+
+### Decision
+Made packages public (decision: `.squad/decisions/inbox/daisy-ghcr-auth-strategy.md`). Public reference sample should have zero auth ceremony for image pulls.
+
+### Issues created
+- **#33** (P0) — Make GHCR service image packages public → `squad:pete`
+- **#34** (P1) — Fix CI workflow missing pull secret / public package verification → `squad:graham`
+- **#35** (P1) — Add local dev build-and-push script → `squad:graham`
+- **#36** (P2) — Make pull secret logic conditional in bootstrap.sh → `squad:graham`
+
+### Learnings
+- GHCR package visibility is per-package, not per-repo. Must explicitly set each package public.
+- `gh api /user/packages?package_type=container` is the fastest way to audit package visibility.
+- The `imagePullSecrets` plumbing in `app.bicep` → `container-service.bicep` is well-designed (conditional via `pullSecrets` variable), just not needed for public packages.
+- Always check both the infra wiring AND the registry visibility when debugging pull failures.

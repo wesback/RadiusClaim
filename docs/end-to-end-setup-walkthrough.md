@@ -27,6 +27,7 @@ RadiusClaim is designed to deploy via **two scripts** that handle the full workf
   --location belgiumcentral \
   --aks-cluster-name radiusclaim-aks \
   --create-aks \
+  --create-spn \
   --install-dapr \
   --install-radius \
   --yes
@@ -35,6 +36,8 @@ RadiusClaim is designed to deploy via **two scripts** that handle the full workf
 # Requires Azure credentials — see "Environment Variables" in the Quick Start below
 ./scripts/bootstrap.sh \
   --resource-group radiusclaim-rg \
+  --create-spn \
+  --setup-workload-identity \
   --yes
 ```
 
@@ -42,6 +45,8 @@ RadiusClaim is designed to deploy via **two scripts** that handle the full workf
 ```bash
 ./scripts/bootstrap.sh --resource-group radiusclaim-rg --yes
 ```
+
+> **Note for macOS users:** If building on Apple Silicon (arm64) for an amd64 AKS cluster, bootstrap auto-detects the mismatch and sets `--image-platform linux/amd64` automatically. You may also pass it explicitly: `--image-platform linux/amd64`.
 
 **That's it.** No manual `az` commands, no `rad` CLI orchestration, no hand-written YAML. The scripts validate, configure, and deploy everything.
 
@@ -93,6 +98,7 @@ Run this once to create or verify your AKS cluster and install Dapr + Radius:
   --location belgiumcentral \
   --aks-cluster-name radiusclaim-aks \
   --create-aks \
+  --create-spn \
   --install-dapr \
   --install-radius \
   --yes
@@ -134,7 +140,14 @@ export AZURE_PRINCIPAL_ID="<service-principal-object-id>"
 export AZURE_CLIENT_ID="<managed-identity-client-id>"
 export AZURE_TENANT_ID="<your-azure-tenant-id>"
 
-# Workload identity mode: no client secret needed
+# On fresh clusters, first enable OIDC issuer and workload identity on the AKS cluster:
+./scripts/bootstrap.sh \
+  --resource-group radiusclaim-rg \
+  --azure-auth-mode wi \
+  --setup-workload-identity \
+  --yes
+
+# On subsequent deployments (once the cluster is configured):
 ./scripts/bootstrap.sh \
   --resource-group radiusclaim-rg \
   --azure-auth-mode wi \
@@ -158,6 +171,8 @@ After cluster prep completes and credentials are set, deploy RadiusClaim:
 ```bash
 ./scripts/bootstrap.sh \
   --resource-group radiusclaim-rg \
+  --create-spn \
+  --setup-workload-identity \
   --yes
 ```
 
