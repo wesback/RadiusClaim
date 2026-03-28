@@ -380,6 +380,44 @@ Store the returned `clientId`, `clientSecret`, and `tenantId` as GitHub secrets 
 - Self-managed Kubernetes + Radius with Azure recipes
 - Self-managed Kubernetes + Radius with custom recipes (backings remain local or cloud-specific based on recipe choice)
 
+### Using a Private Container Registry
+
+The three service images (`expense-api`, `workflow-engine`, `notification-svc`) are **public on GHCR by default**. This is intentional: RadiusClaim is a reference sample designed for zero-friction demos and learning. Every engineer who clones the repo can `rad deploy` without credential ceremony — focus stays on Dapr + Radius, not registry authentication.
+
+Teams taking this to production with private images have a clear escape hatch:
+
+**Step 1 — Make your GHCR packages private** (via GitHub UI or API)
+
+**Step 2 — Create a pull secret in your Kubernetes namespace:**
+
+```bash
+kubectl create secret docker-registry ghcr-pull-secret \
+  --docker-server=ghcr.io \
+  --docker-username=YOUR_GITHUB_USERNAME \
+  --docker-password=YOUR_GHCR_PAT \
+  -n YOUR_NAMESPACE
+```
+
+Your PAT must have `read:packages` scope.
+
+**Step 3 — Pass `ghcrImagePullRef` when deploying:**
+
+```bash
+rad deploy infra/radius/app.bicep \
+  --parameters imageTag=$(git rev-parse --short HEAD) \
+  --parameters ghcrImagePullRef='ghcr-pull-secret'
+```
+
+**Step 4 — For `bootstrap.sh` users, set `GHCR_PACKAGES_PRIVATE=true`:**
+
+```bash
+GHCR_PACKAGES_PRIVATE=true ./scripts/bootstrap.sh \
+  --resource-group radiusclaim-rg \
+  --yes
+```
+
+**Note:** The CI workflow (`deploy-azure.yml`) already defensively creates `ghcr-pull-secret` on every run using the GitHub Actions token — no extra configuration is needed for private packages in CI. If your images are private, the workflow will use the secret automatically.
+
 ---
 
 ## Quick Start (Local Dev)
