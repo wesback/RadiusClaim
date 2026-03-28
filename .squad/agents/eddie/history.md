@@ -58,6 +58,7 @@
 - **Two-path framing prevents docs from fighting themselves.** A walkthrough that teaches AND serves as a runbook fails at both. Splitting "learning path" from "just make it work" means the bootstrap script can land without rewriting the walkthrough.
 - **Named service accounts require named patches.** Radius creates per-container SAs (expense-api, workflow-engine, notification-svc). Patching `default` is a no-op. This was wrong in the checklist and would have caused real pull-secret debugging pain.
 - **Namespace confusion is the second most common operator mistake.** Explicit variable definitions (`ENVIRONMENT_NAMESPACE`, `WORKLOAD_NAMESPACE`) with role comments at the top of the checklist prevent copy-paste accidents across sections.
+- **Conditional section headers remove operator confusion.** When a section is "only needed if you DON'T use feature X," rename the header to say so explicitly (not just "Required"). Add a prominent note at the top saying "skip this if...". Operators skim; unconditional phrasing makes them set up credentials they don't need, then wonder why the script ignores them.
 
 ### Key File Paths
 - `docs/end-to-end-setup-walkthrough.md` — primary operator guide

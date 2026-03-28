@@ -25,6 +25,34 @@ last_updated: 2026-03-25T19:48:57Z
 
 ---
 
+## Learnings
+
+### 2026-03-27T17:15:00Z — GHCR imagePullSecrets Gap Analysis
+
+**Context:** Local Radius deployment (`/planes/radius/local/`) failed with `401 Unauthorized / ImagePullBackOff` for all three GHCR service images despite `bootstrap.sh` passing `--parameters "ghcrImagePullRef=ghcr-pull-secret"`.
+
+**Finding:** The Radius Bicep infrastructure is **correct and complete**:
+- `app.bicep` declares `ghcrImagePullRef` param, constructs `pullSecrets` array, passes it to all three container modules
+- `container-service.bicep` accepts `imagePullSecrets` array, merges it into `runtimes.kubernetes.pod.spec`
+- `bootstrap.sh` creates the GHCR secret before `rad deploy` and passes the param
+
+**The gap:** Not in the Bicep wiring — the issue is either:
+1. `rad deploy` not honoring the app-level param (CLI bug or param passing issue)
+2. Secret not present in the namespace when pods were created (timing)
+3. Namespace mismatch between where the secret was created and where Radius deployed
+
+**Learning:** Environment Bicep files (`local.bicep`, `azure-radius.bicep`) define Radius environment resources — they don't flow application-level params like `ghcrImagePullRef`. App params flow directly from `rad deploy` → `app.bicep` → container modules. The param path is correct; the failure is runtime/operational, not infrastructure design.
+
+**Verification documented:** Provided kubectl commands to check deployed pod specs and confirm whether imagePullSecrets reached the pods. Next step is operator verification of actual deployed state.
+
+**Files analyzed:**
+- `infra/radius/app.bicep` (lines 27-28, 88, 174, 205, 233)
+- `infra/radius/modules/container-service.bicep` (lines 36-40, 67-73)
+- `infra/radius/environments/local.bicep` (entire file — no app params, by design)
+- `scripts/bootstrap.sh` (lines 1400-1431 — secret creation + param passing)
+
+---
+
 ## 2026-03-26T22:35:00Z — Workload Identity Implementation Complete
 
 ### Request

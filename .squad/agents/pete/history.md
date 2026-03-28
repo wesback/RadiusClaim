@@ -430,3 +430,218 @@ whether `runtimes.kubernetes.pod.spec.imagePullSecrets` actually reaches the gen
 and, if so, whether a Radius schema fix could replace the SA patch long-term.
 
 **Verification:** `bash -n scripts/bootstrap.sh` passes.
+
+### 2026-06-07 — Radius Stuck-State Recovery: Pre-Deploy Cleanup and Deploy Retry
+
+**Problem:** When a previous `rad app deploy` times out (context deadline exceeded) or is
+interrupted, Radius leaves container resources (expense-api, workflow-engine, notification-svc)
+stuck in `Updating` provisioningState. Re-running `rad deploy` is immediately rejected with
+HTTP 409 Conflict: `"The target resource is in progress state: Updating."` — blocking all
+subsequent deploys until the stuck resources are manually deleted.
+
+**Root cause:** Radius does not automatically recover resources from in-progress states after
+a failed/timed-out deployment. The control plane treats them as still being modified and rejects
+new operations. This is a known Radius limitation — there is no `rad resource reset` or
+force-deploy flag.
+
+**Recovery mechanism:** Deleting the stuck container resources with `rad resource delete` clears
+the state. On the next `rad deploy`, Radius recreates them from scratch using the bicep definition.
+Individual container deletes are preferred over `rad app delete` (too destructive — removes the
+entire app and all its resources, including non-stuck ones).
+
+**Fix applied — two new functions in `scripts/bootstrap.sh`:**
+
+1. **`cleanup_stuck_radius_resources(app_name, group_name, workspace_name)`**
+   - Runs `rad resource list Applications.Core/containers -g ... -w ... -o json`
+   - Parses JSON to find containers where `provisioningState != "Succeeded"`
+   - Deletes each stuck container individually with `rad resource delete ... --yes`
+   - Idempotent: no-op when no containers exist or all are in Succeeded state
+   - Handles missing groups, empty responses, and non-JSON prefixes gracefully
+   - Logs each deletion with the resource name and stuck state
+
+2. **`rad_deploy_with_recovery(deploy_args...)`**
+   - Captures `rad deploy` stdout+stderr
+   - On success: prints output, returns 0
+   - On failure: checks if output contains "in progress state"
+     - If yes: calls `cleanup_stuck_radius_resources`, retries deploy exactly once
+     - If no: surfaces original error, returns original exit code
+   - Dry-run aware: delegates to `run_cmd` when `DRY_RUN=true`
+
+**Call sites in bootstrap main body:**
+- Added `section "Checking for stuck Radius resources (pre-deploy)"` + call to
+  `cleanup_stuck_radius_resources` before the deploy, as a proactive pre-flight check
+- Replaced `run_cmd "$RAD_BIN" "${APP_DEPLOY_ARGS[@]}"` with
+  `rad_deploy_with_recovery "${APP_DEPLOY_ARGS[@]}"` — reactive retry if pre-check missed it
+
+**Design decisions:**
+- Discovery-based, not hardcoded: uses `rad resource list` output, so any container resource
+  stuck in any non-Succeeded state is caught — not just the three known service names
+- Two-layer defense: pre-deploy check catches most cases; retry wrapper catches race conditions
+  where state changes between the check and the deploy
+- Individual deletes over app-level nuke: preserves non-stuck resources and avoids cascade
+- Single retry: if the retry also fails, it's a different problem — let it surface
+
+## Learnings
+
+### 2026-06-07 — Radius Stuck-State is a Deployment Lifecycle Gap
+
+Radius (as of 0.55.0) has no built-in mechanism to recover from in-progress provisioning states
+after a failed or timed-out deployment. When `rad deploy` fails mid-operation:
+- Container resources remain in `Updating` (or `Failed`) provisioningState
+- Subsequent deploys are rejected with `409 Conflict`
+- The only recovery path is `rad resource delete` on individual stuck resources
+- `rad app delete` works but is overkill — it removes everything, not just the stuck ones
+- There is no `rad resource reset`, `--force` flag, or automatic state reconciliation
+
+**Detection:** `rad resource list Applications.Core/containers -g <group> -w <workspace> -o json`
+→ parse `.properties.provisioningState` — anything other than `Succeeded` is stuck.
+
+**Recovery:** `rad resource delete Applications.Core/containers/<name> -g <group> -w <workspace> --yes`
+→ removes the stuck resource so `rad deploy` recreates it cleanly from bicep.
+
+**Key pattern:** Pre-deploy health check + post-failure retry wrapper provides two layers of
+defense. The pre-check handles the common case (re-running after a previous failure); the retry
+handles the edge case (state changes between check and deploy).
+
+**Verification:** `bash -n scripts/bootstrap.sh` passes.
+
+### 2026-03-28 — GHCR Image Pull Secret Gaps Investigation
+
+**Context:** Deployment failed with `401 Unauthorized / ImagePullBackOff` for all three service
+images (`ghcr.io/wesback/radiusclaim/{notification-svc,workflow-engine,expense-api}:2f18c7b`).
+The deployment is a local Radius deployment. Tag `2f18c7b` is a 7-char git SHA (confirmed exists).
+
+**Task:** Investigate scripts, CI workflows, and Dockerfiles to identify exact gaps for local
+dev workflow and CI pipeline.
+
+**Files investigated:**
+- All scripts in `scripts/` directory
+- All three Dockerfiles: `src/expense-api/Dockerfile`, `src/workflow-engine/Dockerfile`, `src/notification-svc/Dockerfile`
+- `.github/workflows/deploy-azure.yml` (focus on image build/push step)
+- `.github/workflows/squad-ci.yml`
+- `.squad/decisions.md`
+- `DAPR_COMPONENT_DEPLOYMENT_STATUS.md`
+- `infra/radius/app.bicep` (ghcrImagePullRef parameter usage)
+
+**Findings — CI Workflow Gaps (deploy-azure.yml):**
+
+1. **Image build/push step works correctly** (lines 119-136)
+   - Authenticates to GHCR with `docker login ghcr.io` using `github.token`
+   - Builds all three images with correct Dockerfile paths
+   - Pushes to GHCR successfully with tags `$GHCR_PREFIX/$service_name:$IMAGE_TAG`
+
+2. **Missing: imagePullSecret creation step**
+   - Should be added after line 196 (Deploy Azure-backed Radius environment)
+   - Must run before line 197 (Deploy application through Radius)
+   - Required command: `kubectl create secret docker-registry ghcr-pull-secret --docker-server=ghcr.io --docker-username="${{ github.actor }}" --docker-password="${{ github.token }}" --namespace="$RADIUS_KUBERNETES_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -`
+
+3. **Missing: ghcrImagePullRef parameter on rad deploy**
+   - Line 200-203: `rad deploy` command missing `--parameters ghcrImagePullRef="ghcr-pull-secret"`
+   - Current: only passes `containerRegistry`, `imageTag`, `deploymentTarget`
+   - Required: add `--parameters ghcrImagePullRef="ghcr-pull-secret"`
+
+**Findings — Local Developer Workflow Gaps:**
+
+1. **No local build/push script exists**
+   - Scripts present: `bootstrap.sh`, `prepare-cluster.sh`, `deploy-dapr-components-workload-identity.sh`, `deploy-dapr-components.sh`, `publish-radius-recipes.sh`, `teardown.sh`, `validate-deployment.sh`
+   - Missing: `scripts/build-push-images.sh` — no documented way to build and push images locally
+
+2. **Local developers cannot:**
+   - Build service images locally
+   - Push images to GHCR with proper authentication
+   - Create imagePullSecret in local Kubernetes cluster
+   - Deploy with pull secret reference
+
+**Dockerfiles:**
+- ✅ All three exist at expected paths
+- ✅ All use correct multi-stage build structure
+- ✅ All copy `RadiusClaim.slnx`, `global.json`, and required project references
+- ✅ Build context is repository root (correct for all three)
+
+**app.bicep:**
+- Parameter `ghcrImagePullRef` exists with default empty string (line 28)
+- Used in line 88: `var pullSecrets = empty(ghcrImagePullRef) ? [] : [{ name: ghcrImagePullRef }]`
+- Empty default means Kubernetes attempts anonymous pull → 401 for private GHCR packages
+
+**Root cause:**
+- GHCR packages under `ghcr.io/wesback/radiusclaim/*` are private by default
+- CI builds and pushes images successfully
+- Pods attempt anonymous pull (no imagePullSecret configured)
+- Kubernetes returns `ImagePullBackOff` with `401 Unauthorized`
+
+**Recommended scripts to create:**
+
+1. **`scripts/build-push-images.sh`** — Build and push service images to GHCR
+   - Requires: `docker`, `gh` CLI (or `GHCR_TOKEN` env var)
+   - Accepts: optional tag (defaults to current git SHA)
+   - Authenticates with GHCR using GitHub token
+   - Builds all three services in parallel
+   - Outputs: Instructions for creating imagePullSecret and deploying
+
+2. **Consider: `scripts/create-ghcr-pull-secret.sh`** — Create/update GHCR pull secret in namespace
+   - Requires: `kubectl`, `gh` CLI (or `GHCR_TOKEN` env var)
+   - Idempotent: uses `--dry-run=client | kubectl apply`
+   - Namespace: accepts `--namespace` or defaults to current Radius namespace
+
+**Exact CI workflow fixes required:**
+
+1. Add imagePullSecret creation step (after line 196):
+   ```yaml
+   - name: Create GHCR pull secret in Kubernetes namespace
+     run: |
+       export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+       kubectl create secret docker-registry ghcr-pull-secret \
+         --docker-server=ghcr.io \
+         --docker-username="${{ github.actor }}" \
+         --docker-password="${{ github.token }}" \
+         --namespace="$RADIUS_KUBERNETES_NAMESPACE" \
+         --dry-run=client -o yaml | kubectl apply -f -
+   ```
+
+2. Update rad deploy command (line 200-203) to include:
+   ```bash
+   --parameters ghcrImagePullRef="ghcr-pull-secret"
+   ```
+
+**Report written:** `.squad/decisions/inbox/pete-image-push-gaps.md`
+- Complete gap analysis with line references
+- Exact commands for CI fixes
+- Template for local build script
+- Confidence level: HIGH (all gaps identified with tested solutions)
+
+## Learnings
+
+### 2026-03-28 — GHCR Image Pull Secret is a Two-Part Wiring
+
+Container registries require two-part authentication wiring for private images on Kubernetes:
+1. **Kubernetes secret creation** — `kubectl create secret docker-registry` with registry credentials
+2. **Pod imagePullSecrets reference** — either in pod spec or service account `imagePullSecrets` field
+
+When the secret creation step is missing:
+- Kubernetes attempts anonymous pull
+- Private registries (GHCR, Docker Hub, ACR, etc.) return `401 Unauthorized`
+- Pod enters `ImagePullBackOff` loop
+
+When the bicep parameter is missing:
+- Secret exists in cluster but pods don't reference it
+- Same `ImagePullBackOff` symptom
+
+Both must be present for private images to work.
+
+**CI workflow pattern:**
+- Build/push images to registry
+- Create registry pull secret in target namespace (idempotent)
+- Pass secret name as deployment parameter
+- Deployment tool (Radius, Helm, kubectl) injects secret reference into pod spec
+
+**Local dev pattern:**
+- Build images locally (or use pre-pushed tags)
+- Create pull secret with personal credentials
+- Deploy with same parameter
+
+**Key insight:** The `app.bicep` parameter `ghcrImagePullRef` defaults to empty string,
+which makes it *opt-in* for private registries. This is safe (public images work without secrets)
+but requires explicit configuration when using private registries.
+
+**Verification:** All Dockerfiles present, image build working, parameter exists — only missing
+the secret creation + parameter passing steps.
