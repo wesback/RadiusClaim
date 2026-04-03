@@ -42,7 +42,8 @@ param context object
 @description('Azure region for the Key Vault. Supplied by environment recipe parameters.')
 param location string
 
-// tenantId is sourced from Azure context (tenant().tenantId)
+@description('Azure AD tenant ID. Extracted from subscription context when not explicitly provided.')
+param tenantId string = subscription().tenantId
 
 @description('Optional random suffix for non-deterministic naming (dev/demo environments). If provided, replaces uniqueString generation.')
 param randomNameSuffix string = ''
@@ -67,7 +68,7 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   name: vaultName
   location: location
   properties: {
-    tenantId: tenant().tenantId
+    tenantId: tenantId
     sku: {
       family: 'A'
       name: 'standard'
