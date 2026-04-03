@@ -63,9 +63,6 @@ param daprBackings object = {
   }
 }
 
-@description('Object (principal) ID of the managed identity Dapr sidecars use to access Azure resources. Passed through to recipe parameters for RBAC role assignments.')
-param daprAzurePrincipalId string = ''
-
 @description('Radius environment resource ID. Injected automatically by rad deploy from the active workspace.')
 param environment string
 

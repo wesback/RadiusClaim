@@ -1975,6 +1975,7 @@ ENV_DEPLOY_ARGS=(
   --parameters "azureProviderScope=/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}"
   --parameters "location=${LOCATION}"
   --parameters "daprAzurePrincipalId=${AZURE_PRINCIPAL_ID_CACHED}"
+  --parameters "daprAzureClientId=${AZURE_CLIENT_ID_CACHED}"
   --parameters "recipeRegistry=${RECIPE_REGISTRY}"
   --parameters "recipeTag=${RECIPE_TAG}"
   --parameters "randomNameSuffix=${RANDOM_NAME_SUFFIX}"
@@ -2158,7 +2159,6 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
     --parameters "imageTag=${IMAGE_TAG}"
     --parameters "deploymentTarget=${DEPLOYMENT_TARGET}"
     --parameters "useWorkloadIdentity=true"
-    --parameters "daprAzurePrincipalId=${AZURE_PRINCIPAL_ID_CACHED}"
   )
   
   # Only pass ghcrImagePullRef if we need a pull secret
