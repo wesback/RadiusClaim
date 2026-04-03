@@ -54,18 +54,10 @@ param location string = 'francecentral'
 
 // ── Dapr Workload Identity Parameters ──────────────────────────────────────
 // Passed by bootstrap for Dapr component workload-identity authentication.
-// Not consumed directly by the environment resource, but declared here so
-// `rad deploy --parameters` does not reject them. Recipes and post-deploy
-// scripts use these values for federated credential and SA annotation setup.
-
-@description('Client ID of the managed identity / service principal used by Dapr components.')
-param daprAzureClientId string = ''
+// Only daprAzurePrincipalId is used by recipes for RBAC role assignments.
 
 @description('Object (principal) ID of the managed identity / service principal.')
 param daprAzurePrincipalId string = ''
-
-@description('Azure AD tenant ID for Dapr workload identity federation.')
-param daprAzureTenantId string = ''
 
 @description('Identity principal type: ServicePrincipal or User.')
 param daprAzurePrincipalType string = 'ServicePrincipal'
@@ -116,9 +108,6 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             location: location
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
-            daprClientId: daprAzureClientId
-            daprTenantId: daprAzureTenantId
-            kubernetesNamespace: kubernetesNamespace
           }
         }
       }
@@ -149,9 +138,6 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             location: location
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
-            daprClientId: daprAzureClientId
-            daprTenantId: daprAzureTenantId
-            kubernetesNamespace: kubernetesNamespace
           }
         }
       }
@@ -180,12 +166,8 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
           templatePath: '${recipeRegistry}/secrets:${recipeTag}'
           parameters: {
             location: location
-            tenantId: daprAzureTenantId
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
-            daprClientId: daprAzureClientId
-            daprTenantId: daprAzureTenantId
-            kubernetesNamespace: kubernetesNamespace
           }
         }
       }

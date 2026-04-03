@@ -51,15 +51,6 @@ param randomNameSuffix string = ''
 @description('Principal (object) ID of the Dapr workload identity for RBAC assignments.')
 param daprPrincipalId string
 
-@description('Client (application) ID of the Dapr workload identity for component metadata.')
-param daprClientId string
-
-@description('Azure AD tenant ID for workload identity authentication.')
-param daprTenantId string
-
-@description('Kubernetes namespace where Dapr components will be deployed.')
-param kubernetesNamespace string
-
 // ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
