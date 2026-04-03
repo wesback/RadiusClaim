@@ -51,6 +51,9 @@ param randomNameSuffix string = ''
 @description('Principal (object) ID of the Dapr workload identity for RBAC assignments.')
 param daprPrincipalId string
 
+@description('Client (application) ID of the Dapr workload identity for component auth metadata.')
+param daprClientId string = ''
+
 // ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
@@ -98,10 +101,12 @@ resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 }
 
 // ---------------------------------------------------------------------------
-// Dapr Component CRD — secretstores.azure.keyvault
+// Dapr Component Metadata — secretstores.azure.keyvault
 // ---------------------------------------------------------------------------
-// NOTE: Dapr component is created separately (e.g., by deployment-dapr-components-workload-identity.sh)
-// This recipe outputs metadata for the component; Radius does not manage the K8s resource itself.
+// Radius recipes provision Azure resources only; Kubernetes CRDs (Dapr components)
+// are created by the bootstrap script using the metadata outputted below.
+// This separation follows Radius architecture: recipes = Azure provisioning,
+// bootstrap = Kubernetes configuration.
 
 var daprComponentName = 'platform-secrets'
 
@@ -131,4 +136,15 @@ output resourceMetadata object = {
   vaultUri: keyVault.properties.vaultUri
   resourceGroup: split(keyVault.id, '/')[4]
   location: location
+  // Dapr component metadata for bootstrap script
+  dapr: {
+    componentName: daprComponentName
+    componentType: 'secretstores.azure.keyvault'
+    componentVersion: 'v1'
+    metadata: {
+      vaultName: keyVault.name
+      azureClientId: daprClientId
+      azureEnvironment: 'AZUREPUBLICCLOUD'
+    }
+  }
 }

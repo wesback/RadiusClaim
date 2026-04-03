@@ -54,10 +54,12 @@ param location string = 'francecentral'
 
 // ── Dapr Workload Identity Parameters ──────────────────────────────────────
 // Passed by bootstrap for Dapr component workload-identity authentication.
-// Only daprAzurePrincipalId is used by recipes for RBAC role assignments.
 
-@description('Object (principal) ID of the managed identity / service principal.')
+@description('Object (principal) ID of the managed identity / service principal for RBAC role assignments.')
 param daprAzurePrincipalId string = ''
+
+@description('Client (application) ID of the managed identity / service principal for Dapr component authentication.')
+param daprAzureClientId string = ''
 
 @description('Optional random suffix for recipe resource naming (dev/demo only). Format: 6-char timestamp hash. Empty for deterministic (prod) naming.')
 param randomNameSuffix string = ''
@@ -105,6 +107,7 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             location: location
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
+            daprClientId: daprAzureClientId
           }
         }
       }
@@ -135,6 +138,7 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             location: location
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
+            daprClientId: daprAzureClientId
           }
         }
       }
@@ -165,6 +169,7 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             location: location
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
+            daprClientId: daprAzureClientId
           }
         }
       }

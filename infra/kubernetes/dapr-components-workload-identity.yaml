@@ -1,0 +1,76 @@
+---
+# State Store Component - Azure Blob Storage (Workload Identity)
+# This component is deployed automatically by the bootstrap script after Radius provisioning.
+# The bootstrap script extracts values from Radius recipe outputs to populate these fields.
+#
+# Deployment: kubectl apply -f infra/kubernetes/dapr-components-workload-identity.yaml
+# Namespace: Must match the Radius environment namespace
+#
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+  # Namespace will be set by bootstrap script from Radius environment
+  namespace: __NAMESPACE__
+spec:
+  type: state.azure.blobstorage
+  version: v2
+  metadata:
+  - name: accountName
+    # Populated from state-store.bicep output: storageAccountName
+    value: "__STORAGE_ACCOUNT_NAME__"
+  - name: containerName
+    value: "expense-state"
+  - name: azureTenantId
+    value: "__TENANT_ID__"
+  - name: azureClientId
+    # Populated from workload identity setup
+    value: "__AZURE_CLIENT_ID__"
+  - name: azureEnvironment
+    value: "AZUREPUBLICCLOUD"
+  # No azureClientSecret - using workload identity federation
+---
+# Pub/Sub Component - Azure Service Bus Topics (Workload Identity)
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: pubsub
+  namespace: __NAMESPACE__
+spec:
+  type: pubsub.azure.servicebus.topics
+  version: v1
+  metadata:
+  - name: namespaceName
+    # Populated from pubsub.bicep output: serviceBusNamespaceName
+    value: "__SERVICEBUS_NAMESPACE__"
+  - name: azureTenantId
+    value: "__TENANT_ID__"
+  - name: azureClientId
+    value: "__AZURE_CLIENT_ID__"
+  - name: azureEnvironment
+    value: "AZUREPUBLICCLOUD"
+  - name: disableEntityManagement
+    # Topics/subscriptions are created by application code, not by Dapr
+    value: "false"
+  # No connectionString - using workload identity
+---
+# Secret Store Component - Azure Key Vault (Workload Identity)
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: platform-secrets
+  namespace: __NAMESPACE__
+spec:
+  type: secretstores.azure.keyvault
+  version: v1
+  metadata:
+  - name: vaultName
+    # Populated from secrets.bicep output: keyVaultName
+    value: "__VAULT_NAME__"
+  - name: azureTenantId
+    value: "__TENANT_ID__"
+  - name: azureClientId
+    value: "__AZURE_CLIENT_ID__"
+  - name: azureEnvironment
+    value: "AZUREPUBLICCLOUD"
+  # No azureClientSecret - using workload identity federation
