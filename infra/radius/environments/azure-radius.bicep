@@ -59,9 +59,6 @@ param location string = 'francecentral'
 @description('Object (principal) ID of the managed identity / service principal.')
 param daprAzurePrincipalId string = ''
 
-@description('Identity principal type: ServicePrincipal or User.')
-param daprAzurePrincipalType string = 'ServicePrincipal'
-
 @description('Optional random suffix for recipe resource naming (dev/demo only). Format: 6-char timestamp hash. Empty for deterministic (prod) naming.')
 param randomNameSuffix string = ''
 
