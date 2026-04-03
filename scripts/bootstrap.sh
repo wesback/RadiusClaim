@@ -1805,11 +1805,39 @@ if [ "$SETUP_WORKLOAD_IDENTITY" = true ]; then
   # Override AZURE_CLIENT_ID and AZURE_PRINCIPAL_ID with values from Bicep
   export AZURE_CLIENT_ID="$MANAGED_IDENTITY_CLIENT_ID"
   export AZURE_PRINCIPAL_ID_CACHED="$MANAGED_IDENTITY_PRINCIPAL_ID"
+else
+  # Workload identity setup was skipped (already enabled on cluster).
+  # Still need to capture the managed identity principal ID for the environment Bicep.
+  # The managed identity was created in a prior bootstrap run; look it up by name.
+  section "Retrieving existing workload identity"
+  MANAGED_IDENTITY_NAME="radiusclaim-workload-identity"
+  
+  MANAGED_IDENTITY_CLIENT_ID=$(az identity show \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$MANAGED_IDENTITY_NAME" \
+    --query "clientId" \
+    -o tsv 2>/dev/null || true)
+  
+  MANAGED_IDENTITY_PRINCIPAL_ID=$(az identity show \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$MANAGED_IDENTITY_NAME" \
+    --query "principalId" \
+    -o tsv 2>/dev/null || true)
+  
+  if [ -z "$MANAGED_IDENTITY_CLIENT_ID" ] || [ -z "$MANAGED_IDENTITY_PRINCIPAL_ID" ]; then
+    fail "Could not retrieve existing workload identity '$MANAGED_IDENTITY_NAME'. The managed identity may not exist in resource group '$RESOURCE_GROUP', or it may have a different name. Run bootstrap with --setup-workload-identity to create it."
+  fi
+  
+  export AZURE_CLIENT_ID="$MANAGED_IDENTITY_CLIENT_ID"
+  export AZURE_PRINCIPAL_ID_CACHED="$MANAGED_IDENTITY_PRINCIPAL_ID"
+  log_success "Workload identity retrieved"
+  log_info "  Client ID:    $MANAGED_IDENTITY_CLIENT_ID"
+  log_info "  Principal ID: $MANAGED_IDENTITY_PRINCIPAL_ID"
 fi
 test -n "${AZURE_CLIENT_ID:-}" || fail "AZURE_CLIENT_ID is required for the Microsoft Entra statestore path."
 test -n "${AZURE_TENANT_ID:-}" || fail "AZURE_TENANT_ID is required for the Microsoft Entra statestore path."
-# Use cached principal ID (resolved once at auth setup start via resolve_auth_context)
-test -n "$AZURE_PRINCIPAL_ID_CACHED" || fail "Could not resolve the Microsoft Entra principal object ID. See diagnostics above for resolution steps."
+# Validate that principal ID is available from workload identity
+test -n "$AZURE_PRINCIPAL_ID_CACHED" || fail "Could not resolve the workload identity principal object ID. The recipes need this to create RBAC assignments. Run bootstrap with --setup-workload-identity to create the identity, or check that the managed identity exists in Azure."
 if [ "$SHOULD_REGISTER_AZURE_CREDENTIAL" = true ] && [ -z "$AZURE_AUTH_MODE_RESOLVED" ]; then
   fail "Azure credential registration was approved, but the required Azure auth environment variables are not set."
 fi
