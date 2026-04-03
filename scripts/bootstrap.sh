@@ -1968,6 +1968,71 @@ if [ "$DRY_RUN" != true ]; then
   fi
 fi
 
+section "Ensuring Dapr workload identity has Storage access"
+if [ "$DRY_RUN" != true ]; then
+  # After environment deploy, verify that the Dapr workload identity has the
+  # Storage Blob Data Contributor role on all Azure Storage accounts.
+  # The role assignment is created by the Bicep recipe, but we double-check here
+  # because Azure RBAC propagation can have delays, and we need it before
+  # containers start (daprd initializes components immediately on startup).
+  
+  STORAGE_ACCOUNT_PATTERN="staterc"
+  log_info "Checking for Storage accounts matching pattern: ${STORAGE_ACCOUNT_PATTERN}"
+  
+  STORAGE_ACCOUNTS="$(az storage account list \
+    --resource-group "$RESOURCE_GROUP" \
+    --query "[?starts_with(name, '${STORAGE_ACCOUNT_PATTERN}')].{name: name, id: id}" \
+    -o json 2>/dev/null || echo '[]')"
+  
+  if [ "$STORAGE_ACCOUNTS" != "[]" ] && [ -n "$STORAGE_ACCOUNTS" ]; then
+    DAPR_IDENTITY_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID_CACHED}"
+    DAPR_IDENTITY_NAME="radiusclaim-workload-identity"
+    
+    if [ -z "$DAPR_IDENTITY_PRINCIPAL_ID" ]; then
+      log_warning "Could not determine Dapr workload identity principal ID. Skipping Storage RBAC verification."
+    else
+      log_info "Dapr workload identity principal ID: ${DAPR_IDENTITY_PRINCIPAL_ID}"
+      
+      # Check each storage account and ensure the role assignment exists
+      echo "$STORAGE_ACCOUNTS" | jq -r '.[] | "\(.name) \(.id)"' | while read STORAGE_NAME STORAGE_ID; do
+        log_info "Checking Storage account: ${STORAGE_NAME}"
+        
+        ROLE_DEF_ID="ba92f5b4-2d11-453d-a403-e96b0029c9fe"  # Storage Blob Data Contributor
+        EXISTING_ROLE="$(az role assignment list \
+          --assignee "$DAPR_IDENTITY_PRINCIPAL_ID" \
+          --scope "$STORAGE_ID" \
+          --role-definition-id "$ROLE_DEF_ID" \
+          --query "[0].id" -o tsv 2>/dev/null || echo '')"
+        
+        if [ -z "$EXISTING_ROLE" ]; then
+          log_warning "Storage Blob Data Contributor role NOT found for ${DAPR_IDENTITY_NAME} on ${STORAGE_NAME}. Creating it now..."
+          
+          if az role assignment create \
+            --assignee-object-id "$DAPR_IDENTITY_PRINCIPAL_ID" \
+            --assignee-principal-type ServicePrincipal \
+            --role-definition-id "$ROLE_DEF_ID" \
+            --scope "$STORAGE_ID" \
+            --output none 2>/dev/null; then
+            log_success "Created Storage Blob Data Contributor role for ${DAPR_IDENTITY_NAME} on ${STORAGE_NAME}"
+            log_info "Note: Role assignment may take 10-30 seconds to propagate. Waiting..."
+            sleep 15
+          else
+            log_error "Failed to create Storage Blob Data Contributor role for ${DAPR_IDENTITY_NAME} on ${STORAGE_NAME}."
+            log_error "Verify that you have permissions to assign roles (e.g., Owner or User Access Administrator role)."
+            log_error "You can manually assign the role with:"
+            echo "  az role assignment create --assignee-object-id '$DAPR_IDENTITY_PRINCIPAL_ID' --assignee-principal-type ServicePrincipal --role-definition-id '$ROLE_DEF_ID' --scope '$STORAGE_ID'"
+            fail "Could not ensure Dapr workload identity has Storage access. Please assign the role manually and retry bootstrap."
+          fi
+        else
+          log_success "Storage Blob Data Contributor role exists for ${DAPR_IDENTITY_NAME} on ${STORAGE_NAME}"
+        fi
+      done
+    fi
+  else
+    log_info "No storage accounts found matching pattern ${STORAGE_ACCOUNT_PATTERN} in resource group ${RESOURCE_GROUP}. Skipping Storage RBAC check."
+  fi
+fi
+
 if [ "$SKIP_APP_DEPLOY" = false ] && [ "$SKIP_IMAGE_PUSH" = false ]; then
   section "Building and pushing service images"
   build_and_push_service expense-api "$REPO_ROOT/src/expense-api/Dockerfile"
