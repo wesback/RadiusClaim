@@ -1803,7 +1803,7 @@ if [ "$SETUP_WORKLOAD_IDENTITY" = true ]; then
   log_info "  Principal ID: $MANAGED_IDENTITY_PRINCIPAL_ID"
   
   # Override AZURE_CLIENT_ID and AZURE_PRINCIPAL_ID with values from Bicep
-  export AZURE_CLIENT_ID="$MANAGED_IDENTITY_CLIENT_ID"
+  export AZURE_CLIENT_ID_CACHED="$MANAGED_IDENTITY_CLIENT_ID"
   export AZURE_PRINCIPAL_ID_CACHED="$MANAGED_IDENTITY_PRINCIPAL_ID"
 else
   # Workload identity setup was skipped (already enabled on cluster).
@@ -1828,7 +1828,7 @@ else
     fail "Could not retrieve existing workload identity '$MANAGED_IDENTITY_NAME'. The managed identity may not exist in resource group '$RESOURCE_GROUP', or it may have a different name. Run bootstrap with --setup-workload-identity to create it."
   fi
   
-  export AZURE_CLIENT_ID="$MANAGED_IDENTITY_CLIENT_ID"
+  export AZURE_CLIENT_ID_CACHED="$MANAGED_IDENTITY_CLIENT_ID"
   export AZURE_PRINCIPAL_ID_CACHED="$MANAGED_IDENTITY_PRINCIPAL_ID"
   log_success "Workload identity retrieved"
   log_info "  Client ID:    $MANAGED_IDENTITY_CLIENT_ID"
