@@ -1,0 +1,6 @@
+Good news! Your expense {{expenseId}} has been approved.
+
+Approver: {{approver}}
+Amount: {{amount}}
+Subject: {{subject}}
+Approved At: {{occurredAtUtc}}

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "radiusclaim-azure"
+    },
+    "kubernetesNamespace": {
+      "value": "radiusclaim-azure"
+    },
+    "recipeRegistry": {
+      "value": "ghcr.io/wesback/radiusclaim/recipes"
+    },
+    "recipeTag": {
+      "value": "latest"
+    },
+    "azureProviderScope": {
+      "value": "/subscriptions/5b6c36e5-b279-4005-8bf1-c73b1c2b71c2/resourceGroups/radiusclaim-rg"
+    },
+    "location": {
+      "value": "eastus2"
+    }
+  }
+}

@@ -1,0 +1,5 @@
+Approval for expense {{expenseId}} has timed out and requires attention.
+
+Submitter: {{submitter}}
+Subject: {{subject}}
+Timed Out At: {{occurredAtUtc}}

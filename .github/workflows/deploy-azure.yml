@@ -1,0 +1,321 @@
+name: deploy-azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      kubernetes_target:
+        description: 'Kubernetes target profile. AKS is the managed Azure example; Arc-enabled / Azure Local and self-managed clusters are also valid when Radius prerequisites are met.'
+        type: choice
+        options:
+          - aks
+          - arc-enabled
+          - self-managed
+        default: aks
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/deploy-azure.yml'
+      - 'infra/**'
+      - 'src/**'
+      - 'RadiusClaim.slnx'
+      - 'global.json'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: radiusclaim-azure-kubernetes
+  cancel-in-progress: true
+
+env:
+  KUBERNETES_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.kubernetes_target || vars.KUBERNETES_TARGET || 'aks' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    outputs:
+      kubernetes_target: ${{ steps.vars.outputs.kubernetes_target }}
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+      ghcr_prefix: ${{ steps.vars.outputs.ghcr_prefix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore, build, and test
+        run: |
+          dotnet restore RadiusClaim.slnx --nologo
+          dotnet build RadiusClaim.slnx --configuration Release --no-restore --nologo
+          dotnet test RadiusClaim.slnx --configuration Release --no-build --nologo
+
+      - name: Validate Kubernetes-first platform models
+        run: |
+          kubernetes_target="${{ env.KUBERNETES_TARGET }}"
+          case "$kubernetes_target" in
+            aks|arc-enabled|self-managed) ;;
+            *)
+              echo "Unsupported KUBERNETES_TARGET '$kubernetes_target'. Use one of: aks, arc-enabled, self-managed."
+              exit 1
+              ;;
+          esac
+
+          az bicep build --file infra/radius/app.bicep >/dev/null
+          az bicep build --file infra/radius/environments/azure-radius.bicep >/dev/null
+
+      - name: Compute shared deployment variables
+        id: vars
+        run: |
+          kubernetes_target="${{ env.KUBERNETES_TARGET }}"
+          ghcr_prefix=$(printf 'ghcr.io/%s/radiusclaim' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          echo "kubernetes_target=$kubernetes_target" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "ghcr_prefix=$ghcr_prefix" >> "$GITHUB_OUTPUT"
+
+  deploy-kubernetes:
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_LOCATION: ${{ vars.AZURE_LOCATION }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_PROVIDER_SCOPE: /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ vars.AZURE_RESOURCE_GROUP }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      GHCR_PREFIX: ${{ needs.validate.outputs.ghcr_prefix }}
+      IMAGE_TAG: ${{ needs.validate.outputs.image_tag }}
+      KUBERNETES_TARGET: ${{ needs.validate.outputs.kubernetes_target }}
+      RADIUS_ENVIRONMENT_NAME: azure
+      RADIUS_GROUP: radiusclaim
+      RADIUS_KUBECONFIG_SECRET: ${{ secrets.RADIUS_KUBECONFIG }}
+      RADIUS_KUBERNETES_CONTEXT: ${{ vars.RADIUS_KUBERNETES_CONTEXT }}
+      RADIUS_KUBERNETES_NAMESPACE: ${{ vars.RADIUS_KUBERNETES_NAMESPACE || 'radiusclaim-azure' }}
+      RADIUS_WORKSPACE: radiusclaim-${{ github.run_id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required Kubernetes-first configuration
+        run: |
+          test -n "$AZURE_CLIENT_ID" || { echo "Set secret AZURE_CLIENT_ID for Radius Azure credential registration."; exit 1; }
+          test -n "$AZURE_CLIENT_SECRET" || { echo "Set secret AZURE_CLIENT_SECRET for Radius Azure credential registration."; exit 1; }
+          test -n "$AZURE_RESOURCE_GROUP" || { echo "Set repository variable AZURE_RESOURCE_GROUP."; exit 1; }
+          test -n "$AZURE_LOCATION" || { echo "Set repository variable AZURE_LOCATION."; exit 1; }
+          test -n "${{ secrets.AZURE_SUBSCRIPTION_ID }}" || { echo "Set secret AZURE_SUBSCRIPTION_ID for Azure-backed Radius recipes."; exit 1; }
+          test -n "$AZURE_TENANT_ID" || { echo "Set secret AZURE_TENANT_ID for Radius Azure credential registration."; exit 1; }
+          test -n "$RADIUS_KUBECONFIG_SECRET" || { echo "Set secret RADIUS_KUBECONFIG for the Kubernetes cluster that hosts Radius and the app workloads."; exit 1; }
+
+      - name: Describe Kubernetes-first framing
+        run: |
+          echo "Kubernetes target profile: $KUBERNETES_TARGET"
+          echo "AKS is the managed Azure example for this workflow."
+          echo "Arc-enabled Kubernetes / Azure Local and self-managed clusters also fit the architecture when Radius can reach the cluster and the Azure recipe prerequisites are met."
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ github.token }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Build and push service images for Kubernetes deployment
+        run: |
+          build_and_push() {
+            local service_name="$1"
+            local dockerfile_path="$2"
+            docker build \
+              --file "$dockerfile_path" \
+              --tag "$GHCR_PREFIX/$service_name:$IMAGE_TAG" \
+              .
+            docker push "$GHCR_PREFIX/$service_name:$IMAGE_TAG"
+          }
+
+          build_and_push expense-api src/expense-api/Dockerfile
+          build_and_push workflow-engine src/workflow-engine/Dockerfile
+          build_and_push notification-svc src/notification-svc/Dockerfile
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Radius CLI
+        run: |
+          wget -q "https://raw.githubusercontent.com/radius-project/radius/main/deploy/install.sh" -O - | /bin/bash
+          ./rad bicep download
+          ./rad --version
+
+      - name: Publish Radius recipe artifacts to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+          GHCR_USERNAME: ${{ github.actor }}
+        run: |
+          RAD_BIN=./rad ./scripts/publish-radius-recipes.sh "$GHCR_PREFIX/recipes" "$IMAGE_TAG"
+
+      - name: Configure Radius workspace for Kubernetes target
+        run: |
+          printf '%s' "$RADIUS_KUBECONFIG_SECRET" > "$RUNNER_TEMP/radius-kubeconfig"
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+
+          workspace_args=(workspace create kubernetes "$RADIUS_WORKSPACE")
+          if [ -n "$RADIUS_KUBERNETES_CONTEXT" ]; then
+            workspace_args+=(--context "$RADIUS_KUBERNETES_CONTEXT")
+          fi
+
+          ./rad "${workspace_args[@]}"
+          ./rad group create "$RADIUS_GROUP" -w "$RADIUS_WORKSPACE"
+          ./rad workspace switch "$RADIUS_WORKSPACE"
+          ./rad group switch "$RADIUS_GROUP" -w "$RADIUS_WORKSPACE"
+
+          # Create or switch to the target environment (idempotent)
+          ./rad env create "$RADIUS_ENVIRONMENT_NAME" || true
+          ./rad env switch "$RADIUS_ENVIRONMENT_NAME"
+
+      - name: Register Azure provider credentials with Radius
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          # The runner does not need azure/login here. Radius uses the service principal
+          # we register below when the control plane provisions Azure-backed recipes.
+          # Register Azure service principal credentials with the Radius control plane
+          # This enables Radius to authenticate with Azure when provisioning backing services
+          ./rad credential register azure sp \
+            --client-id "$AZURE_CLIENT_ID" \
+            --client-secret "$AZURE_CLIENT_SECRET" \
+            --tenant-id "$AZURE_TENANT_ID"
+
+      - name: Deploy Azure-backed Radius environment for Kubernetes (idempotent)
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          ./rad deploy infra/radius/environments/azure-radius.bicep \
+            --parameters @infra/radius/environments/azure-radius.parameters.json \
+            --parameters environmentName="$RADIUS_ENVIRONMENT_NAME" \
+            --parameters kubernetesNamespace="$RADIUS_KUBERNETES_NAMESPACE" \
+            --parameters azureProviderScope="$AZURE_PROVIDER_SCOPE" \
+            --parameters location="$AZURE_LOCATION" \
+            --parameters recipeRegistry="$GHCR_PREFIX/recipes" \
+            --parameters recipeTag="$IMAGE_TAG"
+
+      - name: Ensure GHCR image pull secret in workload namespace
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          # Pre-create namespace so the secret can be seeded before rad deploy
+          kubectl create namespace "$RADIUS_KUBERNETES_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret docker-registry ghcr-pull-secret \
+            --docker-server=ghcr.io \
+            --docker-username="${{ github.actor }}" \
+            --docker-password="${{ github.token }}" \
+            -n "$RADIUS_KUBERNETES_NAMESPACE" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy application through Radius to Kubernetes with public expense-api gateway
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          ./rad deploy infra/radius/app.bicep \
+            --parameters containerRegistry="$GHCR_PREFIX" \
+            --parameters imageTag="$IMAGE_TAG" \
+            --parameters deploymentTarget='radius' \
+            --parameters ghcrImagePullRef='ghcr-pull-secret'
+
+      - name: Validate Kubernetes wiring through Radius
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          set -euo pipefail
+
+          wait_for_resource() {
+            local kind="$1"
+            local name="$2"
+
+            for _ in $(seq 1 30); do
+              if kubectl get "$kind" "$name" -n "$RADIUS_KUBERNETES_NAMESPACE" >/dev/null 2>&1; then
+                return 0
+              fi
+              sleep 10
+            done
+
+            echo "Timed out waiting for $kind/$name in namespace '$RADIUS_KUBERNETES_NAMESPACE'."
+            exit 1
+          }
+
+          find_pod_name() {
+            local workload_name="$1"
+
+            kubectl get pods -n "$RADIUS_KUBERNETES_NAMESPACE" -o json \
+              | jq -r --arg workload "$workload_name" '
+                  .items[]
+                  | select(.metadata.name == $workload or (.metadata.name | startswith($workload + "-")))
+                  | .metadata.name' \
+              | head -n 1
+          }
+
+          for app_name in expense-api workflow-engine notification-svc; do
+            wait_for_resource deployment "$app_name"
+            kubectl rollout status "deployment/$app_name" -n "$RADIUS_KUBERNETES_NAMESPACE" --timeout=5m
+
+            pod_name=$(find_pod_name "$app_name")
+            test -n "$pod_name" || { echo "Could not find pod for '$app_name'."; exit 1; }
+
+            kubectl get pod "$pod_name" -n "$RADIUS_KUBERNETES_NAMESPACE" -o json \
+              | jq -e '[.spec.containers[].name] | index("daprd")' >/dev/null
+          done
+
+          wait_for_resource service expense-api
+
+          for _ in $(seq 1 30); do
+            if components=$(kubectl get components -n "$RADIUS_KUBERNETES_NAMESPACE" -o json 2>/dev/null); then
+              if jq -e '[.items[].metadata.name] | contains(["statestore", "pubsub", "platform-secrets"])' <<<"$components" >/dev/null; then
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+
+          echo "Timed out waiting for Dapr components to become available in '$RADIUS_KUBERNETES_NAMESPACE'."
+          exit 1
+
+      - name: Run end-to-end validation against Kubernetes deployment (CI uses port-forward fallback)
+        run: |
+          export KUBECONFIG="$RUNNER_TEMP/radius-kubeconfig"
+          set -euo pipefail
+
+          validation_output="$RUNNER_TEMP/radius-validation.json"
+          port_forward_log="$RUNNER_TEMP/radius-expense-api-port-forward.log"
+
+          echo "Radius deploy now emits a public gateway for expense-api."
+          echo "This CI job still validates through kubectl port-forward to avoid waiting on external DNS/load-balancer propagation."
+
+          kubectl port-forward -n "$RADIUS_KUBERNETES_NAMESPACE" svc/expense-api 18080:8080 >"$port_forward_log" 2>&1 &
+          port_forward_pid=$!
+
+          cleanup() {
+            kill "$port_forward_pid" 2>/dev/null || true
+            wait "$port_forward_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          if ! curl --fail --silent --show-error --retry 30 --retry-delay 2 --retry-connrefused http://127.0.0.1:18080/healthz | jq -e '.status == "ok"' >/dev/null; then
+            cat "$port_forward_log"
+            exit 1
+          fi
+
+          VALIDATION_OUTPUT_PATH="$validation_output" ./scripts/validate-deployment.sh http://127.0.0.1:18080
+
+          small_expense_id=$(jq -r '.autoApprove.expenseId' "$validation_output")
+          small_correlation_id=$(jq -r '.autoApprove.correlationId' "$validation_output")
+          large_expense_id=$(jq -r '.manualReview.expenseId' "$validation_output")
+          large_correlation_id=$(jq -r '.manualReview.correlationId' "$validation_output")
+
+          for _ in $(seq 1 12); do
+            logs=$(kubectl logs -n "$RADIUS_KUBERNETES_NAMESPACE" deployment/notification-svc -c notification-svc --tail=300 2>/dev/null || true)
+            if grep -q 'EventType=ExpenseApproved' <<<"$logs" \
+              && grep -q 'EventType=ManualReviewRequested' <<<"$logs" \
+              && grep -q "ExpenseId=$small_expense_id" <<<"$logs" \
+              && grep -q "ExpenseId=$large_expense_id" <<<"$logs" \
+              && grep -q "CorrelationId=$small_correlation_id" <<<"$logs" \
+              && grep -q "CorrelationId=$large_correlation_id" <<<"$logs"; then
+              exit 0
+            fi
+
+            sleep 10
+          done
+
+          echo "Notification evidence did not appear in notification-svc logs in time."
+          exit 1

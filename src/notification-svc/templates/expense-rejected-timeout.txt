@@ -1,0 +1,4 @@
+Your expense {{expenseId}} has been automatically rejected due to approval timeout.
+
+Subject: {{subject}}
+Rejected At: {{occurredAtUtc}}
