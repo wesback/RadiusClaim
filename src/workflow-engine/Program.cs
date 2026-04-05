@@ -132,74 +132,59 @@ app.MapPost("/workflows/start", async (
     var normalizedSubmission = NormalizeSubmission(submission);
     var instanceId = normalizedSubmission.CorrelationId;
 
-    // NOTE: Due to Dapr 1.17.3 workflow stability issues, we schedule workflows asynchronously
-    // and return success immediately. This prevents synchronous gRPC calls that crash the sidecar.
-    // The workflow will be scheduled in the background with retries.
-    
-    // Fire-and-forget workflow scheduling in background
-    // This prevents blocking the request on unstable Dapr workflow RPCs
-    _ = Task.Run(async () =>
+    var retries = 0;
+    const int maxRetries = 5;
+    const int delayMs = 2000;
+
+    while (retries < maxRetries)
     {
-        var retries = 0;
-        const int maxRetries = 5;
-        const int delayMs = 2000;
-
-        while (retries < maxRetries)
+        try
         {
-            try
-            {
-                await workflowClient.ScheduleNewWorkflowAsync(
-                    RadiusClaimDapr.Workflows.ExpenseApproval,
-                    instanceId,
-                    normalizedSubmission,
-                    startTime: null,
-                    CancellationToken.None);
+            await workflowClient.ScheduleNewWorkflowAsync(
+                RadiusClaimDapr.Workflows.ExpenseApproval,
+                instanceId,
+                normalizedSubmission,
+                startTime: null,
+                cancellationToken);
 
-                logger.LogInformation(
-                    "Workflow {InstanceId} scheduled successfully for expense {ExpenseId} after {Retries} attempts [TraceId: {TraceId}]",
-                    instanceId,
-                    normalizedSubmission.ExpenseId,
-                    retries,
-                    traceId);
-                return;
-            }
-            catch (Exception ex)
-            {
-                retries++;
-                logger.LogWarning(
-                    ex,
-                    "Attempt {Attempt}/{MaxRetries} to schedule workflow {InstanceId} failed. Retrying in {DelayMs}ms [TraceId: {TraceId}]",
-                    retries,
-                    maxRetries,
-                    instanceId,
-                    delayMs,
-                    traceId);
+            logger.LogInformation(
+                "Workflow {InstanceId} scheduled successfully for expense {ExpenseId} after {Retries} attempts [TraceId: {TraceId}]",
+                instanceId,
+                normalizedSubmission.ExpenseId,
+                retries,
+                traceId);
 
-                if (retries < maxRetries)
-                {
-                    await Task.Delay(delayMs, CancellationToken.None);
-                }
+            logger.LogInformation(
+                "Workflow start request accepted for expense {ExpenseId} with instanceId {InstanceId} [TraceId: {TraceId}]",
+                normalizedSubmission.ExpenseId,
+                instanceId,
+                traceId);
+
+            return Results.Accepted(
+                $"/workflows/{instanceId}",
+                new WorkflowStartResponse(instanceId, normalizedSubmission.ExpenseId));
+        }
+        catch (Exception ex)
+        {
+            retries++;
+            logger.LogWarning(
+                ex,
+                "Attempt {Attempt}/{MaxRetries} to schedule workflow {InstanceId} failed. Retrying in {DelayMs}ms [TraceId: {TraceId}]",
+                retries,
+                maxRetries,
+                instanceId,
+                delayMs,
+                traceId);
+
+            if (retries < maxRetries)
+            {
+                await Task.Delay(delayMs, cancellationToken);
             }
         }
+    }
 
-        logger.LogError(
-            "Failed to schedule workflow {InstanceId} for expense {ExpenseId} after {MaxRetries} attempts [TraceId: {TraceId}]",
-            instanceId,
-            normalizedSubmission.ExpenseId,
-            maxRetries,
-            traceId);
-    }, CancellationToken.None);
-
-    // Return success immediately
-    logger.LogInformation(
-        "Workflow start request accepted for expense {ExpenseId} with instanceId {InstanceId} [TraceId: {TraceId}]",
-        normalizedSubmission.ExpenseId,
-        instanceId,
-        traceId);
-
-    return Results.Accepted(
-        $"/workflows/{instanceId}",
-        new WorkflowStartResponse(instanceId, normalizedSubmission.ExpenseId));
+    throw new InvalidOperationException(
+        $"Failed to schedule workflow {instanceId} for expense {normalizedSubmission.ExpenseId} after {maxRetries} attempts [TraceId: {traceId}]");
 });
 
 app.MapGet("/workflows/{instanceId}", async (
