@@ -735,6 +735,32 @@ GHCR_PACKAGES_PRIVATE=true ./scripts/bootstrap.sh \
 
 ---
 
+## Scaling: Expense Index Boundary
+
+RadiusClaim stores active expense IDs in a single Dapr state entry (`expenseIndex`), which is perfectly fine for demos and small deployments but has a practical limit as the number of expenses grows.
+
+**Quick answer:** The sample scales comfortably to **10,000–50,000 active expenses** with the current architecture. Beyond that, latency increases, Dapr sidecars experience memory pressure, and Blob Storage throughput becomes a constraint.
+
+**Why it happens:**
+- Every list request reads the entire `expenseIndex` array from Blob Storage
+- Dapr workflow history also accumulates in the state store
+- Blob Storage latency increases with object size
+
+**How to know when you're hitting it:**
+- GET /expenses starts taking >1 second
+- Dapr sidecar pods are OOMKilled or use >300 MB memory
+- Workflow execution times increase
+- Azure Monitor shows Blob Storage latency climbing above 200ms
+
+**What to do about it:**
+- **Short term:** Archive old expenses; add caching
+- **Medium term:** Shard the index by employee or month
+- **Long term:** Switch to a query-capable store like Cosmos DB
+
+See **[`docs/SCALING.md`](./docs/SCALING.md)** for a complete breakdown of the boundary, diagnostics, and five proven mitigation strategies.
+
+---
+
 ## Quick Start (Local Dev)
 
 > Coming in Phase 2. For now, see individual service READMEs.

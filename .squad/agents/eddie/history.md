@@ -390,3 +390,73 @@ Comprehensive audit of all project documentation confirms:
 
 **Status:** Complete. Portability paradigm FULLY REALIZED and PRODUCTION READY.
 
+
+## Learnings from Issue #50: Expense-Index Scaling Boundary
+
+**Date:** 2026-04-04
+**Task:** Document undocumented scaling limit where Dapr state store (Blob Storage) degrades with large expense-index arrays
+**Status:** Complete
+
+### What Was Undocumented
+- No explanation of why the sample has a practical expense count ceiling
+- No diagnostics: how do operators know they're hitting the boundary?
+- No mitigation paths: what are the options to scale beyond the limit?
+
+### What I Documented
+
+1. **`docs/SCALING.md`** — Comprehensive 500-line scaling guide:
+   - **Boundary definition:** 10K–50K active expenses (comfortable), 50K+ (degradation begins)
+   - **Why it exists:** Single `expenseIndex` array stored in Blob Storage; each list request reads the entire blob
+   - **Three system bottlenecks identified:** Blob latency, Dapr sidecar memory, workflow history accumulation
+   - **Four diagnostic sections:** Latency metrics, memory pressure, workflow duration, Azure Blob metrics with specific kubectl/Azure Portal commands
+   - **Six mitigation strategies:** Archiving, sharding, Cosmos DB migration, caching, lazy indexing, workflow snapshotting
+   - **Realistic scaling path:** Short-term (archive + cache), medium-term (sharding), long-term (Cosmos DB)
+   - **Monitoring and alerting:** Prometheus rules, metrics to track, load-test commands
+
+2. **README.md update** — Added brief "Scaling" section (lines 738–750):
+   - Quick answer: 10K–50K expenses, what causes the boundary
+   - Three symptoms operators will recognize
+   - Call-to-action: See `docs/SCALING.md` for full strategy
+   - Located strategically between "Using a Private Container Registry" and "Quick Start" — after infrastructure, before dev setup
+
+### Audience-Aware Framing
+
+**Platform engineers (first-time readers):**
+- Starts with the hard number (10K–50K) and why
+- Diagnostic section has copy-paste commands (`kubectl logs`, `kubectl top`, Azure Portal navigation)
+- Monitoring section is actionable (Prometheus rules, metrics naming)
+
+**Architects/team leads (deciding on scaling strategy):**
+- All six strategies are named, so teams can research/debate in issues
+- Each has a "When to use" section and explicit trade-offs
+- Combined mitigation path shows realistic progression without forcing one solution
+
+**SREs (on-call):**
+- Metrics section maps to observable signals (latency, memory, errors)
+- Each metric has a "how to check" command
+- Alert rules are copy-paste ready
+
+### Key Discoveries During Writing
+
+1. **Array-based indexing is the root cause:** The `expenseIndex` is stored as a single JSON array; every list request deserializes the entire array before slicing
+2. **Workflow history exacerbates scaling:** Dapr Workflow SDK stores full replay history in the same state store, compounding memory pressure
+3. **Blob Storage scales to millions but app design doesn't:** Azure Storage can handle massive blobs; RadiusClaim's in-memory, load-all-then-slice pattern is the bottleneck
+4. **Five proven patterns exist:** Archiving, sharding, store migration, caching, index paging — none is one-size-fits-all
+
+### Decision: Why Not Include in README Initially?
+
+When the sample was built, expenses were toy data; scaling wasn't a priority. Now that issue #50 asked for it, the full treatment deserved its own document. README stays concise with a link; operators who care about scale find the detail in `docs/SCALING.md`.
+
+### Alignment with Team Decisions
+
+- **Portability paradigm:** Scaling strategies stay agnostic to deployment target (strategies work on any K8s + Dapr setup)
+- **Dapr/Radius separation:** Dapr component choice (Blob vs. Cosmos) is separate from app portability
+- **Bootstrap orientation:** Operators read this to understand deployment limits upfront, not as a fire-fighting doc
+
+### Next Steps (for team, not Eddie)
+
+1. **Graham (Platform Dev):** Can implement Strategy 1 (archival job) or Strategy 4 (Redis cache) as a follow-up enhancement
+2. **Karen (Tester):** Could write load tests following the "Testing Your Scaling Limits" section
+3. **Wesley (Owner):** Can decide if any strategies should be implemented in Phase 4 or left as user guidance
+
+**Verdict:** Scaling boundary is now fully transparent. Operators have diagnostics, mitigation paths, and realistic expectations. Documentation is audience-aware and actionable.
