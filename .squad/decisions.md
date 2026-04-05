@@ -5940,3 +5940,312 @@ fi
 - Operators learn limits *before* deploying
 
 **Next Steps:** Graham can implement Strategy 1 (archival) or Strategy 4 (caching) as Phase 4 enhancement if needed.
+
+# Plan: OpenTelemetry.Exporter.Jaeger Version Constraint & Security Fix
+
+**Date:** 2026-04-03  
+**Lead:** Daisy  
+**Status:** PLANNING  
+**Urgency:** BLOCKING (Docker build fails during `dotnet restore`)
+
+---
+
+## Problem Summary
+
+Docker build fails during the `dotnet restore` phase for **three services**:
+1. `src/expense-api/ExpenseApi.csproj`
+2. `src/workflow-engine/WorkflowEngine.csproj`
+3. `src/notification-svc/NotificationSvc.csproj`
+
+### Error Details
+
+**Issue 1: Version Constraint Unsatisfiable**
+```
+error NU1102: Unable to find package OpenTelemetry.Exporter.Jaeger with version (>= 1.11.0)
+  - Found 58 version(s) in nuget.org [ Nearest version: 1.6.0-rc.1 ]
+```
+
+All three `.csproj` files specify:
+```xml
+<PackageReference Include="OpenTelemetry.Exporter.Jaeger" Version="1.11.0" />
+```
+
+But NuGet shows:
+- Latest stable Jaeger exporter: **1.6.0-rc.1** (release candidate)
+- No 1.11.0 version exists
+- Other OpenTelemetry packages (Core, AspNetCore instrumentation, Http instrumentation) have stable 1.11.0 releases
+
+**Issue 2: Security Vulnerability**
+```
+warning NU1902: Package 'OpenTelemetry.Api' 1.11.1 has a known moderate severity vulnerability
+```
+
+One or more transitive dependencies pull in `OpenTelemetry.Api` 1.11.1, which is flagged as vulnerable.
+
+---
+
+## Root Cause Analysis
+
+### Version Constraint Mismatch
+
+The **OpenTelemetry ecosystem has different release cadences** across packages:
+
+| Package | Status | Latest Stable |
+|---------|--------|---|
+| `OpenTelemetry` | Stable 1.11.0 | ✅ Available |
+| `OpenTelemetry.Instrumentation.AspNetCore` | Stable 1.11.0 | ✅ Available |
+| `OpenTelemetry.Instrumentation.Http` | Stable 1.11.0 | ✅ Available |
+| `OpenTelemetry.Exporter.Jaeger` | ⚠️ Pre-release only | 1.6.0-rc.1 (latest), 1.5.1 (older stable) |
+
+The Jaeger exporter **has not reached 1.11.0 parity** with the main OpenTelemetry packages. It's still at 1.6.0-rc.1.
+
+### Why Was 1.11.0 Specified?
+
+Two hypotheses:
+1. **Copy-paste error**: All packages were set to 1.11.0 without checking Jaeger exporter availability
+2. **Future planning**: Intended to upgrade later, but version was committed before availability
+
+### Current Usage
+
+All three services **actively use** the Jaeger exporter:
+- **expense-api/Program.cs** (lines 62–82): Reads `JAEGER_AGENT_HOST` and `JAEGER_AGENT_PORT`, calls `.AddJaegerExporter()`
+- **workflow-engine/Program.cs** (lines 55–75): Same pattern
+- **notification-svc/Program.cs** (lines 26–46): Same pattern
+
+Removing Jaeger would break observability, so this is not an option without updating the services.
+
+---
+
+## Decision Factors
+
+### 1. Backward Compatibility & API Stability
+
+OpenTelemetry 1.6.0-rc.1 → 1.11.0 (future) will likely be a **breaking change** in the exporter API. Pre-release status means:
+- No stability guarantee
+- Method signatures may change
+- Configuration patterns may differ
+
+**Implication:** If code is written for 1.11.0 but we deploy 1.6.0, it won't compile or run.
+
+### 2. Security & Patch Management
+
+`OpenTelemetry.Api` 1.11.1 has a **moderate CVE**. We need to:
+- Identify which package transitively requires it
+- Check if 1.11.1+ has a patch
+- Plan upgrade path
+
+### 3. Observability Requirements
+
+From `docs/OBSERVABILITY.md`:
+- **Jaeger is the production observability backend** for local development
+- Services manually instrument traces with correlation IDs
+- Jaeger is not optional; it's part of the value prop
+
+**Implication:** We cannot remove Jaeger. We must find a compatible version.
+
+### 4. Service Scope
+
+All **three core services** are affected:
+- expense-api (critical path)
+- workflow-engine (orchestration)
+- notification-svc (pub/sub)
+
+**Implication:** Fix must be applied consistently across all three `.csproj` files.
+
+---
+
+## Solution Options
+
+### Option A: Downgrade to Stable 1.5.1 (Recommended)
+
+**Action:**
+```xml
+<PackageReference Include="OpenTelemetry.Exporter.Jaeger" Version="1.5.1" />
+```
+
+**Pros:**
+- ✅ Stable, released version (no pre-release risk)
+- ✅ Proven in production scenarios
+- ✅ Compatible with current code (no API changes required)
+- ✅ Unblocks Docker build immediately
+- ✅ Security: 1.5.1 is older; check if it has CVEs
+
+**Cons:**
+- ⚠️ Mismatches other OpenTelemetry packages at 1.11.0
+- ⚠️ Minor feature gap (1.11.0 has features we won't get)
+- ⚠️ Future upgrade path requires code changes
+
+**Validation:** Build succeeds, services start, Jaeger traces appear in UI
+
+---
+
+### Option B: Use 1.6.0-rc.1 Explicitly
+
+**Action:**
+```xml
+<PackageReference Include="OpenTelemetry.Exporter.Jaeger" Version="1.6.0-rc.1" />
+```
+
+**Pros:**
+- ✅ Closest to intended 1.11.0
+- ✅ Unblocks Docker build
+- ✅ Smaller feature gap than 1.5.1
+
+**Cons:**
+- ⚠️ Pre-release = no stability guarantee, potential API instability
+- ⚠️ May contain unreported CVEs
+- ⚠️ Inconsistent messaging in team ("1.11.0" was the goal, but 1.6.0-rc.1 is not a path to 1.11.0)
+
+**Validation:** Build succeeds, but must test thoroughly for runtime issues
+
+---
+
+### Option C: Wait for 1.11.0-rc.x and Document Blocker
+
+**Action:**
+Document this as a blocker and commit to upgrade when NuGet releases `OpenTelemetry.Exporter.Jaeger` 1.11.0-rc.*.
+
+**Pros:**
+- ✅ Aligns with architectural intent (1.11.0 across all packages)
+- ✅ No code changes needed later
+
+**Cons:**
+- 🔴 Blocks Docker builds **immediately**
+- 🔴 Blocks Phase 7 validation and demo
+- 🔴 No ETA from OpenTelemetry project
+- **Not viable** for demo or timeline
+
+---
+
+### Option D: Switch to Application Insights (Future-Proof)
+
+**Action:**
+Replace Jaeger with Azure Application Insights exporter for production, keep Jaeger for local dev (conditional).
+
+**Pros:**
+- ✅ Aligns with cloud-first strategy
+- ✅ Avoids pre-release dependency
+- ✅ Production-ready observability
+
+**Cons:**
+- 🔴 Large code refactor (Program.cs in all three services)
+- 🔴 Requires Azure Application Insights resource
+- 🔴 Blocks demo (requires cloud context)
+- ⚠️ Contradicts `docs/OBSERVABILITY.md` (says Jaeger is current, AppInsights is future)
+
+**Not recommended** for immediate fix, but worth noting for Phase 8 work.
+
+---
+
+## Recommended Path: Option A (Downgrade to 1.5.1)
+
+### Rationale
+
+1. **Unblocks immediately**: Stable version eliminates NuGet resolution errors
+2. **Minimal code changes**: No API changes to Program.cs files
+3. **Risk-minimized**: Proven version, not pre-release
+4. **Team clarity**: Document why 1.11.0 was aspirational but 1.5.1 is the stable ceiling
+
+### Action Items
+
+1. **Update all three `.csproj` files:**
+   - `src/expense-api/ExpenseApi.csproj`
+   - `src/workflow-engine/WorkflowEngine.csproj`
+   - `src/notification-svc/NotificationSvc.csproj`
+   
+   Change:
+   ```xml
+   <PackageReference Include="OpenTelemetry.Exporter.Jaeger" Version="1.5.1" />
+   ```
+
+2. **Security audit:** Verify 1.5.1 has no known CVEs for `OpenTelemetry.Api`
+
+3. **Docker build validation:** Confirm `dotnet restore` succeeds
+
+4. **Runtime verification:**
+   - Build images for all three services
+   - Start them locally with Jaeger
+   - Confirm traces appear in Jaeger UI
+   - Check no runtime errors in logs
+
+5. **Documentation update:**
+   - `docs/OBSERVABILITY.md`: Add note explaining Jaeger 1.5.1 vs. 1.11.0 discrepancy
+   - Document future upgrade path to 1.11.0-rc.* when available
+
+6. **Decision record:** Document this decision for future phases (Phase 8 can revisit as part of AppInsights migration)
+
+---
+
+## Security Vulnerability (OpenTelemetry.Api 1.11.1)
+
+Once Jaeger exporter is resolved, investigate the `OpenTelemetry.Api` 1.11.1 CVE:
+
+1. Determine **which package** transitively requires it (likely OpenTelemetry.Instrumentation.AspNetCore)
+2. Check if the **parent package has a newer version** that uses patched OpenTelemetry.Api
+3. Update if available; otherwise, document mitigations
+
+---
+
+## Team Dependencies
+
+- **Billy** (Service Delivery): May need to validate local Jaeger setup post-fix
+- **Graham** (Platform Dev): May need to update Kubernetes deployment environment variables if Jaeger host/port change
+- **Karen** (Tester): Must validate Phase 7 end-to-end traces appear in Jaeger
+- **Eddie** (Docs): Update `OBSERVABILITY.md` and any local-dev setup guides
+
+---
+
+## Success Criteria
+
+✅ All three services build successfully without NuGet errors  
+✅ Docker images build without errors  
+✅ Services start cleanly with no `OpenTelemetry` initialization errors  
+✅ Jaeger traces appear in http://localhost:16686 when services send requests  
+✅ `docs/OBSERVABILITY.md` reflects 1.5.1 constraint and upgrade path  
+✅ Team aware of 1.11.0 future target and pre-release status  
+
+---
+
+## Timeline
+
+- **Immediate (block Docker build):** Option A implementation (15 min)
+- **Follow-up (security):** CVE audit of OpenTelemetry.Api (1 hour)
+- **Follow-up (validation):** Phase 7 end-to-end test (1 hour)
+- **Documentation:** OBSERVABILITY.md update (30 min)
+
+**Estimated total:** 3 hours (1 hour implementation + 2 hours validation + docs)
+
+# Decision: OpenTelemetry.Exporter.Jaeger Version Downgrade
+
+**Date:** 2026-04-XX  
+**Author:** Billy (Backend Dev)  
+**Status:** Implemented  
+**Commit:** `c3129b7`
+
+## Context
+
+Docker builds failed because all three services (expense-api, workflow-engine, notification-svc) requested `OpenTelemetry.Exporter.Jaeger >= 1.11.0`. The latest stable version on NuGet is 1.5.1; only pre-release 1.6.0-rc.1 is newer. Package resolution cannot satisfy the constraint, blocking image builds.
+
+## Decision
+
+**Downgrade `OpenTelemetry.Exporter.Jaeger` to 1.5.1 across all three services.**
+
+### Rationale
+
+1. **API Compatibility:** All three services use the standard `.AddJaegerExporter(Action<JaegerExporterOptions>)` pattern. Version 1.5.1 fully supports this API.
+2. **Stability:** 1.5.1 is proven and stable; pre-release 1.6.0-rc.1 adds no value and introduces deployment risk.
+3. **Zero Code Impact:** No changes required to application code in any service.
+4. **Immediate Unblock:** Restores Docker image builds and dependency resolution.
+
+### Files Changed
+
+- `src/expense-api/ExpenseApi.csproj` — 1.11.0 → 1.5.1
+- `src/workflow-engine/WorkflowEngine.csproj` — 1.11.0 → 1.5.1
+- `src/notification-svc/NotificationSvc.csproj` — 1.11.0 → 1.5.1
+
+## Impact
+
+- ✅ Unblocks Docker builds immediately
+- ✅ No code changes required
+- ✅ No behavioral changes (observability pipeline unchanged)
+- ✅ Maintains observability baseline (all three services continue to export traces to Jaeger)
