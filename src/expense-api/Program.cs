@@ -7,6 +7,7 @@ using System.Net.Http.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Microsoft.AspNetCore.Authorization;
 
 const string CorrelationIdContextKey = "CorrelationId";
 const string CorrelationIdHeader = "X-Correlation-ID";
@@ -158,6 +159,7 @@ app.Use(async (context, next) =>
 
 var expenses = app.MapGroup("/expenses");
 
+// POST /expenses - Create a new expense (requires OAuth2 bearer token)
 expenses.MapPost("/", async (HttpContext context, ExpenseSubmission submission, DaprClient daprClient, CancellationToken cancellationToken) =>
 {
     var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
@@ -257,7 +259,7 @@ expenses.MapPost("/", async (HttpContext context, ExpenseSubmission submission, 
         ExpenseCreateResult.MatchedExistingRecord => Results.Ok(persistedRecord),
         _ => throw new InvalidOperationException($"Unexpected expense create result '{createOutcome.Result}'.")
     };
-});
+}).RequireAuthorization();
 
 expenses.MapGet("/{id}/workflow", async (
     string id,
@@ -308,7 +310,7 @@ expenses.MapPost("/{id}/approve", async (
 {
     var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
     return await HandleExpenseApprovalActionAsync(id, approved: true, body?.Reason, daprClient, logger, traceId, cancellationToken);
-});
+}).RequireAuthorization();
 
 // POST /expenses/{id}/reject — signals the paused workflow to reject the expense.
 expenses.MapPost("/{id}/reject", async (
@@ -321,7 +323,7 @@ expenses.MapPost("/{id}/reject", async (
 {
     var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
     return await HandleExpenseApprovalActionAsync(id, approved: false, body?.Reason, daprClient, logger, traceId, cancellationToken);
-});
+}).RequireAuthorization();
 
 expenses.MapGet("/{id}", async (string id, HttpContext context, DaprClient daprClient, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
