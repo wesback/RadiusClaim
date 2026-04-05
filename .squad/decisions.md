@@ -5838,3 +5838,105 @@ fi
   - Federated identity credential configured per pod (not part of bootstrap — handled by Radius CRD)
 - The `az aks update` call is idempotent and safe to re-run
 - Status check prevents Azure API throttling from repeated updates
+
+---
+
+### 2026-04-04: Decision — Subscription ID Injection Strategy
+**By:** Daisy (Lead)  
+**Status:** DECISION — Ready for Pete (Infrastructure) implementation  
+
+**Problem:** Subscription ID hardcoded in `azure-radius.parameters.json`; security risk and portability blocker.
+
+**Decision:** Use `rad deploy --parameters subscriptionId=$(az account show -o tsv --query id)` for CLI injection at deploy time.
+
+**Rationale:** Audit trail, portability, leverages existing bootstrap.sh, non-invasive.
+
+**Implementation:**
+1. Pete: Remove hardcoded subscription ID from parameter file; update bootstrap.sh to pass via CLI
+2. Eddie: Document auto-discovery behavior in deployment guides
+
+**Risk Mitigation:** Bootstrap pre-flight check fails if subscription unresolvable.
+
+**Blocked Until:** None — proceed immediately.
+
+---
+
+### 2026-04-04: Decision — API Authentication Strategy
+**By:** Daisy (Lead)  
+**Status:** DECISION — Ready for Billy (Backend) implementation  
+
+**Problem:** Expense API endpoints lack authentication; unsafe for production, blocks external integration.
+
+**Decision:** OAuth2 bearer token validated against Microsoft Entra ID (workload identity for service-to-service).
+
+**Rationale:**
+- Alignment with Azure-first sample; Entra is natural identity provider
+- Industry standard; production-ready
+- Service boundary: workflow engine → expense API; workload identity appropriate
+- Full audit trail; compliance-ready
+- Future extensibility for user-delegated flows
+
+**Implementation Phase 1 (Service-to-Service):**
+1. Billy: Add OAuth2 middleware (`AddAuthentication()` / `AddJwtBearer()`); apply `[Authorize]` to `/api/expenses/*`; unit tests with mocked bearer tokens
+2. Graham: Assign Entra app registration to container; configure OIDC workload identity federation; Radius recipe outputs client credentials
+3. Eddie: Document Entra app setup, workload identity bootstrap, local dev flow
+
+**Phase 2 (User-Delegated):** Defer — frontend passes user bearer token; not required for initial sample.
+
+**Security Posture:**
+- At rest: No secrets in code; managed identity handles token exchange
+- In transit: Bearer token in Authorization header (HTTPS enforced)
+- Audit: Entra logs all token issuance; request logs correlate to identity
+
+**Risk Mitigation:** Deployment fails early if workload identity not configured.
+
+**Related Decisions:** State-store auth pivot to Microsoft Entra; workload identity migration.
+
+---
+
+### 2026-04-04: Best Practice — HttpClient Factory Pattern
+**By:** Billy (Backend Dev)  
+**Status:** DIRECTIVE  
+
+**What:** All HTTP client usage must use `IHttpClientFactory`, never direct instantiation via `new HttpClient()`.
+
+**Why:** Direct instantiation leads to socket exhaustion under load; connection pool starvation on prod.
+
+**Implementation:**
+- Register: `builder.Services.AddHttpClient()` in Program.cs
+- Retrieve: `app.Services.GetRequiredService<IHttpClientFactory>()` or inject `IHttpClientFactory`
+- Create: `httpClientFactory.CreateClient(name)` for named clients
+
+**Affected Services:** expense-api (startup Dapr health check fixed); notification-svc, workflow-engine (no HttpClient usage).
+
+**Enforcement:** Grep for `new HttpClient` in CI to prevent regression.
+
+**Rationale:** Connection pooling critical for prod stability; factory pattern is .NET standard.
+
+---
+
+### 2026-04-04: Decision — Scaling Documentation Strategy
+**By:** Eddie (Docs/Story)  
+**Status:** IMPLEMENTED  
+**Issue:** #50 — Document expense-index scaling boundary
+
+**What:** RadiusClaim's expense-index design (single Dapr state array) has practical scaling boundary at 10K–50K expenses.
+
+**Implementation:**
+1. `docs/SCALING.md` — Comprehensive guide (6 mitigation strategies, diagnostics, monitoring, load-test scripts)
+2. README.md — Brief "Scaling" section linking to full docs (400 words)
+
+**Why:** Issue #50 identified gap; platform engineers hit performance walls with no diagnostic path. Six proven strategies outlined (archive, shard, Cosmos DB, caching, lazy indexing, snapshots).
+
+**Audience-aware:**
+- Architects: Root cause analysis (single expenseIndex array, Workflow history accumulation)
+- SREs/Operators: 4 observable metrics + kubectl / Azure Portal commands
+- QA: Copy-paste load-test and latency measurement scripts
+- Operators: Scaling recommendations for dev/demo/small/medium/large/enterprise deployments
+
+**Alignment:**
+- Cloud-agnostic strategies work on any K8s + Dapr
+- Store choice (Blob vs. Cosmos) is Dapr config, not app code
+- Operators learn limits *before* deploying
+
+**Next Steps:** Graham can implement Strategy 1 (archival) or Strategy 4 (caching) as Phase 4 enhancement if needed.
