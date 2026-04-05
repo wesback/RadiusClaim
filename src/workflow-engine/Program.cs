@@ -6,6 +6,10 @@ using WorkflowEngine;
 using WorkflowEngine.Activities;
 using WorkflowEngine.Models;
 using WorkflowEngine.Workflows;
+using OpenTelemetry;
+using OpenTelemetry.Trace;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Resources;
 
 const string CorrelationIdContextKey = "CorrelationId";
 const string CorrelationIdHeader = "X-Correlation-ID";
@@ -45,6 +49,38 @@ builder.Services.PostConfigure<ApprovalOptions>(options =>
     {
         options.ManualApprovalTimeoutHours = parsedTimeout;
     }
+});
+
+// OpenTelemetry: configure tracing and logging
+// Traces are exported to Jaeger (see docs/OBSERVABILITY.md for setup)
+var jaegerAgentHost = Environment.GetEnvironmentVariable("JAEGER_AGENT_HOST") ?? "localhost";
+var jaegerAgentPortStr = Environment.GetEnvironmentVariable("JAEGER_AGENT_PORT") ?? "6831";
+if (!int.TryParse(jaegerAgentPortStr, out var jaegerAgentPort))
+{
+    jaegerAgentPort = 6831;
+}
+
+builder.Services.AddOpenTelemetry()
+    .WithTracing(tracing =>
+    {
+        tracing
+            .SetResourceBuilder(
+                ResourceBuilder.CreateDefault()
+                    .AddService("workflow-engine"))
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddJaegerExporter(options =>
+            {
+                options.AgentHost = jaegerAgentHost;
+                options.AgentPort = jaegerAgentPort;
+            });
+    });
+
+builder.Logging.AddOpenTelemetry(options =>
+{
+    options.SetResourceBuilder(
+        ResourceBuilder.CreateDefault()
+            .AddService("workflow-engine"));
 });
 
 var app = builder.Build();
