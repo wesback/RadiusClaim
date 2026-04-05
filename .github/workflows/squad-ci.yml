@@ -17,7 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-<<<<<<< Updated upstream
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
@@ -31,14 +30,3 @@ jobs:
 
       - name: Test
         run: dotnet test --no-build --verbosity normal
-=======
-      - name: Build and test
-        run: |
-          # TODO: Add your dotnet build/test commands here
-          # Go:            go test ./...
-          # Python:        pip install -r requirements.txt && pytest
-          # .NET:          dotnet test
-          # Java (Maven):  mvn test
-          # Java (Gradle): ./gradlew test
-          echo "No build commands configured — update squad-ci.yml"
->>>>>>> Stashed changes
