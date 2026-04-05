@@ -54,6 +54,9 @@ param daprPrincipalId string
 @description('Client (application) ID of the Dapr workload identity for component auth metadata.')
 param daprClientId string = ''
 
+@description('Azure environment (cloud). Options: AzurePublicCloud, AzureUSGovernment, AzureChina. Defaults to AzurePublicCloud for sovereign cloud support.')
+param azureEnvironment string = 'AzurePublicCloud'
+
 // ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
@@ -91,10 +94,10 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 // ---------------------------------------------------------------------------
 
 resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, daprPrincipalId, 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7')
+  name: guid(keyVault.id, daprPrincipalId, '4633458b-17de-408a-b874-0445c86b69e6')
   scope: keyVault
   properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7') // Key Vault Secrets Officer
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6') // Key Vault Secrets User
     principalId: daprPrincipalId
     principalType: 'ServicePrincipal'
   }
@@ -144,7 +147,7 @@ output resourceMetadata object = {
     metadata: {
       vaultName: keyVault.name
       azureClientId: daprClientId
-      azureEnvironment: 'AZUREPUBLICCLOUD'
+      azureEnvironment: azureEnvironment
     }
   }
 }

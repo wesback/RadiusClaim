@@ -58,6 +58,9 @@ param daprPrincipalId string
 @description('Client (application) ID of the Dapr workload identity for component auth metadata.')
 param daprClientId string = ''
 
+@description('Azure environment (cloud). Options: AzurePublicCloud, AzureUSGovernment, AzureChina. Defaults to AzurePublicCloud for sovereign cloud support.')
+param azureEnvironment string = 'AzurePublicCloud'
+
 // ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
@@ -141,7 +144,7 @@ output resourceMetadata object = {
     metadata: {
       namespaceName: serviceBusNamespace.name
       azureClientId: daprClientId
-      azureEnvironment: 'AZUREPUBLICCLOUD'
+      azureEnvironment: azureEnvironment
       disableEntityManagement: 'false'
     }
   }

@@ -54,6 +54,9 @@ param daprPrincipalId string
 @description('Client (application) ID of the Dapr workload identity for component auth metadata.')
 param daprClientId string = ''
 
+@description('Azure environment (cloud). Options: AzurePublicCloud, AzureUSGovernment, AzureChina. Defaults to AzurePublicCloud for sovereign cloud support.')
+param azureEnvironment string = 'AzurePublicCloud'
+
 // ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
@@ -164,7 +167,7 @@ output resourceMetadata object = {
       accountName: storageAccount.name
       containerName: containerName
       azureClientId: daprClientId
-      azureEnvironment: 'AZUREPUBLICCLOUD'
+      azureEnvironment: azureEnvironment
       actorStateStore: 'true'
     }
   }
