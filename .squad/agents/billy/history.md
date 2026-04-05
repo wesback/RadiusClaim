@@ -136,3 +136,19 @@ Phase 4+ work deferred: output bindings, notification persistence, retry/dead-le
 - **File move commands (`mv`) can silently fail or copy instead of move in some environments.** Always verify the source file is gone after a move operation — if it's still present in both locations, you need to explicitly delete the original. This prevents ambiguous reference errors during compilation.
 - **When refactoring shared types used across many projects, batch-apply using statement updates efficiently.** Rather than editing files one at a time, identify all files that need the same using statement added (via grep), then apply the same edit pattern to all of them in parallel or sequence. This reduces the number of build-fix-rebuild cycles.
 - **For startup diagnostics in ASP.NET Core minimal APIs, retrieve ILogger from the built service provider instead of Console.WriteLine.** Before `app.Run()`, call `app.Services.GetRequiredService<ILogger<Program>>()` to get a properly configured logger instance. This keeps startup logging production-ready, structured, and consistent with the rest of the application's logging infrastructure. Use the same log levels (Information, Warning) as the original Console calls would have implied.
+
+## Issue #51 Work (Socket Exhaustion Fix)
+
+### Delivered
+
+**IHttpClientFactory Migration (Issue #51)**
+- Registered `IHttpClientFactory` in `expense-api/Program.cs` via `builder.Services.AddHttpClient()`
+- Replaced `new HttpClient { Timeout = TimeSpan.FromSeconds(2) }` with `httpClientFactory.CreateClient("DaprHealth")` in Dapr health check startup code
+- Removed all per-request HttpClient instantiation from the codebase
+- Verified notification-svc and workflow-engine do not create HttpClient instances (no health check pattern present in those services)
+
+## Learnings
+
+- **Creating HttpClient instances with `new` on every request is a socket exhaustion anti-pattern.** Even for one-time startup tasks like Dapr health checks, use `IHttpClientFactory` to leverage connection pooling and avoid socket resource leaks. Register with `builder.Services.AddHttpClient()` and retrieve via `IHttpClientFactory.CreateClient(name)` after the service provider is built.
+- **IHttpClientFactory should be used even for startup-time HTTP calls, not just request-scoped clients.** The startup Dapr health check in expense-api runs before the first HTTP request arrives, but it still benefits from proper connection pooling and resource management. Retrieve the factory from `app.Services` after calling `builder.Build()`, then create a named or typed client for the health probe.
+- **Search for `new HttpClient` across the codebase to find all anti-pattern instances.** Grep with the exact pattern identifies violations quickly. In this repo, only expense-api had the issue (one instance for Dapr health checks), while notification-svc and workflow-engine had no HttpClient usage at all.

@@ -8,6 +8,7 @@ COPY src/workflow-engine/WorkflowEngine.csproj src/workflow-engine/
 COPY src/expense-api/ExpenseApi.csproj src/expense-api/
 COPY src/notification-svc/NotificationSvc.csproj src/notification-svc/
 COPY src/shared/RadiusClaim.Contracts/RadiusClaim.Contracts.csproj src/shared/RadiusClaim.Contracts/
+COPY src/shared/RadiusClaim.Dapr/RadiusClaim.Dapr.csproj src/shared/RadiusClaim.Dapr/
 RUN dotnet restore src/workflow-engine/WorkflowEngine.csproj --nologo
 
 COPY src ./src

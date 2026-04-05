@@ -15,7 +15,7 @@
       "value": "latest"
     },
     "azureProviderScope": {
-      "value": "/subscriptions/5b6c36e5-b279-4005-8bf1-c73b1c2b71c2/resourceGroups/radiusclaim-rg"
+      "value": ""
     },
     "location": {
       "value": "eastus2"

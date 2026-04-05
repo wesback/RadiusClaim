@@ -548,3 +548,27 @@ FIC Sequencing Fix:
 
 **Status:** Complete. Portability paradigm FULLY REALIZED and PRODUCTION READY.
 
+
+---
+
+## Issue #45: Dockerfile Missing RadiusClaim.Dapr.csproj
+
+**Date:** 2025-01-27
+**Context:** Docker build reliability — dotnet restore was failing because RadiusClaim.Dapr.csproj wasn't copied in the build stage.
+
+**Problem:** 
+- Dockerfile COPY instructions copied *.csproj from individual project directories
+- RadiusClaim.Dapr.csproj lives at src/shared/RadiusClaim.Dapr/, but wasn't explicitly copied
+- This caused restore failures when any project referenced RadiusClaim.Dapr
+
+**Fixed:**
+- Added explicit COPY line for src/shared/RadiusClaim.Dapr/RadiusClaim.Dapr.csproj to:
+  - src/workflow-engine/Dockerfile
+  - src/notification-svc/Dockerfile
+- expense-api/Dockerfile already had it (was working)
+
+**Verification:** Both Dockerfiles now build successfully, restore completes without missing-project errors.
+
+**Learning:** When adding shared libraries to a multi-project solution, audit ALL Dockerfiles to ensure COPY instructions include the new .csproj file. Pattern: always explicitly COPY every .csproj that any project might reference, even if it's in a shared/ directory.
+
+**Status:** Complete. All Dockerfiles now include RadiusClaim.Dapr.csproj.

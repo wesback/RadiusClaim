@@ -5,6 +5,8 @@ using System.Net.Http;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 
 const string CorrelationIdContextKey = "CorrelationId";
 const string CorrelationIdHeader = "X-Correlation-ID";
@@ -16,11 +18,47 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 builder.Services.AddDaprClient();
+builder.Services.AddHttpClient();
+
+// OAuth2 JWT Bearer authentication: validate bearer tokens issued by Microsoft Entra ID
+// See docs/API_AUTHENTICATION.md for Entra ID setup and workload identity configuration
+var authority = builder.Configuration["AzureAd:Authority"] ?? "https://login.microsoftonline.com/common";
+var audience = builder.Configuration["AzureAd:Audience"] ?? "https://radiusclaim.azurewebsites.net/api";
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>
+    {
+        options.Authority = authority;
+        options.Audience = audience;
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateAudience = true,
+            ValidateIssuer = true,
+            ValidateLifetime = true,
+        };
+        
+        options.Events = new JwtBearerEvents
+        {
+            OnAuthenticationFailed = context =>
+            {
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                return Task.CompletedTask;
+            },
+            OnTokenValidated = context =>
+            {
+                return Task.CompletedTask;
+            }
+        };
+    });
+
+builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
 // Wait for Dapr sidecar to be ready before accepting requests
-var daprHealthClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+var httpClientFactory = app.Services.GetRequiredService<IHttpClientFactory>();
+var daprHealthClient = httpClientFactory.CreateClient("DaprHealth");
+daprHealthClient.Timeout = TimeSpan.FromSeconds(2);
 var maxRetries = 30;
 var retryCount = 0;
 while (retryCount < maxRetries)
@@ -54,6 +92,11 @@ if (retryCount >= maxRetries)
 
 app.UseStaticFiles();
 app.UseCloudEvents();
+
+// Add authentication and authorization middleware
+// Must be before MapGroup/endpoint routing
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Correlation ID middleware: extract from header or generate a new one
 app.Use(async (context, next) =>

@@ -1966,10 +1966,18 @@ section "Validating Dapr workload identity principal ID"
 test -n "${AZURE_PRINCIPAL_ID_CACHED:-}" || fail "Dapr workload identity principal ID is not set. This is required by the environment Bicep recipes to create RBAC role assignments on Azure resources. The recipes cannot function without this value."
 log_success "Principal ID validated: ${AZURE_PRINCIPAL_ID_CACHED}"
 
+section "Resolving Azure subscription ID for CLI parameter injection"
+RESOLVED_SUBSCRIPTION_ID="$(az account show -o tsv --query id 2>/dev/null)" || RESOLVED_SUBSCRIPTION_ID=""
+if [ -z "$RESOLVED_SUBSCRIPTION_ID" ]; then
+  fail "Failed to resolve subscription ID. Ensure 'az account show' succeeds and returns a valid subscription ID."
+fi
+log_success "Subscription ID resolved: ${RESOLVED_SUBSCRIPTION_ID}"
+
 ENV_DEPLOY_ARGS=(
   deploy
   "$REPO_ROOT/infra/radius/environments/azure-radius.bicep"
   --parameters "@${REPO_ROOT}/infra/radius/environments/azure-radius.parameters.json"
+  --parameters "subscriptionId=${RESOLVED_SUBSCRIPTION_ID}"
   --parameters "environmentName=${ENV_NAME}"
   --parameters "kubernetesNamespace=${KUBERNETES_NAMESPACE}"
   --parameters "azureProviderScope=/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}"
