@@ -669,27 +669,36 @@ static async Task TryStartExpenseWorkflowAsync(
     string traceId,
     CancellationToken cancellationToken)
 {
-    using var workflowClient = DaprClient.CreateInvokeHttpClient(RadiusClaimDapr.AppIds.WorkflowEngine);
-    workflowClient.DefaultRequestHeaders.Add(CorrelationIdHeader, traceId);
-
-    using var response = await workflowClient.PostAsJsonAsync("workflows/start", submission, cancellationToken);
-    if (response.IsSuccessStatusCode)
+    try
     {
-        logger.LogInformation(
-            "Workflow started for submission {CorrelationId} [TraceId: {TraceId}]",
-            submission.CorrelationId,
-            traceId);
+        using var workflowClient = DaprClient.CreateInvokeHttpClient(RadiusClaimDapr.AppIds.WorkflowEngine);
+        workflowClient.DefaultRequestHeaders.Add(CorrelationIdHeader, traceId);
+
+        using var response = await workflowClient.PostAsJsonAsync("workflows/start", submission, cancellationToken);
+        if (response.IsSuccessStatusCode)
+        {
+            logger.LogInformation(
+                "Workflow started for submission {CorrelationId} [TraceId: {TraceId}]",
+                submission.CorrelationId,
+                traceId);
+        }
+        else
+        {
+            logger.LogWarning(
+                "Workflow start failed for submission {CorrelationId} with status {StatusCode} [TraceId: {TraceId}]",
+                submission.CorrelationId,
+                response.StatusCode,
+                traceId);
+        }
     }
-    else
+    catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
     {
         logger.LogWarning(
-            "Workflow start failed for submission {CorrelationId} with status {StatusCode} [TraceId: {TraceId}]",
+            ex,
+            "Could not start workflow for submission {CorrelationId} — expense was persisted but workflow initiation failed [TraceId: {TraceId}]",
             submission.CorrelationId,
-            response.StatusCode,
             traceId);
     }
-
-    response.EnsureSuccessStatusCode();
 }
 
 static async Task<IResult> HandleExpenseApprovalActionAsync(
