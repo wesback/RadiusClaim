@@ -190,6 +190,15 @@ if [[ -n "$SERVICEBUS_NAMESPACE" ]] && [[ "$SERVICEBUS_NAMESPACE" != *".serviceb
   SERVICEBUS_NAMESPACE="${SERVICEBUS_NAMESPACE}.servicebus.windows.net"
 fi
 
+# Extract Entra auth details for Pub/Sub
+PUBSUB_TENANT_ID=$(echo "$PUBSUB_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureTenantId // ""')
+PUBSUB_CLIENT_ID=$(echo "$PUBSUB_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureClientId // ""')
+PUBSUB_ENVIRONMENT=$(echo "$PUBSUB_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureEnvironment // "AZUREPUBLICCLOUD"')
+
+# Fall back to script parameters if not in recipe metadata
+PUBSUB_TENANT_ID=${PUBSUB_TENANT_ID:-$TENANT_ID}
+PUBSUB_CLIENT_ID=${PUBSUB_CLIENT_ID:-$CLIENT_ID}
+
 # Secrets: Extract Key Vault name from the /Microsoft.KeyVault/vaults/ resource
 KEYVAULT_NAME=$(echo "$SECRETS_JSON" | jq -r '
   .properties.status.outputResources[]?
@@ -197,6 +206,15 @@ KEYVAULT_NAME=$(echo "$SECRETS_JSON" | jq -r '
   | .id
   | split("/")[-1]
 ')
+
+# Extract Entra auth details for Key Vault
+KEYVAULT_TENANT_ID=$(echo "$SECRETS_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureTenantId // ""')
+KEYVAULT_CLIENT_ID=$(echo "$SECRETS_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureClientId // ""')
+KEYVAULT_ENVIRONMENT=$(echo "$SECRETS_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureEnvironment // "AZUREPUBLICCLOUD"')
+
+# Fall back to script parameters if not in recipe metadata
+KEYVAULT_TENANT_ID=${KEYVAULT_TENANT_ID:-$TENANT_ID}
+KEYVAULT_CLIENT_ID=${KEYVAULT_CLIENT_ID:-$CLIENT_ID}
 
 # Validate extracted values
 if [[ -z "$SERVICEBUS_NAMESPACE" ]]; then
@@ -217,21 +235,25 @@ log_info "  Key Vault: $KEYVAULT_NAME"
 TEMP_MANIFEST=$(mktemp)
 trap 'rm -f "$TEMP_MANIFEST"' EXIT
 
-# Build state store component based on type
-STATE_STORE_COMPONENT=""
-if [[ "$STATESTORE_TYPE" == "state.postgresql" ]]; then
-  STATE_STORE_COMPONENT=$(cat <<'COMPONENT'
+# Build complete Dapr component manifest with proper variable substitution
+# Write directly to temp file (don't use intermediate variables with heredoc)
+cat > "$TEMP_MANIFEST" <<EOF
 ---
-# State Store Component - PostgreSQL (Workload Identity)
+# State Store Component (Type depends on recipe: PostgreSQL or Blob Storage)
 apiVersion: dapr.io/v1alpha1
 kind: Component
 metadata:
   name: statestore
   namespace: $NAMESPACE
 spec:
-  type: state.postgresql
+  type: $(if [[ "$STATESTORE_TYPE" == "state.postgresql" ]]; then echo "state.postgresql"; else echo "state.azure.blobstorage"; fi)
   version: v2
   metadata:
+EOF
+
+# Append state store specific metadata
+if [[ "$STATESTORE_TYPE" == "state.postgresql" ]]; then
+  cat >> "$TEMP_MANIFEST" <<EOF
   - name: connectionString
     value: "$CONNECTION_STRING"
   - name: useAzureAD
@@ -244,21 +266,9 @@ spec:
     value: "$STATESTORE_ENVIRONMENT"
   - name: actorStateStore
     value: "true"
-COMPONENT
-)
+EOF
 else
-  STATE_STORE_COMPONENT=$(cat <<'COMPONENT'
----
-# State Store Component - Azure Blob Storage (Workload Identity)
-apiVersion: dapr.io/v1alpha1
-kind: Component
-metadata:
-  name: statestore
-  namespace: $NAMESPACE
-spec:
-  type: state.azure.blobstorage
-  version: v2
-  metadata:
+  cat >> "$TEMP_MANIFEST" <<EOF
   - name: accountName
     value: "$STORAGE_ACCOUNT"
   - name: containerName
@@ -271,12 +281,11 @@ spec:
     value: "$STATESTORE_ENVIRONMENT"
   - name: actorStateStore
     value: "true"
-COMPONENT
-)
+EOF
 fi
 
-cat > "$TEMP_MANIFEST" <<EOF
-$STATE_STORE_COMPONENT
+# Pub/Sub component
+cat >> "$TEMP_MANIFEST" <<EOF
 ---
 # Pub/Sub Component - Azure Service Bus Topics (Workload Identity)
 apiVersion: dapr.io/v1alpha1
@@ -291,11 +300,11 @@ spec:
   - name: namespaceName
     value: "$SERVICEBUS_NAMESPACE"
   - name: azureTenantId
-    value: "$TENANT_ID"
+    value: "$PUBSUB_TENANT_ID"
   - name: azureClientId
-    value: "$CLIENT_ID"
+    value: "$PUBSUB_CLIENT_ID"
   - name: azureEnvironment
-    value: "AZUREPUBLICCLOUD"
+    value: "$PUBSUB_ENVIRONMENT"
   - name: disableEntityManagement
     value: "false"
 ---
@@ -312,11 +321,11 @@ spec:
   - name: vaultName
     value: "$KEYVAULT_NAME"
   - name: azureTenantId
-    value: "$TENANT_ID"
+    value: "$KEYVAULT_TENANT_ID"
   - name: azureClientId
-    value: "$CLIENT_ID"
+    value: "$KEYVAULT_CLIENT_ID"
   - name: azureEnvironment
-    value: "AZUREPUBLICCLOUD"
+    value: "$KEYVAULT_ENVIRONMENT"
 EOF
 
 log_info "Generated Dapr component manifest at $TEMP_MANIFEST"
