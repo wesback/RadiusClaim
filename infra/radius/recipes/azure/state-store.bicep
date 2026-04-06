@@ -45,7 +45,7 @@
 // - The Dapr managed identity is registered as the PostgreSQL Entra admin
 // - No local admin account (administratorLogin) exists on the server
 // - TLS required: SSL mode enforced for all connections
-// - Network: Azure-services firewall rule permits AKS cluster access
+// - Network: Firewall disabled by default (allowAzureServices = false); use private endpoints or VNet delegated subnet for production
 //
 // WHY ENTRA-ONLY (no password auth)?
 // - Reference samples must teach security best practices
@@ -96,6 +96,17 @@ param azureResourceGroupName string
 
 @description('Dapr workload identity tenant ID for Entra authentication.')
 param azureTenantId string
+
+@description('''
+Allow the 0.0.0.0/0.0.0.0 "Allow Azure services" magic firewall rule.
+Defaults to false (no rule created). Set true only for quick dev/demo where VNet
+integration is unavailable. NEVER enable in production.
+
+PRODUCTION RECOMMENDATION: Use private endpoints or a delegated-subnet VNet
+integration (network.delegatedSubnetResourceId) instead. The 0.0.0.0 rule permits
+all Azure-hosted traffic — not just your AKS cluster.
+''')
+param allowAzureServices bool = false
 
 // ---------------------------------------------------------------------------
 // Derived names
@@ -172,10 +183,14 @@ resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-
 }
 
 // ---------------------------------------------------------------------------
-// PostgreSQL Firewall Rule — Allow Azure Services (AKS cluster access)
+// PostgreSQL Firewall Rule — Conditional; disabled by default
 // ---------------------------------------------------------------------------
+// No rule is deployed when allowAzureServices = false (the default).
+// To enable broad Azure-service access for dev/demo, set allowAzureServices = true.
+// For AKS-scoped access without a broad rule, configure VNet integration via
+// network.delegatedSubnetResourceId in the server properties above.
 
-resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = {
+resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (allowAzureServices) {
   parent: postgresqlServer
   name: 'AllowAzureServices'
   properties: {
