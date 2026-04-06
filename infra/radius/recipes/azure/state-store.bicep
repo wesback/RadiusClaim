@@ -109,6 +109,23 @@ var serverName = 'pgstate${nameSuffix}'
 var postgresqlServerArmId = '/subscriptions/${azureSubscriptionId}/resourceGroups/${azureResourceGroupName}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${serverName}'
 
 // ---------------------------------------------------------------------------
+// Sovereign cloud DNS suffix map
+// ---------------------------------------------------------------------------
+// Maps azureEnvironment to the correct PostgreSQL FQDN suffix for each cloud.
+// The server's fullyQualifiedDomainName property already resolves to the right
+// suffix at runtime, so the connection string does not need to interpolate this
+// directly. This map is provided for:
+//   - Private DNS zone name construction
+//   - Explicit documentation of supported clouds
+//   - Any tooling that needs the suffix before the server is deployed
+var postgresDnsSuffixMap = {
+  AzurePublicCloud: '.postgres.database.azure.com'
+  AzureUSGovernment: '.postgres.database.usgovcloudapi.net'
+  AzureChina: '.postgres.database.chinacloudapi.cn'
+}
+var postgresDnsSuffix = postgresDnsSuffixMap[azureEnvironment]
+
+// ---------------------------------------------------------------------------
 // PostgreSQL Flexible Server — Entra-only authentication (no password auth)
 // ---------------------------------------------------------------------------
 // This server has NO local administrator account and NO password credentials.
@@ -267,6 +284,7 @@ output resourceMetadata object = {
   postgresqlServerName: postgresqlServer.name
   postgresqlServerId: postgresqlServerArmId
   postgresqlFqdn: postgresqlServer.properties.fullyQualifiedDomainName
+  postgresDnsSuffix: postgresDnsSuffix  // Sovereign-cloud-aware suffix for this deployment
   databaseName: databaseName
   databaseUser: daprPrincipalName  // Entra admin display name (backward-compat key)
   resourceGroup: azureResourceGroupName
