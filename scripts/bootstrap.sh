@@ -1794,11 +1794,20 @@ if [ "$SETUP_WORKLOAD_IDENTITY" = true ]; then
     --query "properties.outputs.managedIdentityPrincipalId.value" \
     -o tsv)
   
-  if [ -z "$MANAGED_IDENTITY_CLIENT_ID" ] || [ -z "$MANAGED_IDENTITY_PRINCIPAL_ID" ]; then
-    fail "Failed to retrieve managed identity outputs from Bicep deployment."
+  # Capture identity name from deployment output — used as daprAzurePrincipalName
+  # in the environment Bicep (PostgreSQL Entra admin display name / connection user).
+  MANAGED_IDENTITY_NAME=$(az deployment group show \
+    --resource-group "$RESOURCE_GROUP" \
+    --name "$WORKLOAD_IDENTITY_DEPLOYMENT" \
+    --query "properties.outputs.managedIdentityName.value" \
+    -o tsv)
+  
+  if [ -z "$MANAGED_IDENTITY_CLIENT_ID" ] || [ -z "$MANAGED_IDENTITY_PRINCIPAL_ID" ] || [ -z "$MANAGED_IDENTITY_NAME" ]; then
+    fail "Failed to retrieve managed identity outputs from Bicep deployment. Expected: managedIdentityClientId, managedIdentityPrincipalId, managedIdentityName."
   fi
   
   log_success "Workload identity deployed"
+  log_info "  Name:         $MANAGED_IDENTITY_NAME"
   log_info "  Client ID:    $MANAGED_IDENTITY_CLIENT_ID"
   log_info "  Principal ID: $MANAGED_IDENTITY_PRINCIPAL_ID"
   

@@ -120,6 +120,35 @@ Applied to all three Dapr resource types: `Applications.Dapr/secretStores`, `App
 
 ## Learnings
 
+### 2025-07-25: PostgreSQL recipe security review — bootstrap identity name bug and JSON drift
+
+**Issues fixed:** #54 (Entra admin wiring), #55 (role strategy), #56 (password auth consistency)
+
+**Architecture decisions:**
+- Dapr workload identity as PostgreSQL Entra admin is an accepted over-privilege for a reference sample. Documented in `.squad/decisions/inbox/rod-postgresql-security-decision.md`.
+- `authConfig.tenantId` is required and explicitly set. Omitting it causes silent Entra auth failures on multi-tenant configurations.
+- The `name` field on `Microsoft.DBforPostgreSQL/flexibleServers/administrators` must be the object (principal) ID, NOT the client ID. Azure API rejects mismatches silently — the admin appears to create but never works for authentication.
+- PostgreSQL Entra connection `user=` must match the managed identity display name exactly.
+
+**Bootstrap bug fixed:**
+- `MANAGED_IDENTITY_NAME` was unset in the fresh-deploy branch (if-path) of `scripts/bootstrap.sh`. With `set -euo pipefail`, line 1988 (`--parameters "daprAzurePrincipalName=${MANAGED_IDENTITY_NAME}"`) would cause a fatal "unbound variable" error on any first-time deployment.
+- Fix: Capture `MANAGED_IDENTITY_NAME` from `workload-identity.bicep` deployment output (`managedIdentityName`), matching how `clientId` and `principalId` are captured.
+- Added `MANAGED_IDENTITY_NAME` to the validation guard (3-way empty check instead of 2-way).
+
+**JSON mirror:**
+- `infra/radius/recipes/azure/state-store.json` was severely stale: had `passwordAuth: "Enabled"`, `administratorLogin`, and `databaseUser` as a param with default `"dapr_app"`. Regenerated via `az bicep build`.
+- Pattern: Always regenerate JSON mirrors in the same commit as Bicep changes.
+
+**Files changed:**
+- `scripts/bootstrap.sh` — Fixed MANAGED_IDENTITY_NAME capture in fresh-deploy path
+- `infra/radius/recipes/azure/state-store.json` — Regenerated from Bicep
+- `.squad/decisions/inbox/rod-postgresql-security-decision.md` — Security trade-off decision
+
+**Future hardening:**
+- Separate admin identity from Dapr runtime identity for production deployments
+- bootstrap.sh `else`-branch still hardcodes `MANAGED_IDENTITY_NAME="radiusclaim-workload-identity"` — should derive from a shared constant or query the identity by tag
+- Post-deploy smoke test: verify `databaseUser` in recipe output matches actual identity name, verify Entra token auth works end-to-end
+
 ### 2025-04-02: Kubernetes client rate limiter timeout in Radius deployment polling (context deadline exceeded)
 - `rad deploy` fails with "deployment timed out... client rate limiter Wait returned an error: context deadline exceeded" when Kubernetes API is slow/overloaded during status polling
 - This is a TRANSIENT error: pods finish deploying normally despite the polling timeout; `rad deploy` command itself just fails without retry logic
