@@ -91,6 +91,14 @@ param azureEnvironment string = 'AzurePublicCloud'
 @description('Azure subscription ID for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
 param azureSubscriptionId string
 
+// Pin to a specific major version so every deployment gets the same engine regardless of when
+// it runs. Azure Database for PostgreSQL Flexible Server accepts major-version strings ('15',
+// '16', etc.). '15' is the LTS-grade stable release used as the pinned default here — it has
+// broad Dapr driver compatibility and is GA on all Azure regions. Increment deliberately when
+// you are ready to test the upgrade path; never use an unversioned or 'latest' equivalent.
+@description('PostgreSQL major version. Pin this explicitly — leaving it unset or "latest" produces non-reproducible deployments.')
+param postgresqlVersion string = '15'
+
 @description('Azure resource group name for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
 param azureResourceGroupName string
 
@@ -123,7 +131,7 @@ resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-
     tier: 'Burstable'
   }
   properties: {
-    version: '15'
+    version: postgresqlVersion
     authConfig: {
       activeDirectoryAuth: 'Enabled'
       passwordAuth: 'Disabled'
