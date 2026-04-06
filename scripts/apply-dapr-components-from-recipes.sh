@@ -97,18 +97,86 @@ SECRETS_JSON=$(query_recipe_metadata "Applications.Dapr/secretStores" "platform-
 # ── Extract Azure resource names from Radius outputResources ───────────────────
 # Radius API returns only Azure resource IDs in outputResources[], not recipe outputs.
 # Parse the IDs to extract resource names for Dapr component metadata.
+#
+# The state store can be either Azure Blob Storage (legacy) or PostgreSQL (new).
+# We detect the type from the recipe metadata and extract the appropriate values.
 
-# State Store: Extract storage account name from the /Microsoft.Storage/storageAccounts/ resource
-# (exclude blobServices and containers which are children)
-STORAGE_ACCOUNT=$(echo "$STATESTORE_JSON" | jq -r '
-  .properties.status.outputResources[]?
-  | select(.id | test("/Microsoft.Storage/storageAccounts/[^/]+$"))
-  | .id
-  | split("/")[-1]
-')
+# Detect state store type from recipe metadata
+STATESTORE_TYPE=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.componentType // "state.azure.blobstorage"')
+log_info "Detected state store type: $STATESTORE_TYPE"
 
-# Container name is hardcoded in the state-store recipe (expense-state)
-CONTAINER_NAME="expense-state"
+# Initialize state store variables
+STORAGE_ACCOUNT=""
+CONTAINER_NAME=""
+POSTGRES_SERVER=""
+POSTGRES_DATABASE=""
+POSTGRES_USER=""
+CONNECTION_STRING=""
+STATESTORE_TENANT_ID=""
+STATESTORE_CLIENT_ID=""
+STATESTORE_ENVIRONMENT=""
+
+if [[ "$STATESTORE_TYPE" == "state.postgresql" ]]; then
+  # PostgreSQL state store: Extract from outputResources
+  log_info "Extracting PostgreSQL state store configuration..."
+  
+  POSTGRES_SERVER=$(echo "$STATESTORE_JSON" | jq -r '
+    .properties.status.outputResources[]?
+    | select(.id | test("/Microsoft.DBforPostgreSQL/flexibleServers/[^/]+$"))
+    | .id
+    | split("/")[-1]
+  ')
+  
+  # Get connection details from resourceMetadata
+  POSTGRES_DATABASE=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.databaseName // "dapr_state"')
+  POSTGRES_USER=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.databaseUser // "dapr_app"')
+  CONNECTION_STRING=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.values.connectionString // ""')
+  
+  # Get Entra auth details from recipe metadata
+  STATESTORE_TENANT_ID=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureTenantId // ""')
+  STATESTORE_CLIENT_ID=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureClientId // ""')
+  STATESTORE_ENVIRONMENT=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureEnvironment // "AZUREPUBLICCLOUD"')
+  
+  if [[ -z "$POSTGRES_SERVER" ]] || [[ -z "$CONNECTION_STRING" ]]; then
+    log_error "Failed to extract PostgreSQL server or connection string. Check Radius recipe deployment."
+    exit 1
+  fi
+  
+  log_info "Extracted PostgreSQL state store:"
+  log_info "  Server: $POSTGRES_SERVER"
+  log_info "  Database: $POSTGRES_DATABASE"
+  log_info "  User: $POSTGRES_USER"
+else
+  # Azure Blob Storage state store (legacy): Extract from outputResources
+  log_info "Extracting Azure Blob Storage state store configuration..."
+  
+  STORAGE_ACCOUNT=$(echo "$STATESTORE_JSON" | jq -r '
+    .properties.status.outputResources[]?
+    | select(.id | test("/Microsoft.Storage/storageAccounts/[^/]+$"))
+    | .id
+    | split("/")[-1]
+  ')
+  
+  CONTAINER_NAME="expense-state"
+  
+  # Get Entra auth details from recipe metadata, fall back to script parameters
+  STATESTORE_TENANT_ID=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureTenantId // ""')
+  STATESTORE_CLIENT_ID=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureClientId // ""')
+  STATESTORE_ENVIRONMENT=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureEnvironment // "AZUREPUBLICCLOUD"')
+  
+  # Fall back to script parameters if not in recipe metadata (backward compatibility)
+  STATESTORE_TENANT_ID=${STATESTORE_TENANT_ID:-$TENANT_ID}
+  STATESTORE_CLIENT_ID=${STATESTORE_CLIENT_ID:-$CLIENT_ID}
+  
+  if [[ -z "$STORAGE_ACCOUNT" ]]; then
+    log_error "Failed to extract storage account name from statestore resource. Check Radius recipe deployment."
+    exit 1
+  fi
+  
+  log_info "Extracted Azure Blob Storage state store:"
+  log_info "  Storage Account: $STORAGE_ACCOUNT"
+  log_info "  Container: $CONTAINER_NAME"
+fi
 
 # Pub/Sub: Extract Service Bus namespace name from the /Microsoft.ServiceBus/namespaces/ resource
 # Append .servicebus.windows.net — Dapr requires the FQDN, not the short name
@@ -131,11 +199,6 @@ KEYVAULT_NAME=$(echo "$SECRETS_JSON" | jq -r '
 ')
 
 # Validate extracted values
-if [[ -z "$STORAGE_ACCOUNT" ]]; then
-  log_error "Failed to extract storage account name from statestore resource. Check Radius recipe deployment."
-  exit 1
-fi
-
 if [[ -z "$SERVICEBUS_NAMESPACE" ]]; then
   log_error "Failed to extract Service Bus namespace from pubsub resource. Check Radius recipe deployment."
   exit 1
@@ -147,8 +210,6 @@ if [[ -z "$KEYVAULT_NAME" ]]; then
 fi
 
 log_info "Extracted Azure resources:"
-log_info "  Storage Account: $STORAGE_ACCOUNT"
-log_info "  Container: $CONTAINER_NAME"
 log_info "  Service Bus Namespace: $SERVICEBUS_NAMESPACE"
 log_info "  Key Vault: $KEYVAULT_NAME"
 
@@ -156,7 +217,37 @@ log_info "  Key Vault: $KEYVAULT_NAME"
 TEMP_MANIFEST=$(mktemp)
 trap 'rm -f "$TEMP_MANIFEST"' EXIT
 
-cat > "$TEMP_MANIFEST" <<EOF
+# Build state store component based on type
+STATE_STORE_COMPONENT=""
+if [[ "$STATESTORE_TYPE" == "state.postgresql" ]]; then
+  STATE_STORE_COMPONENT=$(cat <<'COMPONENT'
+---
+# State Store Component - PostgreSQL (Workload Identity)
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: statestore
+  namespace: $NAMESPACE
+spec:
+  type: state.postgresql
+  version: v2
+  metadata:
+  - name: connectionString
+    value: "$CONNECTION_STRING"
+  - name: useAzureAD
+    value: "true"
+  - name: azureTenantId
+    value: "$STATESTORE_TENANT_ID"
+  - name: azureClientId
+    value: "$STATESTORE_CLIENT_ID"
+  - name: azureEnvironment
+    value: "$STATESTORE_ENVIRONMENT"
+  - name: actorStateStore
+    value: "true"
+COMPONENT
+)
+else
+  STATE_STORE_COMPONENT=$(cat <<'COMPONENT'
 ---
 # State Store Component - Azure Blob Storage (Workload Identity)
 apiVersion: dapr.io/v1alpha1
@@ -171,15 +262,21 @@ spec:
   - name: accountName
     value: "$STORAGE_ACCOUNT"
   - name: containerName
-    value: "${CONTAINER_NAME:-expense-state}"
+    value: "$CONTAINER_NAME"
   - name: azureTenantId
-    value: "$TENANT_ID"
+    value: "$STATESTORE_TENANT_ID"
   - name: azureClientId
-    value: "$CLIENT_ID"
+    value: "$STATESTORE_CLIENT_ID"
   - name: azureEnvironment
-    value: "AZUREPUBLICCLOUD"
+    value: "$STATESTORE_ENVIRONMENT"
   - name: actorStateStore
     value: "true"
+COMPONENT
+)
+fi
+
+cat > "$TEMP_MANIFEST" <<EOF
+$STATE_STORE_COMPONENT
 ---
 # Pub/Sub Component - Azure Service Bus Topics (Workload Identity)
 apiVersion: dapr.io/v1alpha1

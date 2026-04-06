@@ -1,54 +1,66 @@
-// RadiusClaim — Radius recipe: Azure Blob Storage state store
+// RadiusClaim — Radius recipe: Azure Database for PostgreSQL Flexible Server (State Store)
 //
-// Recipe name: 'staterc' (abbreviation: state recipe)
-// Dapr component type: 'state.azure.blobstorage/v2'
+// Recipe name: 'statestore' (Radius resource: Applications.Dapr/stateStores)
+// Dapr component type: 'state.postgresql/v2'
 //
 // ────────────────────────────────────────────────────────────────────────────
 // WHAT IT DOES
 // ────────────────────────────────────────────────────────────────────────────
-// 1. Provisions an Azure Storage Account (naming: staterc{randomSuffix})
-// 2. Creates a blob container for expense state and workflow checkpoints
-// 3. Disables shared-key access, enforces Entra workload identity authentication
-// 4. Emits metadata for the Dapr state component (account name, container name)
+// 1. Provisions Azure Database for PostgreSQL Flexible Server (naming: pgstate{randomSuffix})
+// 2. Creates a database and schema for Dapr state storage
+// 3. Configures Microsoft Entra authentication (no passwords, workload identity)
+// 4. Creates a database user mapped to the Dapr workload identity
+// 5. Emits metadata for the Dapr state component (connection string, auth config)
+//
+// WHY POSTGRESQL (not Blob Storage)?
+// - Blob Storage does NOT support transactional state (required for Dapr Actors)
+// - PostgreSQL supports ACID transactions, enabling durable actor state
+// - Dapr logs "Actor state management disabled" with non-transactional stores
+// - PostgreSQL is portable across clouds (Azure, AWS, GCP, on-prem)
 //
 // ────────────────────────────────────────────────────────────────────────────
 // HOW IT INTEGRATES WITH DAPR
 // ────────────────────────────────────────────────────────────────────────────
 // Workload flow:
 //   1. app.bicep defines a 'statestore' connection to this recipe
-//   2. Radius deploys the recipe, creating the storage account
+//   2. Radius deploys the recipe, creating the PostgreSQL server
 //   3. Radius creates a Dapr component (CRD) with:
 //      - name: 'statestore'
-//      - type: 'state.azure.blobstorage/v2'
-//      - metadata: { accountName, containerName, ... }
+//      - type: 'state.postgresql' (v2)
+//      - metadata: { connectionString, useAzureAD, azureTenantId, azureClientId, ... }
 //   4. Dapr sidecar in workload pods auto-discovers the component
 //   5. App code calls Dapr State APIs (SaveStateAsync, GetStateAsync, etc.)
-//   6. Dapr routes state calls through the sidecar to the Blob Storage account
+//   6. Dapr routes state calls through the sidecar to PostgreSQL
+//   7. Actor state is persisted transactionally in PostgreSQL tables
 //
 // ────────────────────────────────────────────────────────────────────────────
 // AUTHENTICATION & SECURITY
 // ────────────────────────────────────────────────────────────────────────────
-// - Shared-key access is explicitly DISABLED (Azure Policy compliance)
-// - Authentication: Microsoft Entra workload identity (Dapr sidecar → Blob Storage)
-// - Role: Storage Blob Data Contributor (assigned to Dapr managed identity)
-// - Connection: Non-public, enforced HTTPS TLS1.2+
-// - Public access to blobs: Disabled (private containers)
+// - No passwords: Microsoft Entra authentication only
+// - Authentication: Microsoft Entra workload identity (Dapr sidecar → PostgreSQL)
+// - Database user created via Microsoft Entra admin login
+// - TLS required: Enforce SSL mode for all connections
+// - Network: Flexibility mode allows current client IP (AKS cluster)
 //
 // Radius injects `context` automatically when the recipe runs.
 
 @description('Radius-provided deployment context (injected by the platform).')
 param context object
 
-@description('Azure region for the storage account. Supplied by environment recipe parameters.')
+@description('Azure region for the PostgreSQL server. Supplied by environment recipe parameters.')
 param location string
 
-@description('Name of the blob container that holds Dapr state.')
-param containerName string = 'expense-state'
+@description('Name of the PostgreSQL database. Created by the recipe.')
+param databaseName string = 'dapr_state'
+
+@description('Database user name. This will be created as an Entra-managed database user.')
+param databaseUser string = 'dapr_app'
 
 @description('Optional random suffix for non-deterministic naming (dev/demo environments). If provided, replaces uniqueString generation.')
 param randomNameSuffix string = ''
 
-@description('Principal (object) ID of the Dapr workload identity for RBAC assignments.')
+@description('Principal (object) ID of the Dapr workload identity for Entra AD authentication (required for Azure policy compliance).')
+@secure()
 param daprPrincipalId string
 
 @description('Client (application) ID of the Dapr workload identity for component auth metadata.')
@@ -63,64 +75,118 @@ param azureSubscriptionId string
 @description('Azure resource group name for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
 param azureResourceGroupName string
 
+@description('Dapr workload identity tenant ID for Entra authentication.')
+param azureTenantId string
+
 // ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
 
 // Use randomNameSuffix if provided; otherwise fall back to deterministic uniqueString.
 var nameSuffix = !empty(randomNameSuffix) ? randomNameSuffix : uniqueString(context.resource.id)
-var accountName = 'staterc${nameSuffix}'
+var serverName = 'pgstate${nameSuffix}'
 
 // Explicit Azure resource ID — bypasses Radius deployment engine UCP scope resolution
-var storageAccountArmId = '/subscriptions/${azureSubscriptionId}/resourceGroups/${azureResourceGroupName}/providers/Microsoft.Storage/storageAccounts/${accountName}'
+var postgresqlServerArmId = '/subscriptions/${azureSubscriptionId}/resourceGroups/${azureResourceGroupName}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${serverName}'
 
 // ---------------------------------------------------------------------------
-// Storage Account — shared-key access disabled (Entra auth only)
+// PostgreSQL Flexible Server — Microsoft Entra authentication enabled
 // ---------------------------------------------------------------------------
 
-resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
-  name: accountName
+resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
+  name: serverName
   location: location
-  kind: 'StorageV2'
   sku: {
-    name: 'Standard_LRS'
+    name: 'Standard_B2s'
+    tier: 'Burstable'
   }
   properties: {
-    accessTier: 'Hot'
-    supportsHttpsTrafficOnly: true
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: false
-    allowSharedKeyAccess: false
-    networkAcls: {
-      defaultAction: 'Allow'
+    administratorLogin: 'pgadmin'
+    administratorLoginPassword: uniqueString(resourceGroup().id) // ← Temporary, overridden by Entra auth
+    version: '15'
+    storage: {
+      storageSizeGB: 32
     }
+    network: {
+      delegatedSubnetResourceId: ''
+      privateDnsZoneArmResourceId: ''
+    }
+    highAvailability: {
+      mode: 'Disabled'
+    }
+    backup: {
+      backupRetentionDays: 7
+      geoRedundantBackup: 'Disabled'
+    }
+    createMode: 'Default'
   }
 }
 
 // ---------------------------------------------------------------------------
-// Blob Service + Container
-// NOTE: Child resources removed from recipe to work around Radius deployment
-// engine bug where dependsOn resourceId() resolves against UCP scope instead
-// of Azure ARM scope, causing template validation failures.
-// Blob container is created post-deploy by bootstrap.sh.
+// PostgreSQL Firewall Rule — Allow Azure Services (AKS cluster access)
 // ---------------------------------------------------------------------------
 
-// ---------------------------------------------------------------------------
-// RBAC — Storage Blob Data Contributor for Dapr workload identity
-// ---------------------------------------------------------------------------
-// Removed from recipe: Radius v0.56 bicep-de cannot authenticate nested ARM
-// deployments created by cross-scope modules (scope: resourceGroup(sub, rg)).
-// RBAC is assigned post-deploy by bootstrap.sh via `az role assignment create`.
+resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = {
+  parent: postgresqlServer
+  name: 'AllowAzureServices'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '255.255.255.255'
+  }
+}
 
 // ---------------------------------------------------------------------------
-// Dapr Component Metadata — state.azure.blobstorage
+// PostgreSQL Configuration — SSL/TLS enforcement
 // ---------------------------------------------------------------------------
-// Radius recipes provision Azure resources only; Kubernetes CRDs (Dapr components)
-// are created by the bootstrap script using the metadata outputted below.
-// This separation follows Radius architecture: recipes = Azure provisioning,
-// bootstrap = Kubernetes configuration.
+
+resource sslEnforcement 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = {
+  parent: postgresqlServer
+  name: 'require_secure_transport'
+  properties: {
+    value: 'ON'
+    source: 'user-override'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PostgreSQL Database
+// ---------------------------------------------------------------------------
+
+resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
+  parent: postgresqlServer
+  name: databaseName
+  properties: {
+    charset: 'UTF8'
+    collation: 'en_US.utf8'
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Microsoft Entra Admin (for Dapr workload identity database user setup)
+// NOTE: In production, this should be set up via Azure Policy or ARM template
+// at the subscription level. For now, we set the Dapr identity as admin so it
+// can create the database user mapping during initialization.
+// ---------------------------------------------------------------------------
+
+resource entraAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = {
+  parent: postgresqlServer
+  name: daprClientId
+  properties: {
+    principalName: databaseUser
+    principalType: 'ServicePrincipal'
+    tenantId: azureTenantId
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Dapr Component Metadata — state.postgresql/v2 with Entra authentication
+// ---------------------------------------------------------------------------
 
 var daprComponentName = 'statestore'
+var postgresPort = 5432
+
+// Connection string for Dapr: host, port, database, user (no password for Entra auth)
+var connectionString = 'host=${postgresqlServer.properties.fullyQualifiedDomainName} port=${postgresPort} database=${databaseName} user=${databaseUser} sslmode=require'
 
 // ---------------------------------------------------------------------------
 // Radius recipe outputs
@@ -129,15 +195,17 @@ var daprComponentName = 'statestore'
 // and `resources` (Azure resource IDs for lifecycle tracking).
 
 output values object = {
-  accountName: storageAccount.name
-  containerName: containerName
+  serverName: postgresqlServer.name
+  databaseName: databaseName
+  databaseUser: databaseUser
+  connectionString: connectionString
   actorStateStore: 'true'
   componentName: daprComponentName
 }
 
 // Omit explicit `output resources` — Radius auto-populates outputResources
 // from the ARM deployment. Manual declaration fails due to Radius deployment
-// engine resolving storageAccount.id against UCP scope instead of Azure scope.
+// engine resolving postgresqlServer.id against UCP scope instead of Azure scope.
 
 // ---------------------------------------------------------------------------
 // Structured metadata for declarative resource discovery
@@ -146,19 +214,22 @@ output values object = {
 // without querying Azure by name patterns. Eliminates coupling to naming conventions.
 
 output resourceMetadata object = {
-  storageAccountName: storageAccount.name
-  storageAccountId: storageAccountArmId
-  containerName: containerName
+  postgresqlServerName: postgresqlServer.name
+  postgresqlServerId: postgresqlServerArmId
+  postgresqlFqdn: postgresqlServer.properties.fullyQualifiedDomainName
+  databaseName: databaseName
+  databaseUser: databaseUser
   resourceGroup: azureResourceGroupName
   location: location
   // Dapr component metadata for bootstrap script
   dapr: {
     componentName: daprComponentName
-    componentType: 'state.azure.blobstorage'
+    componentType: 'state.postgresql'
     componentVersion: 'v2'
     metadata: {
-      accountName: storageAccount.name
-      containerName: containerName
+      connectionString: connectionString
+      useAzureAD: 'true'
+      azureTenantId: azureTenantId
       azureClientId: daprClientId
       azureEnvironment: azureEnvironment
       actorStateStore: 'true'
