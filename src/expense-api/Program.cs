@@ -281,7 +281,21 @@ expenses.MapPost("/", async (HttpContext context, ExpenseSubmission submission, 
     }
 
     var workflowSubmission = ToWorkflowSubmission(persistedRecord);
-    await TryStartExpenseWorkflowAsync(workflowSubmission, daprClient, app.Logger, traceId, cancellationToken);
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            await TryStartExpenseWorkflowAsync(workflowSubmission, daprClient, app.Logger, traceId, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            app.Logger.LogError(
+                ex,
+                "Unhandled exception in fire-and-forget workflow start for expense {ExpenseId} [TraceId: {TraceId}]",
+                persistedRecord.ExpenseId,
+                traceId);
+        }
+    }, CancellationToken.None);
 
     app.Logger.LogInformation(
         "Expense {ExpenseId} created successfully with correlationId {CorrelationId} [TraceId: {TraceId}]",
