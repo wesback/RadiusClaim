@@ -280,7 +280,7 @@ install_dapr_if_needed() {
 
   ensure_cluster_admin_for_install
   section "Installing Dapr"
-  run_cmd dapr init -k --wait
+  retry_with_backoff 5 2 30 "dapr init -k --wait" dapr init -k --wait
 
   if [ "$DRY_RUN" = false ]; then
     verify_dapr_ready || fail "Dapr control plane did not become ready after installation."
@@ -307,9 +307,9 @@ install_radius_if_needed() {
     return 0
   fi
 
-  install_output="$("$RAD_BIN" install kubernetes --set clusterType=generic 2>&1)" || {
+  install_output="$(retry_with_backoff 5 2 30 "rad install kubernetes" "$RAD_BIN" install kubernetes --set clusterType=generic 2>&1)" || {
     printf '%s\n' "$install_output" >&2
-    fail "Radius installation command failed."
+    fail "Radius installation command failed after retries."
   }
   printf '%s\n' "$install_output"
 

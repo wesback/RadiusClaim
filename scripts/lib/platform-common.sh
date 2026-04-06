@@ -285,3 +285,39 @@ ensure_radius_recipe_rbac() {
 
   log_success "Service principal has required permissions on '${resource_group}'"
 }
+
+retry_with_backoff() {
+  local max_attempts="${1:-5}"
+  local initial_delay="${2:-2}"
+  local max_delay="${3:-60}"
+  local description="${4:-command}"
+  
+  shift 4
+  local cmd=("$@")
+  
+  local attempt=1
+  local delay=$initial_delay
+  
+  while [ $attempt -le $max_attempts ]; do
+    log_info "[retry $attempt/$max_attempts] ${description}"
+    
+    if "${cmd[@]}"; then
+      log_success "${description} succeeded"
+      return 0
+    fi
+    
+    local exit_code=$?
+    
+    if [ $attempt -lt $max_attempts ]; then
+      log_warning "${description} failed (exit code: $exit_code). Retrying in ${delay}s..."
+      sleep "$delay"
+      delay=$(( delay * 2 ))
+      [ $delay -gt $max_delay ] && delay=$max_delay
+    else
+      log_error "${description} failed after ${max_attempts} attempts (exit code: $exit_code)"
+      return $exit_code
+    fi
+    
+    attempt=$(( attempt + 1 ))
+  done
+}
