@@ -173,6 +173,26 @@ var postgresDnsSuffix = postgresDnsSuffixMap[azureEnvironment]
 var privateDnsZoneName = 'privatelink${postgresDnsSuffix}'
 
 // ---------------------------------------------------------------------------
+// Sovereign cloud Dapr auth environment name map
+// ---------------------------------------------------------------------------
+// Dapr's azureEnvironment metadata uses a DIFFERENT naming scheme than the
+// DNS suffix map above. The two consumers require different key values for
+// the same sovereign cloud. A single azureEnvironment value cannot satisfy both;
+// we derive daprEnvironmentName from the same user-supplied azureEnvironment.
+//
+//   azureEnvironment (input)  →  DNS key          →  Dapr metadata name
+//   ─────────────────────────────────────────────────────────────────────
+//   AzurePublicCloud          →  AzurePublicCloud  →  AzurePublicCloud
+//   AzureUSGovernment         →  AzureUSGovernment →  AzureUSGovernmentCloud
+//   AzureChina                →  AzureChina        →  AzureChinaCloud
+var daprEnvironmentNameMap = {
+  AzurePublicCloud: 'AzurePublicCloud'
+  AzureUSGovernment: 'AzureUSGovernmentCloud'
+  AzureChina: 'AzureChinaCloud'
+}
+var daprEnvironmentName = daprEnvironmentNameMap[azureEnvironment]
+
+// ---------------------------------------------------------------------------
 // PostgreSQL Flexible Server — Entra-only authentication (no password auth)
 // ---------------------------------------------------------------------------
 // This server has NO local administrator account and NO password credentials.
@@ -420,7 +440,7 @@ output resourceMetadata object = {
       useAzureAD: 'true'
       azureTenantId: azureTenantId
       azureClientId: daprClientId
-      azureEnvironment: azureEnvironment
+      azureEnvironment: daprEnvironmentName
       // PostgreSQL natively supports transactional state — Dapr actors are enabled.
       // No blob fallback: Blob Storage lacks the TransactionalStore interface required
       // for Dapr Actors. This recipe migrated FROM blob storage for exactly this reason.
