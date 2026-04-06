@@ -37,6 +37,18 @@ param azureSubscriptionId string
 @description('Azure resource group where Recipes provision backing resources.')
 param azureResourceGroup string
 
+@description('Azure region for resource provisioning.')
+param location string = 'francecentral'
+
+@description('Allow the Azure-services magic firewall rule on the PostgreSQL state store. Defaults to true for dev environments.')
+param allowAzureServices bool = true
+
+@description('Azure environment (cloud) for sovereign cloud DNS suffix resolution. Options: AzurePublicCloud, AzureUSGovernment, AzureChina.')
+param azureEnvironment string = 'AzurePublicCloud'
+
+@description('Enable a Private Endpoint for PostgreSQL state store. Defaults to false for dev environments.')
+param usePrivateEndpoint bool = false
+
 // ── Environment ─────────────────────────────────────────────────────────────
 
 resource env 'Applications.Core/environments@2023-10-01-preview' = {
@@ -55,11 +67,17 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
     }
 
     recipes: {
-      // Dapr State Store — provisions Azure Blob Storage with Entra RBAC
+      // Dapr State Store — provisions Azure PostgreSQL Flexible Server with Entra RBAC
       'Applications.Dapr/stateStores': {
         default: {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/state-store:${recipeTag}'
+          parameters: {
+            location: location
+            allowAzureServices: allowAzureServices
+            azureEnvironment: azureEnvironment
+            usePrivateEndpoint: usePrivateEndpoint
+          }
         }
       }
 
@@ -68,6 +86,9 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
         default: {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/pubsub:${recipeTag}'
+          parameters: {
+            location: location
+          }
         }
       }
 
@@ -76,6 +97,9 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
         default: {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/secrets:${recipeTag}'
+          parameters: {
+            location: location
+          }
         }
       }
     }
