@@ -152,3 +152,20 @@ Phase 4+ work deferred: output bindings, notification persistence, retry/dead-le
 - **Creating HttpClient instances with `new` on every request is a socket exhaustion anti-pattern.** Even for one-time startup tasks like Dapr health checks, use `IHttpClientFactory` to leverage connection pooling and avoid socket resource leaks. Register with `builder.Services.AddHttpClient()` and retrieve via `IHttpClientFactory.CreateClient(name)` after the service provider is built.
 - **IHttpClientFactory should be used even for startup-time HTTP calls, not just request-scoped clients.** The startup Dapr health check in expense-api runs before the first HTTP request arrives, but it still benefits from proper connection pooling and resource management. Retrieve the factory from `app.Services` after calling `builder.Build()`, then create a named or typed client for the health probe.
 - **Search for `new HttpClient` across the codebase to find all anti-pattern instances.** Grep with the exact pattern identifies violations quickly. In this repo, only expense-api had the issue (one instance for Dapr health checks), while notification-svc and workflow-engine had no HttpClient usage at all.
+
+## Issue: Docker Build Failure — OpenTelemetry.Exporter.Jaeger Version Constraint
+
+### Delivered
+
+**OpenTelemetry.Exporter.Jaeger Downgrade (Daisy's fix)**
+- Downgraded `OpenTelemetry.Exporter.Jaeger` from **1.11.0** (unsatisfiable) to **1.5.1** (stable) in all three services:
+  - `src/expense-api/ExpenseApi.csproj`
+  - `src/workflow-engine/WorkflowEngine.csproj`
+  - `src/notification-svc/NotificationSvc.csproj`
+- Verified all three services use standard `.AddJaegerExporter()` API — no code changes required
+- Commit: `c3129b7` references the fix and confirms zero code impact
+
+### Learnings
+
+- **NuGet package version constraints in multi-project solutions require explicit verification across all consumers.** When one transitive dependency pins a version that no package satisfies (e.g., `>= 1.11.0` where the latest stable is 1.5.1), audit all project files that reference that package directly. The fix is to downgrade the constraint to a version that exists on the official feed, not to add workarounds or build-time hacks.
+- **Stable, proven versions of observability SDKs trump newer pre-releases when there's an API compatibility gap.** OpenTelemetry.Exporter.Jaeger 1.5.1 (stable) is compatible with the `AddJaegerExporter(Action<JaegerExporterOptions>)` call pattern used in all three services. Pre-release 1.6.0-rc.1 adds no business value and introduces deployment risk — stick with the stable baseline.

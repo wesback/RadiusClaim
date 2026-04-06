@@ -382,3 +382,29 @@ Comprehensive audit of all three Dapr backing recipes (state-store, pubsub, secr
 - All three Bicep files compile: `az bicep build` returns 0
 - `rad app list` → `radiusclaim  Succeeded`
 - All three Dapr resources (statestore, pubsub, platform-secrets) → `Succeeded`
+
+### 2026-04-06: Deployment Cycle Validation (Recipe Refactor Complete)
+
+**Task:** Execute full teardown → prepare → bootstrap → validate cycle with refactored recipes to verify RBAC module pattern works end-to-end.
+
+**What I learned:**
+
+1. **The module pattern solves a real Radius architectural constraint:** Radius UCP reinterprets the `scope:` field of extension resources using UCP path format (`/planes/radius/local/...`), which Azure ARM then rejects. The module pattern works because Bicep compiles module calls into nested ARM deployments (`Microsoft.Resources/deployments`) with an explicit scope string embedded in the JSON. Radius UCP doesn't reinterpret this string — it passes the nested deployment directly to Azure ARM, which evaluates the scope correctly.
+
+2. **Idempotency requires explicit ARM ID strings:** Using `.id` on a recipe-created resource embeds a UCP path in the GUID calculation, making role assignment names non-deterministic across environments. The solution is to build explicit `/subscriptions/{sub}/resourceGroups/{rg}/providers/...` strings as variables and use those for GUID calculations. This makes idempotency portable.
+
+3. **Resource-group-scoped RBAC is acceptable for dedicated RGs:** The role assignments target the resource group rather than the individual resource (a consequence of the module's deployment scope). For a dedicated RadiusClaim resource group, this is correct — the Dapr identity can access all Dapr-relevant resources in the RG. If tighter scoping is needed in future, create resource-specific modules that use `existing` resources and `scope:` within the module.
+
+4. **Bicep module compilation is automatic in recipe publishing:** `rad bicep publish` flattens modules into nested deployments in the OCI artifact JSON. There's no separate module publish step or artifact management — just keep the `modules/` directory co-located with the recipe files. This simplifies the publication workflow.
+
+5. **RBAC assignment identity requirements:** The deploying identity needs `Microsoft.Authorization/roleAssignments/write` on the resource group — either `User Access Administrator` or `Owner` role. `Contributor` alone is insufficient. This is a gotcha for bootstrap deployment if the bootstrap identity is scoped too narrowly.
+
+6. **Deployment cycle is repeatable and stable:** Full teardown → prepare → bootstrap → validate completes successfully with all resources Succeeded and all workloads 2/2 Running. The refactored recipes are production-ready.
+
+**Files modified:**
+- `infra/radius/recipes/azure/modules/role-assignment.bicep` (new generic module)
+- `infra/radius/recipes/azure/state-store.bicep` (RBAC restored via module)
+- `infra/radius/recipes/azure/pubsub.bicep` (RBAC restored via module)
+- `infra/radius/recipes/azure/secrets.bicep` (RBAC restored via module)
+
+**Pattern:** When working with Radius recipes and Azure RBAC, modules are the prescribed pattern for cross-scope assignment. Never fight BCP139 — embrace modules as the escape hatch. Test the full deployment cycle before declaring portability; one-off deployments can mask UCP path leakage issues.

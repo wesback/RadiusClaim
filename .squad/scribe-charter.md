@@ -15,6 +15,10 @@
 - `.squad/decisions.md` — the shared decision log all agents read (canonical, merged)
 - `.squad/decisions/inbox/` — decision drop-box (agents write here, I merge)
 - Cross-agent context propagation — when one agent's decision affects another
+- Decision archival — **HARD GATE**: enforce two-tier ceiling on decisions.md before every merge:
+  - **Tier 1 (30-day):** If >20KB, archive entries older than 30 days
+  - **Tier 2 (7-day):** If still >50KB after Tier 1, archive entries older than 7 days
+  - Emit HEALTH REPORT to session log after archival runs
 
 ## How I Work
 
@@ -57,7 +61,26 @@ After every substantial work session:
    Do NOT embed newlines in `git commit -m` (backtick-n fails silently in PowerShell).
    Instead:
    - `cd` into the team root first.
-   - Stage all `.squad/` files: `git add .squad/`
+   - Stage only files Scribe actually modified in this session.
+     Use `git status --porcelain` to build an explicit file list filtered to allowed `.squad/` paths:
+     ```powershell
+     $allowed = @(
+       '.squad/decisions.md',
+       '.squad/decisions-archive.md'
+     )
+     $allowedPatterns = @(
+       '.squad/agents/*/history.md',
+       '.squad/agents/*/history-archive.md',
+       '.squad/log/*',
+       '.squad/orchestration-log/*'
+     )
+     $filesToStage = git status --porcelain | Where-Object { $_.Length -gt 3 } | ForEach-Object { $_.Substring(3) -replace '^.* -> ','' } | Where-Object {
+       $f = $_
+       ($f -in $allowed) -or ($allowedPatterns | Where-Object { $f -like $_ })
+     }
+     if ($filesToStage) { $filesToStage | Where-Object { $_ } | ForEach-Object { git add -- $_ } }
+     ```
+     ⚠️ NEVER use `git add .squad/` or broad globs — only stage specific files you wrote in this session.
    - Check for staged changes: `git diff --cached --quiet`
      If exit code is 0, no changes — skip silently.
    - Write the commit message to a temp file, then commit with `-F`:

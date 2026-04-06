@@ -353,3 +353,31 @@ When the sample was built, expenses were toy data; scaling wasn't a priority. No
 - `PHASE3_INTEGRATION_VALIDATION.md` — Historical note banner added
 
 **Pattern:** When a verified deployment cycle completes, the documentation pass should answer three questions: (1) What's the exact command sequence? (2) What does success look like? (3) What are the honest known limitations? All three must be present or the docs are incomplete.
+
+### 2026-04-06: Deployment Cycle Verification & Documentation Finalization
+
+**Task:** Update README, walkthrough, checklist, and Phase3 doc to reflect verified end-to-end deployment validated by Rod. Document the two-phase bootstrap and known platform behaviours accurately.
+
+**What I learned:**
+
+1. **Contradictions between docs and code are the highest credibility risk:** README claimed bootstrap was "orchestration-only — no backfill needed" while bootstrap.sh actively ran a two-phase component creation loop (`apply-dapr-components-from-recipes.sh`). A user reading the README, then watching bootstrap's output, would immediately see a lie. That erodes trust in every other doc. The fix: be explicit about two-phase bootstrap, document the "why" (Radius doesn't expose recipe outputs via API), and explain the workaround (parse Azure resource IDs from `status.outputResources[]`).
+
+2. **Success criteria must be specific and testable:** Deployment docs often describe commands but not what "done" looks like. "Workloads running" is vague; "3 deployments, each 2/2 Running" is specific. Dapr components must be present by name (statestore, pubsub, platform-secrets). Smoke test must pass. These specifics matter more than prose — they're how readers know if their deployment succeeded.
+
+3. **Bootstrap-path vs manual-path distinction is non-obvious:** Step 9a (Verify/Apply Dapr Components) was written as if always required, but it's only required for manual `rad deploy` paths. Bootstrap handles it automatically. The fix: routing note at the top of the step. Whenever automation absorbs a previously manual step, label the step as a fallback/recovery path, not the primary path.
+
+4. **Script name changes require a grep pass on all docs:** The old `deploy-dapr-components-workload-identity.sh` was referenced in three places in the checklist after `apply-dapr-components-from-recipes.sh` became the canonical tool. When a script is renamed, the PR that renames it should include a doc cleanup grep pass. Add this to the team's definition of done for tool renames.
+
+5. **CI auth mode vs local auth mode differences are subtle but critical:** CI workflow uses service principal auth (`AZURE_CLIENT_SECRET`); local bootstrap defaults to workload identity. The `AZURE_CLIENT_SECRET` secrets table entry was ambiguous. The fix: clarify in the table that CI uses SP mode for service principal registration, and local bootstrap uses workload identity. This affects operator understanding of what credentials they need for each path.
+
+6. **Known platform behaviours should be listed upfront, not hidden:** Component projection gap (Radius doesn't expose recipe outputs), recipe output opacity (Radius doesn't document expected `resourceMetadata` schema), gateway readiness lag (component might not be available immediately after creation), CI vs local auth differences — these are not bugs, they're platform limitations. Listing them prominently in README prevents users from spending hours debugging "why does my local deployment work but CI doesn't?"
+
+7. **Phase 3 doc should acknowledge where design diverged from reality:** PHASE3_INTEGRATION_VALIDATION.md described recipes creating Dapr CRDs directly. They don't. Radius only provisions Azure resources. `apply-dapr-components-from-recipes.sh` is the real Phase 2 mechanism. Historical note banners are better than full rewrites — they acknowledge the design document as a snapshot and explain what changed.
+
+**Files updated:**
+- `README.md` — Verified deployment cycle section, success criteria table, known platform behaviours, two-phase bootstrap description, AZURE_CLIENT_SECRET clarification, local dev quick start, status footer
+- `docs/end-to-end-setup-walkthrough.md` — Step 9a retitled and repositioned as bootstrap fallback / manual path, script updated to `apply-dapr-components-from-recipes.sh`
+- `docs/radius-validation-checklist.md` — CI auth model corrected, Step 5a updated, troubleshooting script references fixed
+- `PHASE3_INTEGRATION_VALIDATION.md` — Historical note banner explaining recipe refactor vs actual implementation
+
+**Pattern:** Deployment documentation is complete when it answers three questions: (1) What's the verified command sequence? (2) What does success look like (specific criteria)? (3) What are the known limitations or platform behaviours? All three must be present. Start with contradictions and fix them first; they're the biggest trust destroyers.

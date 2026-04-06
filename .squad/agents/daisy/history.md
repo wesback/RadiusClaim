@@ -113,3 +113,58 @@ The script may have assumed resources existed or skipped role creation due to a 
 ### Decision Document
 
 Written to: `.squad/decisions/inbox/daisy-bootstrap-container-failure-rca.md`
+
+---
+
+## 2026-04-03: OpenTelemetry Exporter Jaeger Version Constraint Analysis
+
+### Problem Statement
+Docker build fails during `dotnet restore` for all three services (expense-api, workflow-engine, notification-svc) with:
+- `error NU1102: Unable to find package OpenTelemetry.Exporter.Jaeger with version (>= 1.11.0)`
+- `warning NU1902: Package 'OpenTelemetry.Api' 1.11.1 has a known moderate severity vulnerability`
+
+### Root Cause Identified
+The **OpenTelemetry ecosystem has fragmented release cadences**:
+- Core packages (OpenTelemetry, Instrumentation.*) reached 1.11.0 stable
+- Jaeger exporter peaked at 1.6.0-rc.1 (pre-release); no 1.11.0 exists
+- All three services **actively use** Jaeger (Program.cs calls `.AddJaegerExporter()` reading `JAEGER_AGENT_HOST` and `JAEGER_AGENT_PORT`)
+
+### Analysis Findings
+1. **Observability is non-negotiable**: Jaeger is a documented feature in `docs/OBSERVABILITY.md` and part of the platform story
+2. **All three services are coupled**: expense-api, workflow-engine, notification-svc use identical Jaeger setup
+3. **Version was likely aspirational**: 1.11.0 was set across all packages, but Jaeger exporter never shipped that version
+4. **Security CVE exists**: OpenTelemetry.Api 1.11.1 has moderate severity; needs investigation post-fix
+
+### Recommendation
+**Option A: Downgrade to stable 1.5.1** (recommended over 1.6.0-rc.1 or waiting for 1.11.0)
+- ✅ Stable, proven version (no pre-release risk)
+- ✅ No code changes required (API compatible with current Program.cs)
+- ✅ Unblocks Docker build immediately
+- ✅ Allows Phase 7 demo to proceed
+- ⚠️ Feature gap vs. 1.11.0 (minor, acceptable for now)
+
+**Rationale:**
+- Pre-release (1.6.0-rc.1) adds stability risk in critical observability path
+- Waiting for 1.11.0-rc.* has no ETA and blocks demo timeline
+- 1.5.1 is production-proven and aligns with Dapr 1.17.5 ecosystem maturity
+
+### Decision Document
+Created: `.squad/decisions/inbox/daisy-otel-jaeger-fix-plan.md`
+- Comprehensive options analysis (4 options considered)
+- Decision factors: backward compatibility, security, observability requirements, service scope
+- Team dependencies and success criteria
+- Timeline estimate: 3 hours (implementation + security audit + validation)
+
+### Next Steps (for implementation team)
+1. Update all three `.csproj` files to `OpenTelemetry.Exporter.Jaeger` 1.5.1
+2. Run security audit on OpenTelemetry.Api 1.11.1 CVE
+3. Docker build validation
+4. Phase 7 end-to-end validation (Jaeger UI traces)
+5. Update `docs/OBSERVABILITY.md` with version rationale and future upgrade path
+
+### Architectural Insight
+This is a **package ecosystem maturity gap**, not a design flaw. OpenTelemetry is still stabilizing parallel releases across components. The decision to downgrade teaches us:
+- Always validate transitive dependency constraints before committing to version numbers
+- Pin observable package versions in team wiki (e.g., "Jaeger exporter stable ceiling: 1.5.1 as of April 2026")
+- Plan Phase 8 AppInsights integration to move observability to cloud-managed service (Jaeger is local-dev only)
+
