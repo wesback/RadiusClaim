@@ -70,6 +70,9 @@ param daprAzureClientId string = ''
 @description('Optional random suffix for recipe resource naming (dev/demo only). Format: 6-char timestamp hash. Empty for deterministic (prod) naming.')
 param randomNameSuffix string = ''
 
+@description('Azure tenant ID for Entra authentication in recipes that configure Microsoft Entra admin (e.g., PostgreSQL state store).')
+param azureTenantId string = ''
+
 // ── Environment ─────────────────────────────────────────────────────────────
 
 resource env 'Applications.Core/environments@2023-10-01-preview' = {
@@ -120,11 +123,11 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             daprClientId: daprAzureClientId
             azureSubscriptionId: azureSubscriptionId
             azureResourceGroupName: azureResourceGroupName
+            azureTenantId: azureTenantId
           }
         }
       }
 
-      // Dapr Pub/Sub Recipe (pubsubrc)
       // ────────────────────────────────────────────────────────────────────
       // Recipe: 'azure-servicebus-pubsub' → Dapr Component Type: 'pubsub.azure.servicebus/v1'
       //

@@ -127,10 +127,11 @@ if [[ "$STATESTORE_TYPE" == "state.postgresql" ]]; then
     | split("/")[-1]
   ')
   
-  # Get connection details from resourceMetadata
-  POSTGRES_DATABASE=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.databaseName // "dapr_state"')
-  POSTGRES_USER=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.databaseUser // "dapr_app"')
-  CONNECTION_STRING=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.values.connectionString // ""')
+  # Get connection details from recipe outputs
+  # connectionString can be in values (top-level output) or resourceMetadata.dapr.metadata
+  POSTGRES_DATABASE=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.values.databaseName // .properties.status.resourceMetadata.databaseName // "dapr_state"')
+  POSTGRES_USER=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.values.databaseUser // .properties.status.resourceMetadata.databaseUser // "dapr_app"')
+  CONNECTION_STRING=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.values.connectionString // .properties.status.resourceMetadata.dapr.metadata.connectionString // ""')
   
   # Get Entra auth details from recipe metadata
   STATESTORE_TENANT_ID=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureTenantId // ""')

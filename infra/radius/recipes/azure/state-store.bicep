@@ -102,8 +102,12 @@ resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-
   }
   properties: {
     administratorLogin: 'pgadmin'
-    administratorLoginPassword: uniqueString(resourceGroup().id) // ← Temporary, overridden by Entra auth
+    administratorLoginPassword: uniqueString(resourceGroup().id, context.resource.id)
     version: '15'
+    authConfig: {
+      activeDirectoryAuth: 'Enabled'
+      passwordAuth: 'Enabled'
+    }
     storage: {
       storageSizeGB: 32
     }
@@ -131,7 +135,7 @@ resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2
   name: 'AllowAzureServices'
   properties: {
     startIpAddress: '0.0.0.0'
-    endIpAddress: '255.255.255.255'
+    endIpAddress: '0.0.0.0'
   }
 }
 
