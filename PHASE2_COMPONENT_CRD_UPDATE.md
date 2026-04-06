@@ -1,5 +1,7 @@
 # Phase 2: Component CRD Implementation — Summary Report
 
+> **📌 Historical Reference:** This document summarizes Phase 2 Component CRD implementation (January 2025). For current deployment patterns, see `scripts/apply-dapr-components-from-recipes.sh` and `docs/dapr-component-backfill.md`. **Note:** State store uses PostgreSQL (not Blob Storage) for ACID transaction support required by Dapr Actors.
+
 **Date:** 2025-01-24  
 **Author:** Rod (Radius Squad Lead)  
 **Status:** ✅ COMPLETE

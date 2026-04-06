@@ -1,5 +1,7 @@
 # Phase 2 — Dapr Component CRD Creation Strategy
 
+> **📌 Historical Reference:** This document proposes the CRD strategy for Phase 2 (March 2026). The strategy was implemented and remains in use. For current deployment patterns, see `scripts/apply-dapr-components-from-recipes.sh` and `docs/dapr-component-backfill.md`. **Note:** State store has since migrated from Blob Storage to PostgreSQL for ACID transaction support required by Dapr Actors.
+
 ## The Problem
 
 Radius recipes provision Azure resources (Storage Accounts, Service Bus, Key Vault) but **cannot directly create Kubernetes CRDs** like Dapr Components. This is by design: Radius Bicep recipes target Azure Resource Manager, not the Kubernetes API.

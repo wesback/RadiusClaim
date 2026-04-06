@@ -132,7 +132,7 @@ Models three containerized services with Dapr sidecars, three Dapr components (s
 
 | Recipe | Azure Resource | Auth Model |
 |--------|---------------|------------|
-| `state-store.bicep` | Blob Storage (Standard_LRS) | RBAC (Storage Blob Data Contributor) |
+| `state-store.bicep` | PostgreSQL Flexible Server (ACID, transactional state for Dapr Actors) | RBAC (Entra admin, PostgreSQL user federation) |
 | `pubsub.bicep` | Service Bus Topics (Standard) | RBAC (Azure Service Bus Data Owner) — Entra metadata only, no connection string |
 | `secrets.bicep` | Key Vault (Standard, RBAC) | RBAC (Key Vault Secrets User) |
 
@@ -237,7 +237,7 @@ All state operations use Dapr State Store abstraction:
 - Expense records keyed by `expense:{id}`
 - Expense index maintained for listing
 - Workflow activities read/update state with concurrency guards
-- State store component is pluggable (Redis locally, Azure Blob in production)
+- State store component is pluggable (Redis locally, PostgreSQL in production for ACID transactional state)
 
 ### FR-5: Infrastructure Portability (Radius)
 **Status:** ✅ Implemented
@@ -374,7 +374,7 @@ Employee / Browser
 
 | Building Block | Component Name | Local Backend | Azure Backend |
 |----------------|---------------|---------------|---------------|
-| State Store | `statestore` | Redis (state.redis v1) | Azure Blob Storage (state.azure.blobstorage v2) |
+| State Store | `statestore` | Redis (state.redis v1) | PostgreSQL (state.postgresql v2, transactional for Dapr Actors) |
 | Pub/Sub | `pubsub` | Redis (pubsub.redis v1) | Azure Service Bus Topics (pubsub.azure.servicebus.topics v1) |
 | Secret Store | `platform-secrets` | — | Azure Key Vault (secretstores.azure.keyvault v1) |
 | Workflows | (built-in) | Dapr runtime | Dapr runtime |
@@ -387,7 +387,7 @@ Employee / Browser
 | `Applications.Core/applications` | `radiusclaim` | Application scope |
 | `Applications.Core/containers` | `expense-api`, `workflow-engine`, `notification-svc` | Service deployment with Dapr sidecars |
 | `Applications.Core/gateways` | `expense-gateway` | Public HTTP endpoint for expense-api |
-| `Applications.Dapr/stateStores` | `statestore` | Backed by recipe: Azure Blob Storage |
+| `Applications.Dapr/stateStores` | `statestore` | Backed by recipe: PostgreSQL Flexible Server (transactional state for Dapr Actors) |
 | `Applications.Dapr/pubSubBrokers` | `pubsub` | Backed by recipe: Azure Service Bus |
 | `Applications.Dapr/secretStores` | `platform-secrets` | Backed by recipe: Azure Key Vault |
 
@@ -519,7 +519,7 @@ Decisions are maintained in `.squad/decisions.md`. The following are the most ar
 | Container Registry | GitHub Container Registry (GHCR) | — |
 | CI/CD | GitHub Actions | — |
 | Kubernetes | AKS (primary), any K8s with Dapr + Radius | — |
-| State Store | Azure Blob Storage (prod), Redis (local) | — |
+| State Store | PostgreSQL (prod, transactional for Dapr Actors), Redis (local) | — |
 | Message Bus | Azure Service Bus Topics (prod), Redis (local) | — |
 | Secret Store | Azure Key Vault (prod) | — |
 | Identity | Azure Workload Identity | — |

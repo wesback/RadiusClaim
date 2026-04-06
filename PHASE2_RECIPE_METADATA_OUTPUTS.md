@@ -1,5 +1,7 @@
 # Phase 2a: Recipe Metadata Outputs
 
+> **📌 Historical Reference:** This document specifies recipe metadata output structure designed in Phase 2a (March 2026). The specification was implemented in recipes and remains largely stable. For current outputs, see `infra/radius/recipes/azure/state-store.bicep` (PostgreSQL, not Blob Storage) and how bootstrap consumes them in `scripts/apply-dapr-components-from-recipes.sh`.
+
 **Date:** 2026-03-27  
 **By:** Graham (Infrastructure Engineer)  
 **Status:** ✅ COMPLETE

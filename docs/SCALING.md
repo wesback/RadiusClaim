@@ -1,5 +1,7 @@
 # RadiusClaim Scaling Boundaries and Mitigation Strategies
 
+> **📌 Note:** This document discusses scaling trade-offs in RadiusClaim's `expenseIndex` design. The state store has since migrated from Azure Blob Storage to PostgreSQL for ACID transactional support (required by Dapr Actors). Many patterns and recommendations remain valid; however, specific mentions of "Blob Storage SKU" are historical. See `infra/radius/recipes/azure/state-store.bicep` for current implementation.
+
 This document explains the scaling limits you'll encounter with RadiusClaim, why they exist, how to detect when you're approaching them, and what options you have to scale beyond them.
 
 ---
@@ -10,7 +12,7 @@ This document explains the scaling limits you'll encounter with RadiusClaim, why
 
 **Recommended maximum: 10,000–50,000 active expense records per state store instance.**
 
-The practical boundary depends on your Azure Blob Storage SKU, Dapr sidecar resource limits, and acceptable latency thresholds. At 50,000+ records, you'll begin seeing latency degradation and memory pressure on Dapr sidecars.
+The practical boundary depends on your Dapr sidecar resource limits, acceptable latency thresholds, and the underlying state store performance. At 50,000+ records, you'll begin seeing latency degradation and memory pressure on Dapr sidecars. (Note: Earlier discussions of "Blob Storage SKU" apply to historical deployments; current PostgreSQL-backed state stores have different performance characteristics.)
 
 ### Why This Limit Exists
 
@@ -21,7 +23,7 @@ RadiusClaim stores all active expense IDs in a **single Dapr state entry** calle
 ```
 
 Every time the API lists expenses (GET /expenses?page=1), it:
-1. **Reads the entire `expenseIndex` array** from Azure Blob Storage via Dapr
+1. **Reads the entire `expenseIndex` array** from the Dapr state store via Dapr
 2. **Deserializes it into memory** on the Dapr sidecar
 3. **Slices and paginates** the array in-process
 4. **Fetches individual expense records** for the current page

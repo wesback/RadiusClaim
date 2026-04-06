@@ -228,7 +228,7 @@ rad group switch radiusclaim -w <workspace-name>
 
 ```bash
 # Register Azure workload identity credentials with the active Radius workspace.
-# This enables Radius to provision Azure resources (Blob Storage, Service Bus, Key Vault, etc.)
+# This enables Radius to provision Azure resources (PostgreSQL, Service Bus, Key Vault, etc.)
 # No client secret is required — authentication uses OIDC federated credentials.
 rad credential register azure wi \
   --client-id "$AZURE_CLIENT_ID" \

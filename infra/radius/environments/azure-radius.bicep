@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 // Targets a Kubernetes cluster with Azure-provisioned backing services.
 // All Dapr building blocks (state store, pub/sub, secrets) are wired through
-// Radius Recipes that provision real Azure resources (Blob Storage, Service Bus,
+// Radius Recipes that provision real Azure resources (PostgreSQL, Service Bus,
 // Key Vault) using Microsoft Entra workload identity for authentication.
 //
 // The application definition (app.bicep) does NOT change between environments.

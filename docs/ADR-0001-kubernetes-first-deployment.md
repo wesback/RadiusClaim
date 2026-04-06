@@ -9,7 +9,7 @@
 
 ## Summary
 
-The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys RadiusClaim to **Kubernetes with Dapr and Radius** as the primary path. The sample uses **Azure Kubernetes Service (AKS)** as the concrete example, with Azure backing services (Blob Storage, Service Bus, Key Vault).
+The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys RadiusClaim to **Kubernetes with Dapr and Radius** as the primary path. The sample uses **Azure Kubernetes Service (AKS)** as the concrete example, with Azure backing services (PostgreSQL, Service Bus, Key Vault).
 
 This ADR documents:
 1. **Why Kubernetes + Radius is the primary path**
@@ -23,7 +23,7 @@ This ADR documents:
 
 **RadiusClaim demonstrates Dapr + Radius portability:** The same app code should run on any Kubernetes cluster with Dapr and Radius, regardless of the backing services.
 
-**Azure backing services are the only cloud-specific part:** The sample uses Azure Blob Storage (state store), Azure Service Bus (pub/sub), and Azure Key Vault (secrets) because those are the concrete examples in the Radius recipes. But the app code itself is cloud-agnostic.
+**Azure backing services are the only cloud-specific part:** The sample uses Azure PostgreSQL Flexible Server for transactional state (required for Dapr Actors), Azure Service Bus for pub/sub, and Azure Key Vault for secrets because those are the concrete examples in the Radius recipes. But the app code itself is cloud-agnostic.
 
 **Portability is enabled by:**
 1. **Dapr abstractions** — state, pub/sub, service invocation, workflows are decoupled from infrastructure
@@ -56,7 +56,7 @@ This ADR documents:
 - Connection/wiring definitions (which services connect to which components)
 - Kubernetes manifest generation
 - Dapr sidecar injection
-- Azure backing resource provisioning via recipes (Blob Storage, Service Bus, Key Vault)
+- Azure backing resource provisioning via recipes (PostgreSQL, Service Bus, Key Vault)
 
 **Where it runs:**
 - **AKS (Azure Kubernetes Service)** — the primary example in this sample

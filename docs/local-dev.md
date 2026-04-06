@@ -8,7 +8,7 @@ RadiusClaim uses Radius recipes to abstract its Dapr components. Two recipe sets
 
 | Environment | State store | Pub/sub | Secrets |
 |---|---|---|---|
-| `azure` / `dev` | Azure Blob Storage | Azure Service Bus | Azure Key Vault |
+| `azure` / `dev` | Azure PostgreSQL (transactional for Dapr Actors) | Azure Service Bus | Azure Key Vault |
 | `local` | Redis (in-cluster) | RabbitMQ (in-cluster) | Kubernetes secrets |
 
 Switching between them is a single parameter change at deploy time. The application code is unchanged.

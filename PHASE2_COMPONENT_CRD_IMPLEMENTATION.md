@@ -1,5 +1,7 @@
 # Phase 2 Component CRD Implementation — Summary
 
+> **📌 Historical Reference:** This document describes Phase 2 component CRD implementation completed in March 2026. For current state store configuration, see `infra/radius/recipes/azure/state-store.bicep` (PostgreSQL) and `docs/dapr-component-backfill.md`. State store has since migrated from Blob Storage to PostgreSQL for ACID transaction support required by Dapr Actors.
+
 ## What Changed
 
 ### Problem Statement

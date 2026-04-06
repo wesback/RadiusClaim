@@ -296,7 +296,7 @@ Authenticates you with Azure and ensures subsequent commands use the correct sub
 
 ## Step 2: Create an Azure Resource Group
 
-RadiusClaim's backing services (Blob Storage, Service Bus, Key Vault) live in a resource group.
+RadiusClaim's backing services (PostgreSQL, Service Bus, Key Vault) live in a resource group.
 
 ```bash
 # Set variables for easy reference
@@ -313,7 +313,7 @@ az group show --name "$AZURE_RESOURCE_GROUP" --query '{name:name, location:locat
 ```
 
 **What this does:**  
-Creates a logical container in Azure that will hold the backing services (Blob Storage, Service Bus, Key Vault) that Radius recipes provision. This is independent of the Kubernetes cluster itself.
+Creates a logical container in Azure that will hold the backing services (PostgreSQL, Service Bus, Key Vault) that Radius recipes provision. This is independent of the Kubernetes cluster itself.
 
 ---
 
@@ -700,7 +700,7 @@ rad env create "$RADIUS_ENVIRONMENT_NAME" || true
 rad env switch "$RADIUS_ENVIRONMENT_NAME"
 
 # Register Azure provider credentials with the Radius control plane
-# This enables Radius to authenticate with Azure when provisioning backing services (Blob Storage, Service Bus, Key Vault, etc.)
+# This enables Radius to authenticate with Azure when provisioning backing services (PostgreSQL, Service Bus, Key Vault, etc.)
 rad credential register azure sp \
   --client-id "$AZURE_CLIENT_ID" \
   --client-secret "$AZURE_CLIENT_SECRET" \
@@ -737,8 +737,8 @@ Deploys the Radius environment to your Kubernetes cluster. This creates:
 - A separate *workload* namespace for deployed applications: **`azure-radiusclaim`** (created when you deploy the RadiusClaim app in Step 9)
   - This is where your three services (expense-api, workflow-engine, notification-svc) actually run.
   - If you need private GHCR package access, imagePullSecrets go in the *workload* namespace.
-- Azure resource groups and backing services (Blob Storage, Service Bus, Key Vault) via Radius recipes
-- A statestore recipe that provisions Azure Storage with Entra RBAC (role-based access control). Components use workload identity — no shared keys or connection strings.
+- Azure resource groups and backing services (PostgreSQL, Service Bus, Key Vault) via Radius recipes
+- A statestore recipe that provisions Azure PostgreSQL with Entra RBAC (role-based access control) and transactional state for Dapr Actors. Components use workload identity — no shared keys or connection strings.
 - Radius `Applications.Dapr/*` resources that *describe* the Dapr components (state store, pub/sub, secrets)
 
 > **⚠️ Component projection gap:** Radius may report the `Applications.Dapr/*` resources as `Succeeded` even though no Kubernetes `components.dapr.io` CRDs were actually projected into the cluster. After deploying the application in Step 9, you **must** verify that Dapr Component objects exist in the workload namespace. If they are missing, run the backfill step in **Step 9a**.
