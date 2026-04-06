@@ -111,9 +111,16 @@ var postgresqlServerArmId = '/subscriptions/${azureSubscriptionId}/resourceGroup
 // ---------------------------------------------------------------------------
 // PostgreSQL Flexible Server — Entra-only authentication (no password auth)
 // ---------------------------------------------------------------------------
-// Password auth is intentionally disabled. The Dapr managed identity connects
-// via Entra tokens issued by Azure AD. No administratorLogin exists on this
-// server — all access flows through the Entra admin configured below.
+// This server has NO local administrator account and NO password credentials.
+// The only way to authenticate is via a Microsoft Entra token — issued to a
+// managed identity and presented automatically by the Dapr sidecar.
+//
+// authConfig explained:
+//   activeDirectoryAuth: 'Enabled'  — Entra token-based logins are accepted
+//   passwordAuth: 'Disabled'        — Local password auth is blocked at the
+//                                     server level; there is no password to leak
+//   tenantId                        — The Entra tenant that must issue tokens;
+//                                     tokens from other tenants are rejected
 
 resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
   name: serverName
@@ -125,9 +132,9 @@ resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-
   properties: {
     version: '15'
     authConfig: {
-      activeDirectoryAuth: 'Enabled'
-      passwordAuth: 'Disabled'
-      tenantId: azureTenantId
+      activeDirectoryAuth: 'Enabled'   // Entra token logins accepted
+      passwordAuth: 'Disabled'         // No local passwords — nothing to rotate or leak
+      tenantId: azureTenantId          // Only tokens from this tenant are trusted
     }
     storage: {
       storageSizeGB: 32
@@ -239,6 +246,9 @@ output values object = {
   databaseName: databaseName
   databaseUser: daprPrincipalName  // Entra admin display name (backward-compat key for apply-dapr-components-from-recipes.sh)
   connectionString: connectionString
+  // PostgreSQL natively supports transactional state — Dapr actors are enabled.
+  // No blob fallback: Blob Storage lacks the TransactionalStore interface required
+  // for Dapr Actors. This recipe migrated FROM blob storage for exactly this reason.
   actorStateStore: 'true'
   componentName: daprComponentName
 }
@@ -273,6 +283,9 @@ output resourceMetadata object = {
       azureTenantId: azureTenantId
       azureClientId: daprClientId
       azureEnvironment: azureEnvironment
+      // PostgreSQL natively supports transactional state — Dapr actors are enabled.
+      // No blob fallback: Blob Storage lacks the TransactionalStore interface required
+      // for Dapr Actors. This recipe migrated FROM blob storage for exactly this reason.
       actorStateStore: 'true'
     }
   }
