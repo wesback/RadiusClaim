@@ -437,3 +437,22 @@ Comprehensive audit of all three Dapr backing recipes (state-store, pubsub, secr
 - `infra/radius/recipes/azure/secrets.bicep` (RBAC restored via module)
 
 **Pattern:** When working with Radius recipes and Azure RBAC, modules are the prescribed pattern for cross-scope assignment. Never fight BCP139 — embrace modules as the escape hatch. Test the full deployment cycle before declaring portability; one-off deployments can mask UCP path leakage issues.
+
+### 2026-04-06: Sovereign Cloud azureEnvironment Naming Split (Issue #65)
+
+**Task:** Fix naming mismatch where a single `azureEnvironment` parameter couldn't satisfy both the DNS suffix map and Dapr auth metadata simultaneously in sovereign cloud deployments.
+
+**What I learned:**
+
+1. **One input, two consumers, two naming schemes is a Bicep design smell:** When a single parameter feeds multiple downstream consumers that use different naming conventions for the same concept, you must derive secondary values via lookup maps. Don't pass the raw parameter to both — one of them will be wrong.
+
+2. **Derived variable pattern for naming translation:** The clean Bicep pattern is to keep one canonical user-facing parameter (`azureEnvironment`) and internally compute derived values via `var foo = fooMap[param]`. Both consumers use their own derived var. This hides the translation complexity from the caller and makes the recipe's contract clear.
+
+3. **Dapr vs Azure naming schemes diverge at sovereign cloud boundary:** Azure APIs tend to use short keys (`AzureUSGovernment`, `AzureChina`) while Dapr's component metadata adds a `Cloud` suffix (`AzureUSGovernmentCloud`, `AzureChinaCloud`). `AzurePublicCloud` is the same in both. This means bugs are invisible in public cloud (where the input satisfies both) and only surface in sovereign deployments — a dangerous silent failure.
+
+4. **Always document translation tables in code comments:** A mapping table like `input → DNS key → Dapr name` embedded in the comment block above the map prevents future contributors from collapsing two vars back into one without understanding the divergence. The comment is the spec.
+
+5. **Dapr auth failures in sovereign clouds are non-obvious:** A wrong `azureEnvironment` in Dapr metadata doesn't fail at deployment time — it fails silently at runtime when the Dapr sidecar tries to authenticate against the wrong endpoint. This makes the root cause hard to diagnose. Getting it right at recipe time is critical.
+
+**Files modified:**
+- `infra/radius/recipes/azure/state-store.bicep` (added `daprEnvironmentNameMap`, `daprEnvironmentName`; updated Dapr metadata output)
