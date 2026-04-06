@@ -84,7 +84,6 @@ query_recipe_metadata() {
   
   rad resource show "$resource_type" "$resource_name" \
     --application "$APPLICATION" \
-    --environment "$ENVIRONMENT" \
     --output json 2>/dev/null || {
     log_warn "Resource $resource_type/$resource_name not found or not accessible"
     echo "{}"
@@ -95,22 +94,59 @@ STATESTORE_JSON=$(query_recipe_metadata "Applications.Dapr/stateStores" "statest
 PUBSUB_JSON=$(query_recipe_metadata "Applications.Dapr/pubSubBrokers" "pubsub")
 SECRETS_JSON=$(query_recipe_metadata "Applications.Dapr/secretStores" "platform-secrets")
 
-# ── Extract recipe metadata ───────────────────────────────────────────────────
-extract_metadata() {
-  local json="$1"
-  local path="$2"
-  echo "$json" | jq -r "$path // empty"
-}
+# ── Extract Azure resource names from Radius outputResources ───────────────────
+# Radius API returns only Azure resource IDs in outputResources[], not recipe outputs.
+# Parse the IDs to extract resource names for Dapr component metadata.
 
-# State Store metadata
-STORAGE_ACCOUNT=$(extract_metadata "$STATESTORE_JSON" '.properties.status.recipe.outputResources.resourceMetadata.storageAccountName')
-CONTAINER_NAME=$(extract_metadata "$STATESTORE_JSON" '.properties.status.recipe.outputResources.resourceMetadata.containerName')
+# State Store: Extract storage account name from the /Microsoft.Storage/storageAccounts/ resource
+# (exclude blobServices and containers which are children)
+STORAGE_ACCOUNT=$(echo "$STATESTORE_JSON" | jq -r '
+  .properties.status.outputResources[]?
+  | select(.id | test("/Microsoft.Storage/storageAccounts/[^/]+$"))
+  | .id
+  | split("/")[-1]
+')
 
-# Pub/Sub metadata
-SERVICEBUS_NAMESPACE=$(extract_metadata "$PUBSUB_JSON" '.properties.status.recipe.outputResources.resourceMetadata.serviceBusNamespaceName')
+# Container name is hardcoded in the state-store recipe (expense-state)
+CONTAINER_NAME="expense-state"
 
-# Secrets metadata
-KEYVAULT_NAME=$(extract_metadata "$SECRETS_JSON" '.properties.status.recipe.outputResources.resourceMetadata.keyVaultName')
+# Pub/Sub: Extract Service Bus namespace name from the /Microsoft.ServiceBus/namespaces/ resource
+SERVICEBUS_NAMESPACE=$(echo "$PUBSUB_JSON" | jq -r '
+  .properties.status.outputResources[]?
+  | select(.id | test("/Microsoft.ServiceBus/namespaces/[^/]+$"))
+  | .id
+  | split("/")[-1]
+')
+
+# Secrets: Extract Key Vault name from the /Microsoft.KeyVault/vaults/ resource
+KEYVAULT_NAME=$(echo "$SECRETS_JSON" | jq -r '
+  .properties.status.outputResources[]?
+  | select(.id | test("/Microsoft.KeyVault/vaults/[^/]+$"))
+  | .id
+  | split("/")[-1]
+')
+
+# Validate extracted values
+if [[ -z "$STORAGE_ACCOUNT" ]]; then
+  log_error "Failed to extract storage account name from statestore resource. Check Radius recipe deployment."
+  exit 1
+fi
+
+if [[ -z "$SERVICEBUS_NAMESPACE" ]]; then
+  log_error "Failed to extract Service Bus namespace from pubsub resource. Check Radius recipe deployment."
+  exit 1
+fi
+
+if [[ -z "$KEYVAULT_NAME" ]]; then
+  log_error "Failed to extract Key Vault name from platform-secrets resource. Check Radius recipe deployment."
+  exit 1
+fi
+
+log_info "Extracted Azure resources:"
+log_info "  Storage Account: $STORAGE_ACCOUNT"
+log_info "  Container: $CONTAINER_NAME"
+log_info "  Service Bus Namespace: $SERVICEBUS_NAMESPACE"
+log_info "  Key Vault: $KEYVAULT_NAME"
 
 # ── Generate Dapr Component manifests ─────────────────────────────────────────
 TEMP_MANIFEST=$(mktemp)
