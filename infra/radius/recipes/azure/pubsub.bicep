@@ -61,6 +61,12 @@ param daprClientId string = ''
 @description('Azure environment (cloud). Options: AzurePublicCloud, AzureUSGovernment, AzureChina. Defaults to AzurePublicCloud for sovereign cloud support.')
 param azureEnvironment string = 'AzurePublicCloud'
 
+@description('Azure subscription ID for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
+param azureSubscriptionId string
+
+@description('Azure resource group name for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
+param azureResourceGroupName string
+
 // ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
@@ -68,6 +74,9 @@ param azureEnvironment string = 'AzurePublicCloud'
 // Use randomNameSuffix if provided; otherwise fall back to deterministic uniqueString.
 var nameSuffix = !empty(randomNameSuffix) ? randomNameSuffix : uniqueString(context.resource.id)
 var namespaceName = 'pubsubrc${nameSuffix}'
+
+// Explicit Azure resource ID — bypasses Radius deployment engine UCP scope resolution
+var serviceBusArmId = '/subscriptions/${azureSubscriptionId}/resourceGroups/${azureResourceGroupName}/providers/Microsoft.ServiceBus/namespaces/${namespaceName}'
 
 // ---------------------------------------------------------------------------
 // Service Bus Namespace
@@ -89,15 +98,21 @@ resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview
 // ---------------------------------------------------------------------------
 // RBAC — Azure Service Bus Data Owner for Dapr workload identity
 // ---------------------------------------------------------------------------
+// Delegated to the role-assignment module with an explicit Azure ARM resource
+// group scope. See state-store.bicep for the full rationale (BCP139 / Radius
+// UCP scope substitution issue).
 
-resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(serviceBusNamespace.id, daprPrincipalId, '090c5cfd-751d-490a-894a-3ce6f1109419')
-  scope: serviceBusNamespace
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '090c5cfd-751d-490a-894a-3ce6f1109419') // Azure Service Bus Data Owner
+var serviceBusDataOwnerRoleId = '090c5cfd-751d-490a-894a-3ce6f1109419'
+
+module serviceBusRoleAssignment './modules/role-assignment.bicep' = {
+  name: 'serviceBusRbacDeploy'
+  scope: resourceGroup(azureSubscriptionId, azureResourceGroupName)
+  params: {
     principalId: daprPrincipalId
-    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataOwnerRoleId)
+    roleAssignmentName: guid(serviceBusArmId, daprPrincipalId, serviceBusDataOwnerRoleId)
   }
+  dependsOn: [serviceBusNamespace]
 }
 
 // ---------------------------------------------------------------------------
@@ -115,14 +130,12 @@ var daprComponentName = 'pubsub'
 // ---------------------------------------------------------------------------
 
 output values object = {
-  namespaceName: serviceBusNamespace.name
+  namespaceName: '${serviceBusNamespace.name}.servicebus.windows.net'
   endpoint: '${serviceBusNamespace.name}.servicebus.windows.net'
   componentName: daprComponentName
 }
 
-output resources array = [
-  serviceBusNamespace.id
-]
+// Omit explicit `output resources` — Radius auto-populates from ARM deployment.
 
 // ---------------------------------------------------------------------------
 // Structured metadata for declarative resource discovery
@@ -132,9 +145,9 @@ output resources array = [
 
 output resourceMetadata object = {
   serviceBusNamespaceName: serviceBusNamespace.name
-  serviceBusNamespaceId: serviceBusNamespace.id
+  serviceBusNamespaceId: serviceBusArmId
   endpoint: '${serviceBusNamespace.name}.servicebus.windows.net'
-  resourceGroup: split(serviceBusNamespace.id, '/')[4]
+  resourceGroup: azureResourceGroupName
   location: location
   // Dapr component metadata for bootstrap script
   dapr: {
@@ -142,7 +155,7 @@ output resourceMetadata object = {
     componentType: 'pubsub.azure.servicebus.topics'
     componentVersion: 'v1'
     metadata: {
-      namespaceName: serviceBusNamespace.name
+      namespaceName: '${serviceBusNamespace.name}.servicebus.windows.net'
       azureClientId: daprClientId
       azureEnvironment: azureEnvironment
       disableEntityManagement: 'false'

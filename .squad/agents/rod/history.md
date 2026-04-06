@@ -342,3 +342,43 @@ Comprehensive audit of all three Dapr backing recipes (state-store, pubsub, secr
 
 **Status:** Complete. Portability paradigm FULLY REALIZED and PRODUCTION READY.
 
+
+## Learnings
+
+### 2025-07-25: Radius Recipe RBAC — Explicit Scope via Bicep Module Pattern
+
+**Context:** Recipes had RBAC disabled (commented out) with a note saying it was "moved to bootstrap." Bootstrap had ALSO deleted the RBAC function and left a comment saying "handled inline by recipes." Net result: RBAC was assigned nowhere — a silent security gap.
+
+**Root cause analysis:**
+- Original failure: `scope: storageAccount` on a role assignment caused Radius UCP to inject its internal UCP path (`/planes/radius/local/...`) as the scope instead of an ARM path, causing ARM template validation failures.
+- `guid(storageAccount.id, ...)` compounded the issue — `.id` on a recipe resource also yields the UCP path.
+- Both problems stem from Radius UCP intercepting `scope:` and `.id` references on resources and substituting its own internal ID format.
+
+**What doesn't work:**
+- `scope: storageAccount` (created resource) → Radius UCP substitutes a UCP path
+- `existing` resource with `scope: resourceGroup(sub, rg)` → Bicep raises BCP139 (scope must match file scope for non-module resources)
+
+**The fix — module pattern:**
+- Created `infra/radius/recipes/azure/modules/role-assignment.bicep` (generic, minimal)
+- Each recipe calls the module with `scope: resourceGroup(azureSubscriptionId, azureResourceGroupName)`
+- The module call compiles to a `Microsoft.Resources/deployments` nested deployment with an explicit Azure ARM scope string — Radius UCP passes this through without mangling it
+- GUID uses pre-built `*ArmId` explicit string vars, never `.id`
+
+**Key files:**
+- `infra/radius/recipes/azure/modules/role-assignment.bicep` (new)
+- `infra/radius/recipes/azure/state-store.bicep` (RBAC restored)
+- `infra/radius/recipes/azure/pubsub.bicep` (RBAC restored)
+- `infra/radius/recipes/azure/secrets.bicep` (RBAC restored)
+
+**Bicep rules learned:**
+- `BCP139` applies to BOTH new and existing resources with cross-scope `scope:` (not just new resources)
+- Modules are Bicep's explicit escape hatch for cross-scope deployment — `scope:` on module calls IS valid
+- `rad bicep publish` flattens modules into nested ARM deployments — no separate module artifact needed
+- Never use `.id` on recipe resources for GUID or resourceMetadata outputs; always use pre-built explicit ARM ID strings
+
+**Portability note:** Role assignments target the resource group (not the individual resource) because that's the module's deployment scope. For a dedicated RadiusClaim resource group this is acceptable. If tighter scoping is needed in future, create resource-type-specific modules that declare the target resource as `existing` and use `scope:` within the module.
+
+**Testing evidence:**
+- All three Bicep files compile: `az bicep build` returns 0
+- `rad app list` → `radiusclaim  Succeeded`
+- All three Dapr resources (statestore, pubsub, platform-secrets) → `Succeeded`

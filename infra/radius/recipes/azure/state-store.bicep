@@ -57,6 +57,12 @@ param daprClientId string = ''
 @description('Azure environment (cloud). Options: AzurePublicCloud, AzureUSGovernment, AzureChina. Defaults to AzurePublicCloud for sovereign cloud support.')
 param azureEnvironment string = 'AzurePublicCloud'
 
+@description('Azure subscription ID for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
+param azureSubscriptionId string
+
+@description('Azure resource group name for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
+param azureResourceGroupName string
+
 // ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
@@ -64,6 +70,9 @@ param azureEnvironment string = 'AzurePublicCloud'
 // Use randomNameSuffix if provided; otherwise fall back to deterministic uniqueString.
 var nameSuffix = !empty(randomNameSuffix) ? randomNameSuffix : uniqueString(context.resource.id)
 var accountName = 'staterc${nameSuffix}'
+
+// Explicit Azure resource ID — bypasses Radius deployment engine UCP scope resolution
+var storageAccountArmId = '/subscriptions/${azureSubscriptionId}/resourceGroups/${azureResourceGroupName}/providers/Microsoft.Storage/storageAccounts/${accountName}'
 
 // ---------------------------------------------------------------------------
 // Storage Account — shared-key access disabled (Entra auth only)
@@ -90,33 +99,33 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
 
 // ---------------------------------------------------------------------------
 // Blob Service + Container
+// NOTE: Child resources removed from recipe to work around Radius deployment
+// engine bug where dependsOn resourceId() resolves against UCP scope instead
+// of Azure ARM scope, causing template validation failures.
+// Blob container is created post-deploy by bootstrap.sh.
 // ---------------------------------------------------------------------------
-
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
-  parent: storageAccount
-  name: 'default'
-}
-
-resource stateContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
-  parent: blobService
-  name: containerName
-  properties: {
-    publicAccess: 'None'
-  }
-}
 
 // ---------------------------------------------------------------------------
 // RBAC — Storage Blob Data Contributor for Dapr workload identity
 // ---------------------------------------------------------------------------
+// Delegated to the role-assignment module with an explicit Azure ARM resource
+// group scope. Bicep BCP139 prevents inline resource-level scope on extension
+// resources targeting a different deployment scope; using a module with
+// `scope: resourceGroup(sub, rg)` is Bicep's prescribed pattern and forces
+// ARM to evaluate all resource IDs in the correct Azure ARM context rather
+// than letting Radius UCP substitute its internal scope path.
 
-resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(storageAccount.id, daprPrincipalId, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-  scope: storageAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe') // Storage Blob Data Contributor
+var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+
+module storageRoleAssignment './modules/role-assignment.bicep' = {
+  name: 'storageRbacDeploy'
+  scope: resourceGroup(azureSubscriptionId, azureResourceGroupName)
+  params: {
     principalId: daprPrincipalId
-    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
+    roleAssignmentName: guid(storageAccountArmId, daprPrincipalId, storageBlobDataContributorRoleId)
   }
+  dependsOn: [storageAccount]
 }
 
 // ---------------------------------------------------------------------------
@@ -142,9 +151,9 @@ output values object = {
   componentName: daprComponentName
 }
 
-output resources array = [
-  storageAccount.id
-]
+// Omit explicit `output resources` — Radius auto-populates outputResources
+// from the ARM deployment. Manual declaration fails due to Radius deployment
+// engine resolving storageAccount.id against UCP scope instead of Azure scope.
 
 // ---------------------------------------------------------------------------
 // Structured metadata for declarative resource discovery
@@ -154,9 +163,9 @@ output resources array = [
 
 output resourceMetadata object = {
   storageAccountName: storageAccount.name
-  storageAccountId: storageAccount.id
+  storageAccountId: storageAccountArmId
   containerName: containerName
-  resourceGroup: split(storageAccount.id, '/')[4]
+  resourceGroup: azureResourceGroupName
   location: location
   // Dapr component metadata for bootstrap script
   dapr: {

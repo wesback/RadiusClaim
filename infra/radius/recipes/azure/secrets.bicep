@@ -57,6 +57,12 @@ param daprClientId string = ''
 @description('Azure environment (cloud). Options: AzurePublicCloud, AzureUSGovernment, AzureChina. Defaults to AzurePublicCloud for sovereign cloud support.')
 param azureEnvironment string = 'AzurePublicCloud'
 
+@description('Azure subscription ID for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
+param azureSubscriptionId string
+
+@description('Azure resource group name for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
+param azureResourceGroupName string
+
 // ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
@@ -65,6 +71,9 @@ param azureEnvironment string = 'AzurePublicCloud'
 var nameSuffix = !empty(randomNameSuffix) ? randomNameSuffix : uniqueString(context.resource.id)
 // Key Vault names: 3-24 chars, alphanumeric + hyphens
 var vaultName = 'kvrc${nameSuffix}'
+
+// Explicit Azure resource ID — bypasses Radius deployment engine UCP scope resolution
+var keyVaultArmId = '/subscriptions/${azureSubscriptionId}/resourceGroups/${azureResourceGroupName}/providers/Microsoft.KeyVault/vaults/${vaultName}'
 
 // ---------------------------------------------------------------------------
 // Key Vault — RBAC authorization (no access policies)
@@ -92,15 +101,21 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 // ---------------------------------------------------------------------------
 // RBAC — Key Vault Secrets Officer for Dapr workload identity
 // ---------------------------------------------------------------------------
+// Delegated to the role-assignment module with an explicit Azure ARM resource
+// group scope. See state-store.bicep for the full rationale (BCP139 / Radius
+// UCP scope substitution issue).
 
-resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(keyVault.id, daprPrincipalId, '4633458b-17de-408a-b874-0445c86b69e6')
-  scope: keyVault
-  properties: {
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6') // Key Vault Secrets User
+var keyVaultSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+
+module keyVaultRoleAssignment './modules/role-assignment.bicep' = {
+  name: 'keyVaultRbacDeploy'
+  scope: resourceGroup(azureSubscriptionId, azureResourceGroupName)
+  params: {
     principalId: daprPrincipalId
-    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsOfficerRoleId)
+    roleAssignmentName: guid(keyVaultArmId, daprPrincipalId, keyVaultSecretsOfficerRoleId)
   }
+  dependsOn: [keyVault]
 }
 
 // ---------------------------------------------------------------------------
@@ -123,9 +138,7 @@ output values object = {
   componentName: daprComponentName
 }
 
-output resources array = [
-  keyVault.id
-]
+// Omit explicit `output resources` — Radius auto-populates from ARM deployment.
 
 // ---------------------------------------------------------------------------
 // Structured metadata for declarative resource discovery
@@ -135,9 +148,9 @@ output resources array = [
 
 output resourceMetadata object = {
   keyVaultName: keyVault.name
-  keyVaultId: keyVault.id
+  keyVaultId: keyVaultArmId
   vaultUri: keyVault.properties.vaultUri
-  resourceGroup: split(keyVault.id, '/')[4]
+  resourceGroup: azureResourceGroupName
   location: location
   // Dapr component metadata for bootstrap script
   dapr: {
