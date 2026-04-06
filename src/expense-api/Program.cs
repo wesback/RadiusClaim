@@ -25,10 +25,27 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddDaprClient();
 builder.Services.AddHttpClient();
 
-// OAuth2 JWT Bearer authentication: validate bearer tokens issued by Microsoft Entra ID
-// See docs/API_AUTHENTICATION.md for Entra ID setup and workload identity configuration
-var authority = builder.Configuration["AzureAd:Authority"] ?? "https://login.microsoftonline.com/common";
-var audience = builder.Configuration["AzureAd:Audience"] ?? "https://radiusclaim.azurewebsites.net/api";
+// OAuth2 JWT Bearer authentication: validate bearer tokens issued by Microsoft Entra ID.
+// Configure via appsettings.json, env vars (AzureAd__Authority, AzureAd__Audience), or
+// Kubernetes ConfigMaps. See docs/API_AUTHENTICATION.md for setup details.
+var authority = builder.Configuration["AzureAd:Authority"];
+var audience = builder.Configuration["AzureAd:Audience"];
+
+if (string.IsNullOrEmpty(authority) || string.IsNullOrEmpty(audience))
+{
+    var env = builder.Environment.EnvironmentName;
+    if (!builder.Environment.IsDevelopment())
+    {
+        throw new InvalidOperationException(
+            $"AzureAd:Authority and AzureAd:Audience must be configured for environment '{env}'. " +
+            "Set via appsettings.json or environment variables AzureAd__Authority / AzureAd__Audience. " +
+            "See docs/API_AUTHENTICATION.md for details.");
+    }
+
+    // Development fallback — safe default for local iteration
+    authority = string.IsNullOrEmpty(authority) ? "https://login.microsoftonline.com/common" : authority;
+    audience = string.IsNullOrEmpty(audience) ? "https://radiusclaim.azurewebsites.net/api" : audience;
+}
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(JwtBearerDefaults.AuthenticationScheme, options =>

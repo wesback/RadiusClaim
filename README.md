@@ -875,6 +875,7 @@ See **[tests/portability/README.md](./tests/portability/README.md)** for detaile
 ## Additional Documentation
 
 - **[End-to-End Setup Walkthrough](./docs/end-to-end-setup-walkthrough.md)** — Complete operator guide from Azure login and resource group creation through opening the app in a browser, including setup automation vs. manual steps
+- **[API Authentication](./docs/API_AUTHENTICATION.md)** — Entra ID JWT bearer auth setup, endpoint auth matrix, and service-to-service token patterns
 - **[Phase 7 Demo Walkthrough](./docs/phase-7-demo-walkthrough.md)** — Step-by-step guide for running the $50 and $150 expense flows
 - **[Kubernetes + Radius Validation Checklist](./docs/radius-validation-checklist.md)** — Pre-deployment validation and troubleshooting for Kubernetes + Radius deployment
 - **[ADR-0001: Kubernetes-First Deployment Strategy](./docs/ADR-0001-kubernetes-first-deployment.md)** — Architectural decision record explaining the Kubernetes + Radius primary path and portability scope

@@ -13,8 +13,8 @@ namespace ExpenseApi.Tests;
 
 /// <summary>
 /// OAuth2 authentication tests for expense endpoints.
-/// Verifies that bearer token validation is enforced on protected endpoints (POST, PUT, DELETE).
-/// GET endpoints remain public and do not require authentication.
+/// Verifies that bearer token validation is enforced on approval actions (approve, reject).
+/// Submission (POST /expenses) and read endpoints (GET) remain public and do not require authentication.
 /// </summary>
 public sealed class OAuth2AuthenticationTests : IClassFixture<WebApplicationFactory<Program>>
 {
@@ -90,9 +90,9 @@ public sealed class OAuth2AuthenticationTests : IClassFixture<WebApplicationFact
         return token;
     }
 
-    // Test: POST /expenses WITHOUT bearer token returns 401
+    // Test: POST /expenses WITHOUT bearer token is allowed (public endpoint — anyone can submit)
     [Fact]
-    public async Task PostExpense_WithoutBearerToken_Returns401Unauthorized()
+    public async Task PostExpense_WithoutBearerToken_IsAllowed()
     {
         var client = CreateClient();
         var response = await client.PostAsJsonAsync("/expenses/", new
@@ -103,7 +103,9 @@ public sealed class OAuth2AuthenticationTests : IClassFixture<WebApplicationFact
             description = "Test expense"
         });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // POST /expenses is intentionally anonymous — employees can submit without auth.
+        // Auth is only required for approve/reject actions.
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
     // Test: POST /expenses WITH invalid bearer token returns 401
@@ -208,9 +210,9 @@ public sealed class OAuth2AuthenticationTests : IClassFixture<WebApplicationFact
         Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
-    // Verify that the middleware correctly identifies the absence of Authorization header
+    // Verify that POST /expenses without Authorization header is allowed (public endpoint)
     [Fact]
-    public async Task PostExpense_MissingAuthorizationHeader_NotAllowed()
+    public async Task PostExpense_MissingAuthorizationHeader_IsAllowed()
     {
         var client = CreateClient();
         
@@ -225,6 +227,7 @@ public sealed class OAuth2AuthenticationTests : IClassFixture<WebApplicationFact
             description = "Test expense"
         });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        // POST /expenses is anonymous by design — no auth required
+        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 }

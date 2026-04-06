@@ -168,3 +168,27 @@ This is a **package ecosystem maturity gap**, not a design flaw. OpenTelemetry i
 - Pin observable package versions in team wiki (e.g., "Jaeger exporter stable ceiling: 1.5.1 as of April 2026")
 - Plan Phase 8 AppInsights integration to move observability to cloud-managed service (Jaeger is local-dev only)
 
+---
+
+## Learnings — Issues #44 & #52
+
+### 2026-07 — Auth Config Portability & API Authentication Docs
+
+**Files touched:**
+- `src/expense-api/Program.cs` — removed hardcoded audience fallback, added fail-fast for non-Development
+- `src/expense-api/appsettings.json` — added `AzureAd` config section with empty placeholders
+- `src/expense-api/appsettings.Development.json` — added dev defaults for Authority/Audience
+- `src/ExpenseApi.Tests/OAuth2AuthenticationTests.cs` — fixed 2 tests that incorrectly asserted 401 on anonymous `POST /expenses`
+- `docs/API_AUTHENTICATION.md` — created (referenced in code but was missing)
+- `README.md` — added link to API Authentication docs
+
+**Decisions:**
+- `POST /expenses` is intentionally anonymous (anyone can submit); only approve/reject require auth. Tests and docs now match this design.
+- Production fails fast if `AzureAd:Authority` and `AzureAd:Audience` are not configured. Development keeps permissive defaults.
+- Used standard ASP.NET `AzureAd__*` env var convention — no custom env var names.
+- No `.env.example` file — documented config in `docs/API_AUTHENTICATION.md` instead (the repo has no `.env` workflow).
+
+**Patterns discovered:**
+- The subscription ID parameterization was already correct. Scripts use `az account show` for dynamic resolution; Bicep files accept parameters. Issue #44 was already handled at the infrastructure level — the auth audience was the real portability gap.
+- `OAuth2AuthenticationTests` had test drift: 2 tests asserted 401 for anonymous POST /expenses, contradicting both the code (`// no authorization required`) and the validation test suite (`ExpenseApiValidationTests`) which called the same endpoint without auth and expected success.
+
