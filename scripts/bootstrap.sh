@@ -1918,8 +1918,8 @@ generate_random_name_suffix() {
 }
 
 RANDOM_NAME_SUFFIX=""
-if [ "$ENV_NAME" = "radiusclaim-azure" ] && [ "$DEPLOYMENT_TARGET" = "radius" ]; then
-  # Apply random naming only to dev/demo Radius deployments
+if [ "$DEPLOYMENT_TARGET" = "radius" ]; then
+  # Apply random naming to Radius deployments to prevent soft-delete/name collisions
   RANDOM_NAME_SUFFIX="$(generate_random_name_suffix)"
   log_info "Using random resource naming suffix for dev/demo environment: ${RANDOM_NAME_SUFFIX}"
 fi
