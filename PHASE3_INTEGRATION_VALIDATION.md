@@ -1,5 +1,7 @@
 # Phase 3: Portability Paradigm Realized
 
+> **⚠️ Historical design note:** This document describes the intended Phase 3 design where Radius recipes would directly project Dapr Component CRDs. The current implementation differs: Radius does not expose recipe outputs through its API and does not directly project Kubernetes CRDs from recipe Bicep. The actual deployment uses `apply-dapr-components-from-recipes.sh` (integrated in `bootstrap.sh` Phase 2) to create `components.dapr.io` CRDs by parsing Azure resource IDs from Radius `outputResources[]`. RBAC and workload identity federation are inline in recipe Bicep as intended. See `README.md` and `docs/end-to-end-setup-walkthrough.md` for current deployment guidance.
+
 **Date:** 2026-03-28  
 **Summary:** Radius recipes now own all infrastructure wiring (RBAC, Component CRDs, workload identity). Bootstrap is pure orchestration. App code is fully portable.
 

@@ -129,9 +129,55 @@ Radius generates the Kubernetes manifests and Dapr component specs — no hand-w
 
 > **Note on `--create-spn`:** This flag is required only when creating a fresh service principal for the first time. Both `prepare-cluster.sh` and `bootstrap.sh` support it. Use `--create-spn` on the first run of either script; subsequent deployments to the same cluster do not need the flag. If you have stale or expired Azure credentials in the cluster, adding `--create-spn` to `bootstrap.sh` will detect and replace them.
 
-**Dapr components created declaratively:** Radius recipes now create Dapr Component CRDs directly during environment deployment. The `bootstrap.sh` script focuses on orchestration only — no backfill needed. All infrastructure wiring (Component CRDs, RBAC, workload identity federation) is declared in Bicep recipes and executed at deployment time.
+**Dapr components via two-phase bootstrap:** Radius recipes provision Azure resources (Storage, Service Bus, Key Vault) and track them as `outputResources`. `bootstrap.sh` then runs `apply-dapr-components-from-recipes.sh` as a second phase to parse those resource IDs and create the Kubernetes `components.dapr.io` CRDs that Dapr sidecars need. This two-phase approach is a current platform behaviour: Radius does not expose recipe outputs through its API, so CRD creation is handled in bootstrap rather than directly inside recipes. RBAC assignments and workload identity federation are declared in the recipe Bicep files and apply at deploy time.
 
 **Azure credential registration (required):** Before deploying the Radius environment with Azure-backed recipes, register the Azure credential with the Radius control plane using an explicit auth mode such as `rad credential register azure sp --client-id "$AZURE_CLIENT_ID" --client-secret "$AZURE_CLIENT_SECRET" --tenant-id "$AZURE_TENANT_ID"` (or `rad credential register azure wi ...` when workload identity is configured). This step is critical — without it, recipe deployment fails with a missing `azure-azurecloud-default` secret error. The GitHub Actions workflow includes the service principal form automatically; manual deployments must run an explicit `sp` or `wi` registration. See [`docs/radius-validation-checklist.md`](./docs/radius-validation-checklist.md) for details.
+
+**Verified deployment cycle (fresh cluster):**
+
+This sequence has been tested end-to-end and reflects the actual working deployment path:
+
+```bash
+# Start fresh — remove any previous Radius objects, Azure resources, and cluster state
+./scripts/teardown.sh --resource-group radiusclaim-rg --yes
+
+# Provision the cluster (first time only; skip if cluster already has Dapr + Radius)
+./scripts/prepare-cluster.sh \
+  --resource-group radiusclaim-rg \
+  --aks-cluster-name radiusclaim-aks \
+  --create-aks \
+  --create-spn \
+  --install-dapr \
+  --install-radius \
+  --yes
+
+# Deploy everything (recipes, environment, app, Dapr components, validation)
+./scripts/bootstrap.sh --resource-group radiusclaim-rg --create-spn --yes
+
+# Confirm all workloads are healthy
+kubectl get pods -n radiusclaim-azure
+# Expected: expense-api (2/2), workflow-engine (2/2), notification-svc (2/2) — all Running
+kubectl get components.dapr.io -n radiusclaim-azure
+# Expected: statestore, pubsub, platform-secrets — all present
+```
+
+**What "deployment succeeded" looks like:**
+
+| Check | Command | Expected |
+|-------|---------|----------|
+| All pods running | `kubectl get pods -n radiusclaim-azure` | 3 deployments, each 2/2 Running |
+| Dapr components loaded | `kubectl get components.dapr.io -n radiusclaim-azure` | statestore, pubsub, platform-secrets |
+| No CrashLoopBackOff | `kubectl get pods -n radiusclaim-azure` | STATUS = Running |
+| Radius system healthy | `kubectl get pods -n radius-system` | All Running |
+| Dapr system healthy | `kubectl get pods -n dapr-system` | All Running |
+| Smoke test passes | `./scripts/validate-deployment.sh <URL>` | ✅ $50 flow, ✅ $150 flow, ✅ boundary case |
+
+**Known platform behaviours:**
+
+- **Component projection gap:** Radius may report `Applications.Dapr/*` resources as Succeeded without creating Kubernetes `components.dapr.io` CRDs. `bootstrap.sh` compensates for this by running `apply-dapr-components-from-recipes.sh` in Phase 2. If you deploy manually via `rad deploy` only, run this script separately (see Step 9a in `docs/end-to-end-setup-walkthrough.md`).
+- **Recipe outputs not exposed:** Radius does not expose recipe Bicep outputs through its API. The two-phase workaround parses Azure resource IDs from `status.outputResources[]` instead. This is opaque from the app side.
+- **Public gateway readiness lag:** The Radius gateway may not be immediately reachable after bootstrap. `validate-deployment.sh` falls back to port-forward if the public URL is unavailable.
+- **Auth mode by context:** Local bootstrap uses workload identity by default; Azure Policy on this tenant blocks shared keys. The CI workflow (`deploy-azure.yml`) uses service principal registration with `AZURE_CLIENT_SECRET` because OIDC-federated GitHub Actions tokens are not yet wired to the Radius credential.
 
 **Supported deployment targets**:
 - **AKS (Azure Kubernetes Service)** — the primary example, with Azure backing services
@@ -288,7 +334,7 @@ resource stateComponent 'dapr.io/Component@v1alpha1' = {
 }
 ```
 
-**Result:** App code and Dapr components travel together in recipes. Bootstrap is purely orchestration — no compensation for what recipes didn't do.
+**Result:** App code travels with recipes. RBAC and workload identity federation are inline in Bicep, not in bootstrap scripts. The remaining orchestration step (Dapr CRD creation from `outputResources`) is automated in `bootstrap.sh` as Phase 2.
 
 ### Workload Identity: From Bootstrap to Bicep
 
@@ -298,23 +344,28 @@ Workload identity (federated credentials + role assignments) is now **entirely i
 - **Radius environment Bicep** — Passes identity IDs to recipes as parameters
 - **Recipes** — Use those IDs in Component metadata and RBAC assignments
 
-No bootstrap compensation needed. The deployment is **fully declarative end-to-end**.
+### Bootstrap: Two-Phase Orchestration
 
-### Bootstrap: Orchestration Only
+`scripts/bootstrap.sh` handles what must be orchestrated sequentially:
 
-`scripts/bootstrap.sh` now handles only what must be orchestrated sequentially:
-
+**Phase 1 — Infrastructure and app deployment:**
 1. Enable AKS OIDC + workload identity addon
 2. Deploy `workload-identity.bicep` to create the managed identity
-3. Deploy Radius environment (recipes create all wiring)
+3. Deploy Radius environment (recipes provision Azure resources and assign RBAC)
 4. Deploy application workloads
-5. Validate the deployment
 
-**What bootstrap no longer does:**
+**Phase 2 — Dapr component wiring:**
+5. Run `apply-dapr-components-from-recipes.sh` to parse Azure resource IDs from Radius `outputResources` and create Kubernetes `components.dapr.io` CRDs
+6. Annotate service accounts with workload identity client ID
+7. Restart workloads so Dapr sidecars load the components
+
+**Phase 3 — Validation:**
+8. Run end-to-end smoke test against the deployed app
+
+**What bootstrap does not do:**
 - ❌ Query Azure by name pattern to find resources
-- ❌ Manually create Dapr Component CRDs
-- ❌ Apply RBAC workarounds
-- ❌ Patch service accounts outside of Kubernetes declarations
+- ❌ Apply RBAC workarounds outside of recipe Bicep
+- ❌ Manage environment state or Radius workspace beyond idempotent setup
 
 ---
 
@@ -640,7 +691,7 @@ The GitHub Actions workflow (`.github/workflows/deploy-azure.yml`) deploys to Ku
 |--------|---------|----------|
 | `AZURE_SUBSCRIPTION_ID` | Azure subscription ID for Azure backing services (state, pub/sub, secrets recipes) | ✅ Yes |
 | `AZURE_CLIENT_ID` | Azure service principal client ID used when registering Radius Azure credentials in CI | ✅ Yes |
-| `AZURE_CLIENT_SECRET` | Azure service principal client secret used when registering Radius Azure credentials in CI | ✅ Yes |
+| `AZURE_CLIENT_SECRET` | Azure service principal client secret — used in CI (`deploy-azure.yml`) to register Radius Azure credentials via `rad credential register azure sp`. Not used when running bootstrap locally with workload identity (`--azure-auth-mode wi` or the default `auto` mode). | ✅ Yes (CI); optional (local WI path) |
 | `AZURE_TENANT_ID` | Azure tenant ID used when registering Radius Azure credentials in CI | ✅ Yes |
 | `RADIUS_KUBECONFIG` | Raw kubeconfig content for the Kubernetes cluster that hosts Radius and the app workloads | ✅ Yes |
 | `GHCR_TOKEN` | GitHub personal access token with `read:packages` scope -- used by `prepare-cluster.sh` to create the `ghcr-pull-secret` image pull secret so AKS can pull images from `ghcr.io/wesback` | ✅ Yes (for `prepare-cluster.sh`) |
@@ -763,7 +814,22 @@ See **[`docs/SCALING.md`](./docs/SCALING.md)** for a complete breakdown of the b
 
 ## Quick Start (Local Dev)
 
-> Coming in Phase 2. For now, see individual service READMEs.
+For local development without Kubernetes, use the Docker Compose + Dapr path:
+
+```bash
+# Start Redis (state store + pub/sub backing) and supporting infrastructure
+docker compose -f infra/dapr/local/docker-compose.yaml up -d
+
+# Run workflow-engine with Dapr sidecar
+dapr run --app-id workflow-engine --app-port 5299 --resources-path ./infra/dapr/local -- \
+  dotnet run --project src/workflow-engine/WorkflowEngine.csproj
+
+# Run expense-api with Dapr sidecar (separate terminal)
+dapr run --app-id expense-api --app-port 5062 --resources-path ./infra/dapr/local -- \
+  dotnet run --project src/expense-api/ExpenseApi.csproj
+```
+
+Then open `http://localhost:5062/app`. See [`docs/local-dev.md`](./docs/local-dev.md) for the full local development walkthrough.
 
 ---
 
@@ -823,6 +889,6 @@ See **[tests/portability/README.md](./tests/portability/README.md)** for detaile
 
 ---
 
-**Status:** Phase 7 In Progress (Phases 1–6 complete; app portable via Dapr, Kubernetes-first deployment via Radius, Azure backing services, validation documentation complete)  
+**Status:** End-to-end deployment validated ✅ (fresh-cluster teardown → prepare → bootstrap → validate cycle confirmed; all workloads healthy, Dapr components connected, Azure backing services deployed)  
 **Target:** Dapr-portable app code; Kubernetes + Radius declarative deployment; Azure backing services (other clouds supported via recipes)  
 **Demo Runtime:** ~10 minutes (proof: auto-approve flow at < $100, manual review at ≥ $100, end-to-end pub/sub notification)

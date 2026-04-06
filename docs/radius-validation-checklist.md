@@ -68,7 +68,7 @@ For CI/CD deployment, verify these are configured:
 # RADIUS_KUBECONFIG (raw kubeconfig content for the Kubernetes cluster with Radius)
 ```
 
-> **Zero-secrets model:** `AZURE_CLIENT_SECRET` is **not** used. Authentication runs through Azure Workload Identity (OIDC federated credentials). No client secret is stored in GitHub Secrets or in the cluster.
+> **Auth model:** `AZURE_CLIENT_SECRET` is used by the CI workflow (`deploy-azure.yml`) to register service principal credentials with Radius via `rad credential register azure sp`. Local bootstrap defaults to workload identity (`--azure-auth-mode wi` or `auto`), which does not need a client secret. See the CI workflow for the exact registration call.
 
 **Required Variables:**
 ```bash
@@ -392,37 +392,37 @@ kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
 # This is the component projection gap. Run the backfill (Step 5a below).
 ```
 
-### Step 5a: Verify and Backfill Dapr Components
+### Step 5a: Verify Dapr Components (bootstrap) / Apply Components (manual path)
 
-Radius may report `Applications.Dapr/*` as Succeeded without projecting `components.dapr.io` CRDs into Kubernetes. This step confirms components exist and backfills if needed.
+> **Bootstrap path:** `bootstrap.sh` runs `apply-dapr-components-from-recipes.sh` automatically. If bootstrap completed without errors, skip to "Verify Components" below.
+> **Manual `rad deploy` path:** components are not created automatically — run the script below.
+
+Radius may report `Applications.Dapr/*` as Succeeded without projecting `components.dapr.io` CRDs into Kubernetes. `bootstrap.sh` compensates for this automatically; the script can also be run manually.
 
 ```bash
 kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
 # Expected: statestore, pubsub, platform-secrets
 #
-# If "No resources found" → run the backfill:
+# If "No resources found" → apply components:
 
-./scripts/deploy-dapr-components-workload-identity.sh \
-  --resource-group <your-resource-group> \
-  --namespace "$WORKLOAD_NAMESPACE"
+export AZURE_CLIENT_ID="<managed-identity-client-id>"   # from: az identity show --name radiusclaim-workload-identity --query clientId
+export AZURE_TENANT_ID="<azure-tenant-id>"              # from: az account show --query tenantId
 
-# After backfill, restart pods so sidecars pick up the new components:
+./scripts/apply-dapr-components-from-recipes.sh \
+  --environment azure \
+  --application radiusclaim \
+  --namespace "$WORKLOAD_NAMESPACE" \
+  --tenant-id "$AZURE_TENANT_ID" \
+  --client-id "$AZURE_CLIENT_ID"
+
+# After applying, restart pods so sidecars pick up the new components:
 kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
   -n "$WORKLOAD_NAMESPACE"
 ```
 
-The backfill uses Microsoft Entra workload identity for `statestore` — no client secret is needed. Ensure the managed identity variables are set:
+`apply-dapr-components-from-recipes.sh` reads Azure resource IDs from Radius `outputResources`, then creates `statestore`, `pubsub`, and `platform-secrets` components using workload identity (OIDC token exchange — no `azureClientSecret` in the cluster).
 
-```bash
-export AZURE_CLIENT_ID="<managed-identity-client-id>"   # from: az identity show --name radiusclaim-workload-identity --query clientId
-export AZURE_TENANT_ID="<azure-tenant-id>"              # from: az account show --query tenantId
-# Optional if the identity lookup is blocked:
-export AZURE_PRINCIPAL_ID="<managed-identity-principal-id>"
-```
-
-`deploy-dapr-components-workload-identity.sh` will grant `Storage Blob Data Contributor` and `Key Vault Secrets User` on the backing resources, then generate statestore and platform-secrets components that use OIDC token exchange — no `azureClientSecret` in the cluster.
-
-**Verification:**
+**Verify Components:**
 ```bash
 kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
 # Expected: statestore, pubsub, platform-secrets
@@ -676,22 +676,25 @@ kubectl get components.dapr.io -n "$WORKLOAD_NAMESPACE"
 # If components exist but sidecars still fail: check sidecar logs (see "Services return 500 errors").
 ```
 
-**Fix — Run the component backfill script:**
+**Fix — Run the component script:**
 ```bash
-./scripts/deploy-dapr-components-workload-identity.sh \
-  --resource-group <your-resource-group> \
-  --namespace "$WORKLOAD_NAMESPACE"
+./scripts/apply-dapr-components-from-recipes.sh \
+  --environment azure \
+  --application radiusclaim \
+  --namespace "$WORKLOAD_NAMESPACE" \
+  --tenant-id "$AZURE_TENANT_ID" \
+  --client-id "$AZURE_CLIENT_ID"
 
 # Restart pods so sidecars pick up the new components
 kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
   -n "$WORKLOAD_NAMESPACE"
 ```
 
-**Alternative manual fix — If the backfill script prerequisites are not met:**
+**Alternative manual fix — If the script prerequisites are not met:**
 1. Ensure the Radius environment and app are deployed (`rad env list`, `rad app list`)
 2. Ensure Azure credentials are registered (`rad credential list`)
 3. Re-run `rad deploy infra/radius/app.bicep ...` once to rule out staleness
-4. If `kubectl get components.dapr.io -A` is still empty, run the backfill script
+4. If `kubectl get components.dapr.io -A` is still empty, run `apply-dapr-components-from-recipes.sh`
 
 ### Issue: `daprd` is in `CrashLoopBackOff`
 
@@ -708,21 +711,19 @@ kubectl get component statestore pubsub -n "$WORKLOAD_NAMESPACE" -o yaml
 
 **Interpretation:**
 - `KeyBasedAuthenticationNotPermitted` in `daprd` logs → `statestore` is using account-key authentication, but the backing storage account disallows shared-key access (Azure Policy). This means the Dapr component was **not properly configured for workload identity**. The backfill script should have created a workload-identity-based component — if it didn't, rerun the backfill.
-- `pubsub` metadata includes `connectionString` instead of `namespaceName` + `azureClientId` → the pub/sub component is using the legacy connection string path instead of workload identity. Re-run `deploy-dapr-components-workload-identity.sh` to patch it to workload identity.
+- `pubsub` metadata includes `connectionString` instead of `namespaceName` + `azureClientId` → the pub/sub component is using the legacy connection string path instead of workload identity. Re-run `apply-dapr-components-from-recipes.sh` to patch it to workload identity.
 - Dapr annotations such as `dapr.io/enabled`, `dapr.io/app-id`, and `dapr.io/app-port` are **not** the problem when the sidecar dies during component initialization.
 
 **Fix path:**
 
-Rerun the backfill script to ensure all Dapr components are configured with workload identity:
+Rerun the component script to ensure all Dapr components are configured with workload identity:
 ```bash
-export AZURE_PRINCIPAL_ID="${AZURE_PRINCIPAL_ID:-$(az identity show \
-  --resource-group "$AZURE_RESOURCE_GROUP" \
-  --name radiusclaim-workload-identity \
-  --query principalId -o tsv)}"
-
-./scripts/deploy-dapr-components-workload-identity.sh \
-  --resource-group <your-resource-group> \
-  --namespace "$WORKLOAD_NAMESPACE"
+./scripts/apply-dapr-components-from-recipes.sh \
+  --environment azure \
+  --application radiusclaim \
+  --namespace "$WORKLOAD_NAMESPACE" \
+  --tenant-id "$AZURE_TENANT_ID" \
+  --client-id "$AZURE_CLIENT_ID"
 
 kubectl rollout restart deployment/expense-api deployment/workflow-engine deployment/notification-svc \
   -n "$WORKLOAD_NAMESPACE"

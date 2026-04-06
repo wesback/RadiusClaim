@@ -870,9 +870,16 @@ Deploys the three RadiusClaim services (expense-api, workflow-engine, notificati
 
 ---
 
-## Step 9a: Verify and Backfill Dapr Components
+## Step 9a: Verify Dapr Components (bootstrap) / Apply Components (manual path)
 
-After the Radius app deployment, Dapr sidecars need `components.dapr.io` CRDs in the **workload** namespace. Radius may have reported `Applications.Dapr/*` as Succeeded without actually projecting these objects — this is a known component projection gap.
+> **Bootstrap path:** `bootstrap.sh` automatically runs `apply-dapr-components-from-recipes.sh` after app deployment. If you used `bootstrap.sh` and it completed successfully, your components are already present — skip to Step 10.
+>
+> This step is only needed if:
+> - You deployed manually via `rad deploy` (the steps above, without `bootstrap.sh`)
+> - `bootstrap.sh` was interrupted or failed at the component creation phase
+> - You want to verify components are present after a troubleshooting restart
+
+After a Radius app deployment, Dapr sidecars need `components.dapr.io` CRDs in the **workload** namespace. Radius may report `Applications.Dapr/*` resources as Succeeded without projecting these objects — this is a known component projection behaviour that `bootstrap.sh` compensates for automatically.
 
 ### Check for existing components
 
@@ -902,31 +909,24 @@ kubectl logs -n "$WORKLOAD_NAMESPACE" deployment/expense-api -c daprd --tail=20 
 # Expected (broken): Only loads kubernetes secretstore, never loads statestore/pubsub
 ```
 
-### Run the backfill script
+### Apply Dapr components (manual path or bootstrap fallback)
 
 ```bash
-./scripts/deploy-dapr-components-workload-identity.sh \
-  --resource-group "$AZURE_RESOURCE_GROUP" \
-  --namespace "$WORKLOAD_NAMESPACE"
+./scripts/apply-dapr-components-from-recipes.sh \
+  --environment "$RAD_ENV" \
+  --application "$RAD_APP" \
+  --namespace "$WORKLOAD_NAMESPACE" \
+  --tenant-id "$AZURE_TENANT_ID" \
+  --client-id "$AZURE_CLIENT_ID"
 ```
 
 The script:
-1. Reads Azure backing-resource details from Radius resource metadata
-2. Grants the necessary RBAC permissions to the workload identity managed identity
-3. Generates `components.dapr.io` manifests that use **workload identity (OIDC token exchange)** — no secrets stored in the cluster
-4. Applies Dapr component manifests for `statestore`, `pubsub`, and `platform-secrets`
+1. Queries Radius for the deployed `Applications.Dapr/*` resources
+2. Parses Azure resource IDs from `status.outputResources[]` (Storage Account, Service Bus namespace, Key Vault vault name)
+3. Creates Kubernetes `components.dapr.io` manifests using workload identity (no client secrets)
+4. Applies `statestore`, `pubsub`, and `platform-secrets` components to the workload namespace
 
-> **Workload Identity Model:** The backfill script configures all Dapr components to use Azure Workload Identity. Components authenticate via OIDC federated credentials — **no client secrets, connection strings, or shared keys** are stored in Kubernetes secrets or the cluster.
-
-**Dry run first** (generates YAML without applying):
-
-```bash
-./scripts/deploy-dapr-components-workload-identity.sh \
-  --resource-group "$AZURE_RESOURCE_GROUP" \
-  --namespace "$WORKLOAD_NAMESPACE" \
-  --dry-run
-# Review dapr-components-generated.yaml before applying
-```
+> **Workload Identity Model:** All Dapr components authenticate via OIDC federated credentials — **no client secrets, connection strings, or shared keys** are stored in Kubernetes secrets or the cluster.
 
 ### Verify the backfill
 
