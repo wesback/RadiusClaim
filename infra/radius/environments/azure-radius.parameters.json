@@ -17,6 +17,12 @@
     "azureProviderScope": {
       "value": ""
     },
+    "azureSubscriptionId": {
+      "value": ""
+    },
+    "azureResourceGroupName": {
+      "value": ""
+    },
     "location": {
       "value": "eastus2"
     }

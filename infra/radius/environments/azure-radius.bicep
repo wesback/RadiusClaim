@@ -49,6 +49,12 @@ param recipeTag string = 'latest'
 @description('Full Azure provider scope path (e.g. /subscriptions/{id}/resourceGroups/{rg}).')
 param azureProviderScope string
 
+@description('Azure subscription ID for recipe resource ID construction. Required to work around Radius deployment engine scope resolution.')
+param azureSubscriptionId string = ''
+
+@description('Azure resource group name for recipe resource ID construction. Required to work around Radius deployment engine scope resolution.')
+param azureResourceGroupName string = ''
+
 @description('Azure region for resource provisioning.')
 param location string = 'francecentral'
 
@@ -108,6 +114,8 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
             daprClientId: daprAzureClientId
+            azureSubscriptionId: azureSubscriptionId
+            azureResourceGroupName: azureResourceGroupName
           }
         }
       }
@@ -139,6 +147,8 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
             daprClientId: daprAzureClientId
+            azureSubscriptionId: azureSubscriptionId
+            azureResourceGroupName: azureResourceGroupName
           }
         }
       }
@@ -170,6 +180,8 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
             daprClientId: daprAzureClientId
+            azureSubscriptionId: azureSubscriptionId
+            azureResourceGroupName: azureResourceGroupName
           }
         }
       }

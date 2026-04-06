@@ -195,7 +195,7 @@ app.Use(async (context, next) =>
 
 var expenses = app.MapGroup("/expenses");
 
-// POST /expenses - Create a new expense (requires OAuth2 bearer token)
+// POST /expenses - Create a new expense (no authorization required)
 expenses.MapPost("/", async (HttpContext context, ExpenseSubmission submission, DaprClient daprClient, CancellationToken cancellationToken) =>
 {
     var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
