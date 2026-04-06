@@ -1985,6 +1985,7 @@ ENV_DEPLOY_ARGS=(
   --parameters "location=${LOCATION}"
   --parameters "daprAzurePrincipalId=${AZURE_PRINCIPAL_ID_CACHED}"
   --parameters "daprAzureClientId=${AZURE_CLIENT_ID_CACHED}"
+  --parameters "azureTenantId=${AZURE_TENANT_ID}"
   --parameters "recipeRegistry=${RECIPE_REGISTRY}"
   --parameters "recipeTag=${RECIPE_TAG}"
   --parameters "randomNameSuffix=${RANDOM_NAME_SUFFIX}"
@@ -2177,7 +2178,32 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
   
   rad_deploy_with_recovery "${APP_DEPLOY_ARGS[@]}"
 
-  # RBAC role assignments now handled inline by Radius recipes (no post-deploy needed)
+  # Post-deploy RBAC: Assign data-plane roles on recipe-created Azure resources.
+  # Radius v0.56 cannot assign RBAC inline (cross-scope module auth failure),
+  # so we discover resources from the RG and assign roles to the workload identity.
+  section "Assigning data-plane RBAC on recipe-created resources"
+  local _rbac_scope="/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}"
+  local _rbac_principal="${AZURE_PRINCIPAL_ID_CACHED}"
+
+  # Service Bus → Azure Service Bus Data Owner
+  local _sb_id
+  _sb_id="$(az resource list -g "$RESOURCE_GROUP" --resource-type 'Microsoft.ServiceBus/namespaces' --query '[0].id' -o tsv 2>/dev/null || true)"
+  if [ -n "$_sb_id" ]; then
+    log_info "Assigning 'Azure Service Bus Data Owner' on Service Bus..."
+    az role assignment create --assignee-object-id "$_rbac_principal" --assignee-principal-type ServicePrincipal \
+      --role "Azure Service Bus Data Owner" --scope "$_sb_id" --output none 2>/dev/null || true
+    log_success "Service Bus RBAC assigned"
+  fi
+
+  # Key Vault → Key Vault Secrets User
+  local _kv_id
+  _kv_id="$(az resource list -g "$RESOURCE_GROUP" --resource-type 'Microsoft.KeyVault/vaults' --query '[0].id' -o tsv 2>/dev/null || true)"
+  if [ -n "$_kv_id" ]; then
+    log_info "Assigning 'Key Vault Secrets User' on Key Vault..."
+    az role assignment create --assignee-object-id "$_rbac_principal" --assignee-principal-type ServicePrincipal \
+      --role "Key Vault Secrets User" --scope "$_kv_id" --output none 2>/dev/null || true
+    log_success "Key Vault RBAC assigned"
+  fi
 fi
 
 if [ "$SKIP_APP_DEPLOY" = false ]; then

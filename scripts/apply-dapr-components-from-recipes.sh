@@ -133,10 +133,21 @@ if [[ "$STATESTORE_TYPE" == "state.postgresql" ]]; then
   POSTGRES_USER=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.values.databaseUser // .properties.status.resourceMetadata.databaseUser // "dapr_app"')
   CONNECTION_STRING=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.values.connectionString // .properties.status.resourceMetadata.dapr.metadata.connectionString // ""')
   
+  # Fallback: construct connection string from server FQDN if recipe metadata paths are empty
+  if [[ -z "$CONNECTION_STRING" ]] && [[ -n "$POSTGRES_SERVER" ]]; then
+    POSTGRES_FQDN="${POSTGRES_SERVER}.postgres.database.azure.com"
+    CONNECTION_STRING="host=${POSTGRES_FQDN} port=5432 database=${POSTGRES_DATABASE} user=${POSTGRES_USER} sslmode=require"
+    log_warn "Constructed connection string from server FQDN (recipe metadata path empty)"
+  fi
+
   # Get Entra auth details from recipe metadata
-  STATESTORE_TENANT_ID=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureTenantId // ""')
-  STATESTORE_CLIENT_ID=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureClientId // ""')
+  STATESTORE_TENANT_ID=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureTenantId // .properties.status.values.azureTenantId // ""')
+  STATESTORE_CLIENT_ID=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureClientId // .properties.status.values.azureClientId // ""')
   STATESTORE_ENVIRONMENT=$(echo "$STATESTORE_JSON" | jq -r '.properties.status.resourceMetadata.dapr.metadata.azureEnvironment // "AZUREPUBLICCLOUD"')
+  
+  # Fall back to script parameters if not in recipe metadata
+  STATESTORE_TENANT_ID=${STATESTORE_TENANT_ID:-$TENANT_ID}
+  STATESTORE_CLIENT_ID=${STATESTORE_CLIENT_ID:-$CLIENT_ID}
   
   if [[ -z "$POSTGRES_SERVER" ]] || [[ -z "$CONNECTION_STRING" ]]; then
     log_error "Failed to extract PostgreSQL server or connection string. Check Radius recipe deployment."
