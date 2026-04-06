@@ -178,6 +178,8 @@ spec:
     value: "$CLIENT_ID"
   - name: azureEnvironment
     value: "AZUREPUBLICCLOUD"
+  - name: actorStateStore
+    value: "true"
 ---
 # Pub/Sub Component - Azure Service Bus Topics (Workload Identity)
 apiVersion: dapr.io/v1alpha1
