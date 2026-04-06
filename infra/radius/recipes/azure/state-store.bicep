@@ -108,25 +108,9 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
 // ---------------------------------------------------------------------------
 // RBAC — Storage Blob Data Contributor for Dapr workload identity
 // ---------------------------------------------------------------------------
-// Delegated to the role-assignment module with an explicit Azure ARM resource
-// group scope. Bicep BCP139 prevents inline resource-level scope on extension
-// resources targeting a different deployment scope; using a module with
-// `scope: resourceGroup(sub, rg)` is Bicep's prescribed pattern and forces
-// ARM to evaluate all resource IDs in the correct Azure ARM context rather
-// than letting Radius UCP substitute its internal scope path.
-
-var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-
-module storageRoleAssignment './modules/role-assignment.bicep' = {
-  name: 'storageRbacDeploy'
-  scope: resourceGroup(azureSubscriptionId, azureResourceGroupName)
-  params: {
-    principalId: daprPrincipalId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', storageBlobDataContributorRoleId)
-    roleAssignmentName: guid(storageAccountArmId, daprPrincipalId, storageBlobDataContributorRoleId)
-  }
-  dependsOn: [storageAccount]
-}
+// Removed from recipe: Radius v0.56 bicep-de cannot authenticate nested ARM
+// deployments created by cross-scope modules (scope: resourceGroup(sub, rg)).
+// RBAC is assigned post-deploy by bootstrap.sh via `az role assignment create`.
 
 // ---------------------------------------------------------------------------
 // Dapr Component Metadata — state.azure.blobstorage

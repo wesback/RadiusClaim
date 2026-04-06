@@ -1695,7 +1695,7 @@ fi
 
 # Validate auth mode flags: cannot use both --azure-auth-mode sp AND --setup-workload-identity
 if [ "$AZURE_AUTH_MODE" = "sp" ] && [ "$SETUP_WORKLOAD_IDENTITY" = "true" ]; then
-  die "ERROR: Cannot use both --azure-auth-mode sp AND --setup-workload-identity together.
+  fail "Cannot use both --azure-auth-mode sp AND --setup-workload-identity together.
 Choose ONE:
   (1) --azure-auth-mode sp        — Service Principal with client secret (no cluster changes needed)
   (2) --setup-workload-identity   — Workload Identity with federated credentials (enables OIDC + addons)
@@ -1977,10 +1977,11 @@ ENV_DEPLOY_ARGS=(
   deploy
   "$REPO_ROOT/infra/radius/environments/azure-radius.bicep"
   --parameters "@${REPO_ROOT}/infra/radius/environments/azure-radius.parameters.json"
-  --parameters "subscriptionId=${RESOLVED_SUBSCRIPTION_ID}"
   --parameters "environmentName=${ENV_NAME}"
   --parameters "kubernetesNamespace=${KUBERNETES_NAMESPACE}"
   --parameters "azureProviderScope=/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}"
+  --parameters "azureSubscriptionId=${AZURE_SUBSCRIPTION_ID}"
+  --parameters "azureResourceGroupName=${RESOURCE_GROUP}"
   --parameters "location=${LOCATION}"
   --parameters "daprAzurePrincipalId=${AZURE_PRINCIPAL_ID_CACHED}"
   --parameters "daprAzureClientId=${AZURE_CLIENT_ID_CACHED}"
@@ -2191,9 +2192,31 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
 fi
 
 if [ "$SKIP_COMPONENT_REFRESH" = false ]; then
-  section "Annotating service accounts for workload identity"
+  # ── Phase 1: Radius recipes provision Azure resources (storage, service bus, key vault)
+  # ── Phase 2: Bootstrap creates Kubernetes Dapr Component CRDs from recipe outputs
+  #
+  # This two-phase approach is necessary because:
+  # 1. Radius recipes deploy infrastructure and store connection metadata
+  # 2. Dapr Component CRDs must be created separately in Kubernetes from that metadata
+  # 3. Without this step, workload pods have Dapr sidecars but no components to load
+  
+  section "Creating Dapr Component CRDs from Radius recipe outputs"
   wait_for_namespace "$WORKLOAD_NAMESPACE"
   
+  apply_components_cmd="$SCRIPT_DIR/apply-dapr-components-from-recipes.sh"
+  apply_components_args=(
+    --environment "$ENV_NAME"
+    --application "$APP_NAME"
+    --namespace "$WORKLOAD_NAMESPACE"
+    --tenant-id "${AZURE_TENANT_ID}"
+    --client-id "${AZURE_CLIENT_ID_CACHED}"
+  )
+  
+  if ! run_cmd "$apply_components_cmd" "${apply_components_args[@]}"; then
+    fail "Failed to create Dapr components from recipe outputs. Verify Radius recipes succeeded and output valid resourceMetadata.dapr."
+  fi
+  
+  section "Annotating service accounts for workload identity"
   annotate_cmd="$SCRIPT_DIR/annotate-service-accounts.sh"
   annotate_args=(
     --namespace "$WORKLOAD_NAMESPACE"

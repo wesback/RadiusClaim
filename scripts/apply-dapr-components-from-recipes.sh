@@ -111,12 +111,16 @@ STORAGE_ACCOUNT=$(echo "$STATESTORE_JSON" | jq -r '
 CONTAINER_NAME="expense-state"
 
 # Pub/Sub: Extract Service Bus namespace name from the /Microsoft.ServiceBus/namespaces/ resource
+# Append .servicebus.windows.net — Dapr requires the FQDN, not the short name
 SERVICEBUS_NAMESPACE=$(echo "$PUBSUB_JSON" | jq -r '
   .properties.status.outputResources[]?
   | select(.id | test("/Microsoft.ServiceBus/namespaces/[^/]+$"))
   | .id
   | split("/")[-1]
 ')
+if [[ -n "$SERVICEBUS_NAMESPACE" ]] && [[ "$SERVICEBUS_NAMESPACE" != *".servicebus.windows.net" ]]; then
+  SERVICEBUS_NAMESPACE="${SERVICEBUS_NAMESPACE}.servicebus.windows.net"
+fi
 
 # Secrets: Extract Key Vault name from the /Microsoft.KeyVault/vaults/ resource
 KEYVAULT_NAME=$(echo "$SECRETS_JSON" | jq -r '

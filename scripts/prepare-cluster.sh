@@ -15,6 +15,7 @@ KUBE_CONTEXT="${KUBE_CONTEXT:-}"
 AKS_NODE_COUNT=2
 AKS_MIN_COUNT=1
 AKS_MAX_COUNT=3
+AKS_NODE_VM_SIZE=""
 CREATE_AKS=false
 CREATE_SPN=false
 INSTALL_DAPR=false
@@ -46,6 +47,7 @@ Optional:
   --node-count <count>          Initial AKS node count (default: ${AKS_NODE_COUNT})
   --min-count <count>           AKS autoscaler minimum node count (default: ${AKS_MIN_COUNT})
   --max-count <count>           AKS autoscaler maximum node count (default: ${AKS_MAX_COUNT})
+  --node-vm-size <size>         AKS node VM size (default: Azure default)
   --install-dapr                Install Dapr on the cluster when missing
   --install-radius              Install Radius on the cluster when missing
   --workspace-name <name>       Radius workspace name (default: ${WORKSPACE_NAME})
@@ -101,6 +103,10 @@ while [ $# -gt 0 ]; do
       ;;
     --max-count)
       AKS_MAX_COUNT="$2"
+      shift 2
+      ;;
+    --node-vm-size)
+      AKS_NODE_VM_SIZE="$2"
       shift 2
       ;;
     --install-dapr)
@@ -371,21 +377,26 @@ prepare_aks_cluster() {
       || fail "Cluster preparation stopped before creating AKS."
 
     section "Creating AKS cluster"
-    run_cmd az aks create \
-      --resource-group "$RESOURCE_GROUP" \
-      --name "$AKS_CLUSTER_NAME" \
-      --location "$LOCATION" \
-      --node-count "$AKS_NODE_COUNT" \
-      --load-balancer-sku standard \
-      --enable-managed-identity \
-      --network-plugin azure \
-      --network-policy azure \
-      --enable-cluster-autoscaler \
-      --min-count "$AKS_MIN_COUNT" \
-      --max-count "$AKS_MAX_COUNT" \
-      --generate-ssh-keys \
-      --only-show-errors \
+    local aks_create_args=(
+      --resource-group "$RESOURCE_GROUP"
+      --name "$AKS_CLUSTER_NAME"
+      --location "$LOCATION"
+      --node-count "$AKS_NODE_COUNT"
+      --load-balancer-sku standard
+      --enable-managed-identity
+      --network-plugin azure
+      --network-policy azure
+      --enable-cluster-autoscaler
+      --min-count "$AKS_MIN_COUNT"
+      --max-count "$AKS_MAX_COUNT"
+      --generate-ssh-keys
+      --only-show-errors
       --output none
+    )
+    if [ -n "$AKS_NODE_VM_SIZE" ]; then
+      aks_create_args+=(--node-vm-size "$AKS_NODE_VM_SIZE")
+    fi
+    run_cmd az aks create "${aks_create_args[@]}"
   fi
 
   section "Configuring kubectl for AKS"

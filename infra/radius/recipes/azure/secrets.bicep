@@ -101,22 +101,9 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
 // ---------------------------------------------------------------------------
 // RBAC — Key Vault Secrets Officer for Dapr workload identity
 // ---------------------------------------------------------------------------
-// Delegated to the role-assignment module with an explicit Azure ARM resource
-// group scope. See state-store.bicep for the full rationale (BCP139 / Radius
-// UCP scope substitution issue).
-
-var keyVaultSecretsOfficerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
-
-module keyVaultRoleAssignment './modules/role-assignment.bicep' = {
-  name: 'keyVaultRbacDeploy'
-  scope: resourceGroup(azureSubscriptionId, azureResourceGroupName)
-  params: {
-    principalId: daprPrincipalId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', keyVaultSecretsOfficerRoleId)
-    roleAssignmentName: guid(keyVaultArmId, daprPrincipalId, keyVaultSecretsOfficerRoleId)
-  }
-  dependsOn: [keyVault]
-}
+// Removed from recipe: Radius v0.56 bicep-de cannot authenticate nested ARM
+// deployments created by cross-scope modules (scope: resourceGroup(sub, rg)).
+// RBAC is assigned post-deploy by bootstrap.sh via `az role assignment create`.
 
 // ---------------------------------------------------------------------------
 // Dapr Component Metadata — secretstores.azure.keyvault

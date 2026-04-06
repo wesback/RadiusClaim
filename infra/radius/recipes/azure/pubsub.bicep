@@ -98,22 +98,9 @@ resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview
 // ---------------------------------------------------------------------------
 // RBAC — Azure Service Bus Data Owner for Dapr workload identity
 // ---------------------------------------------------------------------------
-// Delegated to the role-assignment module with an explicit Azure ARM resource
-// group scope. See state-store.bicep for the full rationale (BCP139 / Radius
-// UCP scope substitution issue).
-
-var serviceBusDataOwnerRoleId = '090c5cfd-751d-490a-894a-3ce6f1109419'
-
-module serviceBusRoleAssignment './modules/role-assignment.bicep' = {
-  name: 'serviceBusRbacDeploy'
-  scope: resourceGroup(azureSubscriptionId, azureResourceGroupName)
-  params: {
-    principalId: daprPrincipalId
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', serviceBusDataOwnerRoleId)
-    roleAssignmentName: guid(serviceBusArmId, daprPrincipalId, serviceBusDataOwnerRoleId)
-  }
-  dependsOn: [serviceBusNamespace]
-}
+// Removed from recipe: Radius v0.56 bicep-de cannot authenticate nested ARM
+// deployments created by cross-scope modules (scope: resourceGroup(sub, rg)).
+// RBAC is assigned post-deploy by bootstrap.sh via `az role assignment create`.
 
 // ---------------------------------------------------------------------------
 // Dapr Component Metadata — pubsub.azure.servicebus.topics
