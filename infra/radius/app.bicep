@@ -50,10 +50,14 @@ Each recipeName must match a recipe registered in the active Radius environment
 (infra/radius/environments/azure-radius.bicep).
 bootstrap.sh reads daprBackings.secretStore.recipeName to compute the
 deterministic Azure Key Vault name for the soft-delete preflight check.
+
+State store is provisioned with PostgreSQL (supports transactional actors).
+Pub/Sub is provisioned with Azure Service Bus.
+Secret Store is provisioned with Azure Key Vault.
 ''')
 param daprBackings object = {
   stateStore: {
-    recipeName: 'azure-blob-statestore'
+    recipeName: 'azure-postgres-statestore'
   }
   pubSub: {
     recipeName: 'azure-servicebus-pubsub'

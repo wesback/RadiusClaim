@@ -32,7 +32,7 @@ param kubernetesNamespace string = 'radiusclaim-azure'
 // pods via Dapr sidecars.
 //
 // When workloads reference Dapr components (e.g., stateStore, pubSub), they use
-// the component names defined in the recipes below (e.g., 'azure-blob-statestore',
+// the component names defined in the recipes below (e.g., 'azure-postgres-statestore',
 // 'azure-servicebus-pubsub'). These components are namespaced within
 // kubernetesNamespace and are automatically wired to backing Azure resources.
 //
@@ -90,23 +90,27 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
     recipes: {
       // Dapr State Store Recipe (staterc)
       // ────────────────────────────────────────────────────────────────────
-      // Recipe: 'azure-blob-statestore' → Dapr Component Type: 'state.azure.blobstorage/v2'
+      // Recipe: 'azure-postgres-statestore' → Dapr Component Type: 'state.postgresql/v2'
       //
       // What it does:
-      //   - Provisions an Azure Blob Storage account (naming: staterc{randomSuffix})
-      //   - Disables shared-key access, enforces Entra workload identity auth
-      //   - Emits metadata for the Dapr state component (storage account name, container)
+      //   - Provisions an Azure Database for PostgreSQL Flexible Server (naming: staterc{randomSuffix})
+      //   - Disables password access, enforces Entra workload identity auth
+      //   - Emits metadata for the Dapr state component (connection string, credentials)
+      //
+      // Why PostgreSQL?
+      //   Dapr actors require transactional state stores. PostgreSQL supports full ACID transactions
+      //   while Blob Storage does not. This enables workflow-engine to reliably persist actor state.
       //
       // Why this recipe name?
       //   'staterc' = 'state recipe' (consistent with other recipe abbreviations: pubsubrc, kvrc)
       //
       // Workload usage:
-      //   Workloads define a 'statestore' connection to this recipe (app.bicep).
+      //   Workloads define a 'stateStore' connection to this recipe (app.bicep).
       //   Dapr injects statestore as a component in the workload's sidecar.
-      //   App code uses Dapr State APIs (e.g., SaveStateAsync) to persist data.
+      //   App code uses Dapr State APIs (e.g., SaveStateAsync) to persist data with transactional guarantees.
       // ────────────────────────────────────────────────────────────────────
       'Applications.Dapr/stateStores': {
-        'azure-blob-statestore': {
+        'azure-postgres-statestore': {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/state-store:${recipeTag}'
           parameters: {

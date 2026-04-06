@@ -425,12 +425,12 @@ Radius recipes follow a consistent naming pattern for simplicity and quick visua
 **Deployment flow:**
 
 1. **Environment deployment** (`azure-radius.bicep`)
-   - Registers three Dapr recipes: `azure-blob-statestore`, `azure-servicebus-pubsub`, `azure-keyvault-secrets`
+   - Registers three Dapr recipes: `azure-postgres-statestore`, `azure-servicebus-pubsub`, `azure-keyvault-secrets`
    - These recipes are scoped to the Radius environment and reference OCI-published Bicep modules
 
 2. **Application deployment** (`app.bicep`)
    - Defines three Dapr component connections: `statestore`, `pubsub`, `platform-secrets`
-   - Each references a recipe by name (e.g., `recipe: { name: 'azure-blob-statestore' }`)
+   - Each references a recipe by name (e.g., `recipe: { name: 'azure-postgres-statestore' }`)
    - Radius provisions the backing Azure resources and creates Dapr component CRDs in Kubernetes
 
 3. **Component projection** (automatic)
