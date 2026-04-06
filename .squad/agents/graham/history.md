@@ -586,3 +586,29 @@ This fix resolves the parameter mismatch that was blocking environment deploymen
 - Verify Component ConfigMaps appear in cluster after successful deployment
 - Confirm bootstrap script runs end-to-end without parameter validation errors
 
+
+## Learnings
+
+### Issue #64 — allowAzureServices default gap (2025-07-14)
+
+**How recipe params flow through the environment:**
+Radius recipe parameters defined in the environment template (`azure-radius.bicep`) under
+`recipes.<type>.<name>.parameters` are passed verbatim to the recipe Bicep module at
+deploy time. The recipe module's own parameter defaults only apply when the environment
+template omits them entirely. This means every recipe parameter with a security-relevant
+default (`allowAzureServices=false`, `usePrivateEndpoint=false`) is silently at its
+recipe default unless the environment explicitly passes it.
+
+**Why defaults matter for dev vs. production:**
+The recipe holds the secure production default (`allowAzureServices=false`). The
+environment layer is the correct place to set the dev-friendly default (`true`), because
+the environment is already purpose-built for a specific deployment context. This gives a
+clean two-layer model: recipe = secure baseline, environment = context-appropriate
+override. Operators can further override at deploy time via `--parameters`.
+
+**Takeaway for future recipe wiring:**
+When adding a new recipe parameter with a security-relevant default, always audit the
+environment templates to decide whether each environment should explicitly override it.
+Don't rely on recipe defaults flowing through to the environment's effective behavior —
+if a parameter isn't in the environment's `parameters:` block, it's invisible to the
+environment author and silently insecure.

@@ -76,6 +76,9 @@ param randomNameSuffix string = ''
 @description('Azure tenant ID for Entra authentication in recipes that configure Microsoft Entra admin (e.g., PostgreSQL state store).')
 param azureTenantId string = ''
 
+@description('Allow the Azure-services magic firewall rule on the PostgreSQL state store. Defaults to true for dev/demo deployments. Set false and use usePrivateEndpoint=true for production.')
+param allowAzureServices bool = true
+
 // ── Environment ─────────────────────────────────────────────────────────────
 
 resource env 'Applications.Core/environments@2023-10-01-preview' = {
@@ -128,6 +131,7 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             azureSubscriptionId: azureSubscriptionId
             azureResourceGroupName: azureResourceGroupName
             azureTenantId: azureTenantId
+            allowAzureServices: allowAzureServices
           }
         }
       }
