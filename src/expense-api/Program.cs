@@ -295,7 +295,7 @@ expenses.MapPost("/", async (HttpContext context, ExpenseSubmission submission, 
         ExpenseCreateResult.MatchedExistingRecord => Results.Ok(persistedRecord),
         _ => throw new InvalidOperationException($"Unexpected expense create result '{createOutcome.Result}'.")
     };
-}).RequireAuthorization();
+});
 
 expenses.MapGet("/{id}/workflow", async (
     string id,
