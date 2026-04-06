@@ -7,10 +7,15 @@
 // WHAT IT DOES
 // ────────────────────────────────────────────────────────────────────────────
 // 1. Provisions Azure Database for PostgreSQL Flexible Server (naming: pgstate{randomSuffix})
-// 2. Creates a database and schema for Dapr state storage
-// 3. Configures Microsoft Entra authentication (no passwords, workload identity)
-// 4. Creates a database user mapped to the Dapr workload identity
+// 2. Creates a database for Dapr state storage (default: dapr_state)
+// 3. Configures Microsoft Entra authentication ONLY (password auth disabled)
+// 4. Registers the Dapr managed identity as the PostgreSQL Entra admin
 // 5. Emits metadata for the Dapr state component (connection string, auth config)
+//
+// NOTE: No separate database role is created. The Dapr managed identity
+// connects as the Entra admin using its display name as the PostgreSQL user.
+// Dapr auto-creates state/actor tables on first use via DDL. For production
+// least-privilege, see the Entra admin resource comments below.
 //
 // WHY POSTGRESQL (not Blob Storage)?
 // - Blob Storage does NOT support transactional state (required for Dapr Actors)
@@ -36,11 +41,25 @@
 // ────────────────────────────────────────────────────────────────────────────
 // AUTHENTICATION & SECURITY
 // ────────────────────────────────────────────────────────────────────────────
-// - No passwords: Microsoft Entra authentication only
-// - Authentication: Microsoft Entra workload identity (Dapr sidecar → PostgreSQL)
-// - Database user created via Microsoft Entra admin login
-// - TLS required: Enforce SSL mode for all connections
-// - Network: Flexibility mode allows current client IP (AKS cluster)
+// - Microsoft Entra authentication ONLY — password auth is disabled
+// - The Dapr managed identity is registered as the PostgreSQL Entra admin
+// - No local admin account (administratorLogin) exists on the server
+// - TLS required: SSL mode enforced for all connections
+// - Network: Azure-services firewall rule permits AKS cluster access
+//
+// WHY ENTRA-ONLY (no password auth)?
+// - Reference samples must teach security best practices
+// - Managed identity eliminates credential rotation and secret sprawl
+// - Azure Policy on many tenants blocks password-only PostgreSQL servers
+// - Entra auth is the recommended path for Azure Database for PostgreSQL
+//
+// WHY IS THE DAPR IDENTITY THE ADMIN?
+// - Simplest correct path for a reference sample / demo
+// - Avoids init containers or out-of-band SQL scripts to create roles
+// - The Dapr sidecar needs DDL access anyway (Dapr creates state/actor tables)
+// - PRODUCTION NOTE: For least-privilege, use a separate admin identity and
+//   grant the Dapr identity only the permissions it needs (SELECT, INSERT,
+//   UPDATE, DELETE on Dapr-managed tables). See Issue #55 discussion.
 //
 // Radius injects `context` automatically when the recipe runs.
 
@@ -53,15 +72,15 @@ param location string
 @description('Name of the PostgreSQL database. Created by the recipe.')
 param databaseName string = 'dapr_state'
 
-@description('Database user name. This will be created as an Entra-managed database user.')
-param databaseUser string = 'dapr_app'
-
 @description('Optional random suffix for non-deterministic naming (dev/demo environments). If provided, replaces uniqueString generation.')
 param randomNameSuffix string = ''
 
-@description('Principal (object) ID of the Dapr workload identity for Entra AD authentication (required for Azure policy compliance).')
+@description('Principal (object) ID of the Dapr workload identity. Used as the Entra admin resource name (Azure requires the object ID).')
 @secure()
 param daprPrincipalId string
+
+@description('Display name of the Dapr managed identity. Used as principalName in the Entra admin resource and as the PostgreSQL connection user.')
+param daprPrincipalName string
 
 @description('Client (application) ID of the Dapr workload identity for component auth metadata.')
 param daprClientId string = ''
@@ -90,8 +109,11 @@ var serverName = 'pgstate${nameSuffix}'
 var postgresqlServerArmId = '/subscriptions/${azureSubscriptionId}/resourceGroups/${azureResourceGroupName}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${serverName}'
 
 // ---------------------------------------------------------------------------
-// PostgreSQL Flexible Server — Microsoft Entra authentication enabled
+// PostgreSQL Flexible Server — Entra-only authentication (no password auth)
 // ---------------------------------------------------------------------------
+// Password auth is intentionally disabled. The Dapr managed identity connects
+// via Entra tokens issued by Azure AD. No administratorLogin exists on this
+// server — all access flows through the Entra admin configured below.
 
 resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
   name: serverName
@@ -101,12 +123,11 @@ resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-
     tier: 'Burstable'
   }
   properties: {
-    administratorLogin: 'pgadmin'
-    administratorLoginPassword: uniqueString(resourceGroup().id, context.resource.id)
     version: '15'
     authConfig: {
       activeDirectoryAuth: 'Enabled'
-      passwordAuth: 'Enabled'
+      passwordAuth: 'Disabled'
+      tenantId: azureTenantId
     }
     storage: {
       storageSizeGB: 32
@@ -166,17 +187,31 @@ resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-0
 }
 
 // ---------------------------------------------------------------------------
-// Microsoft Entra Admin (for Dapr workload identity database user setup)
-// NOTE: In production, this should be set up via Azure Policy or ARM template
-// at the subscription level. For now, we set the Dapr identity as admin so it
-// can create the database user mapping during initialization.
+// Microsoft Entra Admin — Dapr workload identity as PostgreSQL admin
+// ---------------------------------------------------------------------------
+// The managed identity's object ID is the resource name (Azure API requirement).
+// principalName is the identity's display name — this becomes the PostgreSQL
+// login name for Entra-authenticated connections.
+//
+// DESIGN DECISION (Issue #54, #55):
+// The Dapr identity is registered as the Entra admin rather than as a
+// least-privilege role. This eliminates the need for an init container or
+// out-of-band SQL script to CREATE ROLE, which would add deployment complexity
+// disproportionate to a reference sample. Dapr needs DDL access to create its
+// state and actor tables on first use, so admin-level access is functionally
+// required during initial setup regardless.
+//
+// For production hardening, consider:
+//   1. Use a separate admin identity for server management
+//   2. Create a dedicated Entra-mapped role for the Dapr identity
+//   3. Grant only INSERT/UPDATE/DELETE/SELECT on Dapr-managed tables
 // ---------------------------------------------------------------------------
 
 resource entraAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = {
   parent: postgresqlServer
-  name: daprClientId
+  name: daprPrincipalId
   properties: {
-    principalName: databaseUser
+    principalName: daprPrincipalName
     principalType: 'ServicePrincipal'
     tenantId: azureTenantId
   }
@@ -189,8 +224,9 @@ resource entraAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@20
 var daprComponentName = 'statestore'
 var postgresPort = 5432
 
-// Connection string for Dapr: host, port, database, user (no password for Entra auth)
-var connectionString = 'host=${postgresqlServer.properties.fullyQualifiedDomainName} port=${postgresPort} database=${databaseName} user=${databaseUser} sslmode=require'
+// Connection string for Dapr: user is the Entra admin's display name (managed identity name).
+// No password — Dapr authenticates via Entra token (useAzureAD: true in component metadata).
+var connectionString = 'host=${postgresqlServer.properties.fullyQualifiedDomainName} port=${postgresPort} database=${databaseName} user=${daprPrincipalName} sslmode=require'
 
 // ---------------------------------------------------------------------------
 // Radius recipe outputs
@@ -201,7 +237,7 @@ var connectionString = 'host=${postgresqlServer.properties.fullyQualifiedDomainN
 output values object = {
   serverName: postgresqlServer.name
   databaseName: databaseName
-  databaseUser: databaseUser
+  databaseUser: daprPrincipalName  // Entra admin display name (backward-compat key for apply-dapr-components-from-recipes.sh)
   connectionString: connectionString
   actorStateStore: 'true'
   componentName: daprComponentName
@@ -222,9 +258,10 @@ output resourceMetadata object = {
   postgresqlServerId: postgresqlServerArmId
   postgresqlFqdn: postgresqlServer.properties.fullyQualifiedDomainName
   databaseName: databaseName
-  databaseUser: databaseUser
+  databaseUser: daprPrincipalName  // Entra admin display name (backward-compat key)
   resourceGroup: azureResourceGroupName
   location: location
+  authStrategy: 'entra-only'  // Explicit: no password auth on this server
   // Dapr component metadata for bootstrap script
   dapr: {
     componentName: daprComponentName

@@ -1985,6 +1985,7 @@ ENV_DEPLOY_ARGS=(
   --parameters "location=${LOCATION}"
   --parameters "daprAzurePrincipalId=${AZURE_PRINCIPAL_ID_CACHED}"
   --parameters "daprAzureClientId=${AZURE_CLIENT_ID_CACHED}"
+  --parameters "daprAzurePrincipalName=${MANAGED_IDENTITY_NAME}"
   --parameters "azureTenantId=${AZURE_TENANT_ID}"
   --parameters "recipeRegistry=${RECIPE_REGISTRY}"
   --parameters "recipeTag=${RECIPE_TAG}"

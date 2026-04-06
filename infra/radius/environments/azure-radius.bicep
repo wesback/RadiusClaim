@@ -67,6 +67,9 @@ param daprAzurePrincipalId string = ''
 @description('Client (application) ID of the managed identity / service principal for Dapr component authentication.')
 param daprAzureClientId string = ''
 
+@description('Display name of the Dapr managed identity. Used as the Entra admin principalName and PostgreSQL connection user.')
+param daprAzurePrincipalName string = ''
+
 @description('Optional random suffix for recipe resource naming (dev/demo only). Format: 6-char timestamp hash. Empty for deterministic (prod) naming.')
 param randomNameSuffix string = ''
 
@@ -120,6 +123,7 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             location: location
             randomNameSuffix: randomNameSuffix
             daprPrincipalId: daprAzurePrincipalId
+            daprPrincipalName: daprAzurePrincipalName
             daprClientId: daprAzureClientId
             azureSubscriptionId: azureSubscriptionId
             azureResourceGroupName: azureResourceGroupName
