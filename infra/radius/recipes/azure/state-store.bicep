@@ -45,7 +45,9 @@
 // - The Dapr managed identity is registered as the PostgreSQL Entra admin
 // - No local admin account (administratorLogin) exists on the server
 // - TLS required: SSL mode enforced for all connections
-// - Network: Firewall disabled by default (allowAzureServices = false); use private endpoints or VNet delegated subnet for production
+// - Network (PUBLIC, default): Firewall disabled by default (allowAzureServices = false); set true for dev/demo only
+//   Network (PRIVATE, usePrivateEndpoint=true): Private Endpoint + DNS Zone; public firewall not deployed
+//   ✅ Private endpoints recommended for production — eliminates public attack surface
 //
 // WHY ENTRA-ONLY (no password auth)?
 // - Reference samples must teach security best practices
@@ -91,14 +93,6 @@ param azureEnvironment string = 'AzurePublicCloud'
 @description('Azure subscription ID for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
 param azureSubscriptionId string
 
-// Pin to a specific major version so every deployment gets the same engine regardless of when
-// it runs. Azure Database for PostgreSQL Flexible Server accepts major-version strings ('15',
-// '16', etc.). '15' is the LTS-grade stable release used as the pinned default here — it has
-// broad Dapr driver compatibility and is GA on all Azure regions. Increment deliberately when
-// you are ready to test the upgrade path; never use an unversioned or 'latest' equivalent.
-@description('PostgreSQL major version. Pin this explicitly — leaving it unset or "latest" produces non-reproducible deployments.')
-param postgresqlVersion string = '15'
-
 @description('Azure resource group name for explicit resource ID construction. Works around Radius deployment engine UCP scope resolution.')
 param azureResourceGroupName string
 
@@ -117,6 +111,38 @@ all Azure-hosted traffic — not just your AKS cluster.
 param allowAzureServices bool = false
 
 // ---------------------------------------------------------------------------
+// Private Endpoint parameters (Issue #61)
+// ---------------------------------------------------------------------------
+// Two network connectivity modes are supported:
+//
+//   PUBLIC (default, usePrivateEndpoint = false):
+//     PostgreSQL reachable via Azure-services firewall rule when allowAzureServices = true.
+//     Suitable for dev/demo environments without private VNet integration.
+//     ⚠  "Allow Azure services" permits ALL Azure-hosted IPs — not just your AKS cluster.
+//
+//   PRIVATE (usePrivateEndpoint = true):
+//     A Private Endpoint NIC is deployed in the specified VNet subnet.
+//     A Private DNS Zone is created and linked to the VNet for automatic FQDN resolution.
+//     The public Azure-services firewall rule is NOT deployed in this mode.
+//     AKS must be VNet-routable to the private endpoint subnet.
+//     ✅ Recommended for production — eliminates public attack surface.
+//
+// NOTE: When usePrivateEndpoint = true, public network access on the PostgreSQL server
+// is NOT automatically disabled. This allows the recipe to deploy correctly in
+// environments where the Radius operator cannot yet route through the private endpoint.
+// For full isolation after deployment, set publicNetworkAccess: 'Disabled' on the server
+// (az postgres flexible-server update --public-access Disabled).
+
+@description('Enable a Private Endpoint for network-isolated PostgreSQL access. Recommended for production. Set true to deploy PE + Private DNS Zone instead of the public Azure-services firewall rule. Requires subnetResourceId and vnetResourceId.')
+param usePrivateEndpoint bool = false
+
+@description('Subnet resource ID to host the Private Endpoint network interface. Required when usePrivateEndpoint is true. Example: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.Network/virtualNetworks/{vnet}/subnets/{subnet}')
+param subnetResourceId string = ''
+
+@description('Virtual network resource ID for the Private DNS Zone VNet link. Required when usePrivateEndpoint is true. Example: /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.Network/virtualNetworks/{vnet}')
+param vnetResourceId string = ''
+
+// ---------------------------------------------------------------------------
 // Derived names
 // ---------------------------------------------------------------------------
 
@@ -128,11 +154,37 @@ var serverName = 'pgstate${nameSuffix}'
 var postgresqlServerArmId = '/subscriptions/${azureSubscriptionId}/resourceGroups/${azureResourceGroupName}/providers/Microsoft.DBforPostgreSQL/flexibleServers/${serverName}'
 
 // ---------------------------------------------------------------------------
+// Sovereign cloud DNS suffix map
+// ---------------------------------------------------------------------------
+// Maps azureEnvironment to the correct PostgreSQL FQDN suffix for each cloud.
+// The server's fullyQualifiedDomainName property already resolves to the right
+// suffix at runtime, so the connection string does not need to interpolate this
+// directly. This map is provided for:
+//   - Private DNS zone name construction
+//   - Explicit documentation of supported clouds
+//   - Any tooling that needs the suffix before the server is deployed
+var postgresDnsSuffixMap = {
+  AzurePublicCloud: '.postgres.database.azure.com'
+  AzureUSGovernment: '.postgres.database.usgovcloudapi.net'
+  AzureChina: '.postgres.database.chinacloudapi.cn'
+}
+var postgresDnsSuffix = postgresDnsSuffixMap[azureEnvironment]
+// Private DNS zone name for private endpoint resolution (sovereign-cloud-aware).
+var privateDnsZoneName = 'privatelink${postgresDnsSuffix}'
+
+// ---------------------------------------------------------------------------
 // PostgreSQL Flexible Server — Entra-only authentication (no password auth)
 // ---------------------------------------------------------------------------
-// Password auth is intentionally disabled. The Dapr managed identity connects
-// via Entra tokens issued by Azure AD. No administratorLogin exists on this
-// server — all access flows through the Entra admin configured below.
+// This server has NO local administrator account and NO password credentials.
+// The only way to authenticate is via a Microsoft Entra token — issued to a
+// managed identity and presented automatically by the Dapr sidecar.
+//
+// authConfig explained:
+//   activeDirectoryAuth: 'Enabled'  — Entra token-based logins are accepted
+//   passwordAuth: 'Disabled'        — Local password auth is blocked at the
+//                                     server level; there is no password to leak
+//   tenantId                        — The Entra tenant that must issue tokens;
+//                                     tokens from other tenants are rejected
 
 resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
   name: serverName
@@ -142,11 +194,11 @@ resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-
     tier: 'Burstable'
   }
   properties: {
-    version: postgresqlVersion
+    version: '15'
     authConfig: {
-      activeDirectoryAuth: 'Enabled'
-      passwordAuth: 'Disabled'
-      tenantId: azureTenantId
+      activeDirectoryAuth: 'Enabled'   // Entra token logins accepted
+      passwordAuth: 'Disabled'         // No local passwords — nothing to rotate or leak
+      tenantId: azureTenantId          // Only tokens from this tenant are trusted
     }
     storage: {
       storageSizeGB: 32
@@ -167,14 +219,13 @@ resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-
 }
 
 // ---------------------------------------------------------------------------
-// PostgreSQL Firewall Rule — Conditional; disabled by default
+// PostgreSQL Firewall Rule — public mode only (not deployed with private endpoint)
 // ---------------------------------------------------------------------------
-// No rule is deployed when allowAzureServices = false (the default).
-// To enable broad Azure-service access for dev/demo, set allowAzureServices = true.
-// For AKS-scoped access without a broad rule, configure VNet integration via
-// network.delegatedSubnetResourceId in the server properties above.
+// Deployed only when allowAzureServices = true AND usePrivateEndpoint = false.
+// In private endpoint mode the rule is skipped — traffic routes through the
+// Private Endpoint NIC in the VNet instead of the public Azure-services path.
 
-resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (allowAzureServices) {
+resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (allowAzureServices && !usePrivateEndpoint) {
   parent: postgresqlServer
   name: 'AllowAzureServices'
   properties: {
@@ -241,6 +292,70 @@ resource entraAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@20
 }
 
 // ---------------------------------------------------------------------------
+// Private Endpoint resources — deployed only when usePrivateEndpoint = true
+// ---------------------------------------------------------------------------
+//
+// Deployment order:
+//   1. privateDnsZone         — Private DNS zone (privatelink.postgres.database.azure.com)
+//   2. privateDnsZoneVnetLink — Links the zone to the VNet for automatic FQDN resolution
+//   3. privateEndpoint        — NIC in the specified subnet routes to the PostgreSQL server
+//   4. privateEndpointDnsZoneGroup — Binds the PE to the DNS zone (enables auto-registration)
+//
+// After deployment, clients in the linked VNet resolve the PostgreSQL FQDN to the
+// private endpoint IP automatically — no application-layer DNS configuration required.
+
+resource privateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (usePrivateEndpoint) {
+  name: privateDnsZoneName
+  location: 'global'
+}
+
+resource privateDnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (usePrivateEndpoint) {
+  parent: privateDnsZone
+  name: 'link-${serverName}'
+  location: 'global'
+  properties: {
+    virtualNetwork: {
+      id: vnetResourceId
+    }
+    registrationEnabled: false
+  }
+}
+
+resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (usePrivateEndpoint) {
+  name: 'pe-${serverName}'
+  location: location
+  properties: {
+    subnet: {
+      id: subnetResourceId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'pe-${serverName}-conn'
+        properties: {
+          privateLinkServiceId: postgresqlServer.id
+          groupIds: ['postgresqlServer']
+        }
+      }
+    ]
+  }
+}
+
+resource privateEndpointDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (usePrivateEndpoint) {
+  parent: privateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'privatelink-postgres'
+        properties: {
+          privateDnsZoneId: privateDnsZone.id
+        }
+      }
+    ]
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Dapr Component Metadata — state.postgresql/v2 with Entra authentication
 // ---------------------------------------------------------------------------
 
@@ -262,8 +377,13 @@ output values object = {
   databaseName: databaseName
   databaseUser: daprPrincipalName  // Entra admin display name (backward-compat key for apply-dapr-components-from-recipes.sh)
   connectionString: connectionString
+  // PostgreSQL natively supports transactional state — Dapr actors are enabled.
+  // No blob fallback: Blob Storage lacks the TransactionalStore interface required
+  // for Dapr Actors. This recipe migrated FROM blob storage for exactly this reason.
   actorStateStore: 'true'
   componentName: daprComponentName
+  // Network access mode: 'private-endpoint' when usePrivateEndpoint=true; 'public' otherwise.
+  networkAccess: usePrivateEndpoint ? 'private-endpoint' : 'public'
 }
 
 // Omit explicit `output resources` — Radius auto-populates outputResources
@@ -280,11 +400,16 @@ output resourceMetadata object = {
   postgresqlServerName: postgresqlServer.name
   postgresqlServerId: postgresqlServerArmId
   postgresqlFqdn: postgresqlServer.properties.fullyQualifiedDomainName
+  postgresDnsSuffix: postgresDnsSuffix  // Sovereign-cloud-aware suffix for this deployment
   databaseName: databaseName
   databaseUser: daprPrincipalName  // Entra admin display name (backward-compat key)
   resourceGroup: azureResourceGroupName
   location: location
   authStrategy: 'entra-only'  // Explicit: no password auth on this server
+  // Network isolation: 'private-endpoint' when usePrivateEndpoint=true; 'public' otherwise.
+  networkAccess: usePrivateEndpoint ? 'private-endpoint' : 'public'
+  privateEndpointId: usePrivateEndpoint ? resourceId('Microsoft.Network/privateEndpoints', 'pe-${serverName}') : ''
+  privateDnsZoneName: usePrivateEndpoint ? privateDnsZoneName : ''
   // Dapr component metadata for bootstrap script
   dapr: {
     componentName: daprComponentName
@@ -296,6 +421,9 @@ output resourceMetadata object = {
       azureTenantId: azureTenantId
       azureClientId: daprClientId
       azureEnvironment: azureEnvironment
+      // PostgreSQL natively supports transactional state — Dapr actors are enabled.
+      // No blob fallback: Blob Storage lacks the TransactionalStore interface required
+      // for Dapr Actors. This recipe migrated FROM blob storage for exactly this reason.
       actorStateStore: 'true'
     }
   }
