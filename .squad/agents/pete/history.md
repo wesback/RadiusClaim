@@ -432,3 +432,23 @@ FIC Sequencing Fix:
 **Learning:** When adding shared libraries to a multi-project solution, audit ALL Dockerfiles to ensure COPY instructions include the new .csproj file. Pattern: always explicitly COPY every .csproj that any project might reference, even if it's in a shared/ directory.
 
 **Status:** Complete. All Dockerfiles now include RadiusClaim.Dapr.csproj.
+
+### 2026-06-10 — Issue Verification and Closure (#43, #45)
+
+**Task:** Requested to fix merge conflict in squad-ci.yml (#43) and add missing Dapr.csproj to Dockerfile (#45).
+
+**Finding:** Both issues were already resolved in previous commits:
+- **Issue #43**: Fixed in commit `b1a1f42` by Wesley Backelant on 2026-06-09
+  - Resolved merge conflict in `.github/workflows/squad-ci.yml`
+  - Removed 12 lines of conflicting placeholder TODO comments
+  - YAML validated and CI pipeline ready
+- **Issue #45**: Fixed in commit `7e05f2e` as part of subscription ID injection work
+  - Added `RadiusClaim.Dapr.csproj` to all three Dockerfiles (line 11 in each)
+  - Ensured proper dependency order before `dotnet restore`
+
+**Action taken:**
+- Verified current state: no merge conflicts, all Dockerfiles have Dapr.csproj
+- Closed both issues with comments documenting the resolution commits
+- No code changes required
+
+**Lesson:** Always check git history before starting work on an issue. Issues may be marked OPEN even when the work is complete.
