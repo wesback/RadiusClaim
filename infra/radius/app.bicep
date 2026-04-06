@@ -70,6 +70,12 @@ param daprBackings object = {
 @description('Radius environment resource ID. Injected automatically by rad deploy from the active workspace.')
 param environment string
 
+@description('Microsoft Entra ID authority URL for JWT bearer token validation (e.g. https://login.microsoftonline.com/{tenant-id}). Required in non-Development environments.')
+param azureAdAuthority string = ''
+
+@description('Microsoft Entra ID audience (API URI) for JWT bearer token validation (e.g. api://{client-id}). Required in non-Development environments.')
+param azureAdAudience string = ''
+
 // ---------------------------------------------------------------------------
 // Shared computed values
 // ---------------------------------------------------------------------------
@@ -167,6 +173,14 @@ resource expenseApi 'Applications.Core/containers@2023-10-01-preview' = {
     application: app.id
     container: {
       image: '${containerRegistry}/expense-api:${imageTag}'
+      env: {
+        AzureAd__Authority: {
+          value: !empty(azureAdAuthority) ? azureAdAuthority : 'https://login.microsoftonline.com/common'
+        }
+        AzureAd__Audience: {
+          value: !empty(azureAdAudience) ? azureAdAudience : 'https://radiusclaim.azurewebsites.net/api'
+        }
+      }
       ports: {
         http: {
           containerPort: 8080

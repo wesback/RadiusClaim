@@ -55,8 +55,14 @@ param azureSubscriptionId string = ''
 @description('Azure resource group name for recipe resource ID construction. Required to work around Radius deployment engine scope resolution.')
 param azureResourceGroupName string = ''
 
-@description('Azure region for resource provisioning.')
+@description('Azure region for resource provisioning (Key Vault, Service Bus, etc.).')
 param location string = 'francecentral'
+
+@description('Azure region for PostgreSQL Flexible Server provisioning. Defaults to location when empty. Use to override when the main location lacks PostgreSQL Flexible Server quota.')
+param postgresLocation string = ''
+
+@description('Optional override for the PostgreSQL server name suffix. Allows renaming the server without affecting other resources (e.g., when a previous attempt registered the same name at a different location in ARM).')
+param postgresNameSuffix string = ''
 
 // ── Dapr Workload Identity Parameters ──────────────────────────────────────
 // Passed by bootstrap for Dapr component workload-identity authentication.
@@ -129,8 +135,9 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/state-store:${recipeTag}'
           parameters: {
-            location: location
+            location: !empty(postgresLocation) ? postgresLocation : location
             randomNameSuffix: randomNameSuffix
+            postgresNameSuffix: postgresNameSuffix
             daprPrincipalId: daprAzurePrincipalId
             daprPrincipalName: daprAzurePrincipalName
             daprClientId: daprAzureClientId

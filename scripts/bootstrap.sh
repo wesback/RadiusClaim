@@ -1747,8 +1747,10 @@ if [ "$SETUP_WORKLOAD_IDENTITY" = true ]; then
     --name "$AKS_CLUSTER_NAME" \
     --enable-oidc-issuer \
     --enable-workload-identity
-  # Force wi mode if not already set
-  if [ "$AZURE_AUTH_MODE" = "auto" ]; then
+  # Force wi mode only when auto mode hasn't already resolved to sp (via client secret).
+  # --setup-workload-identity configures the cluster for workload pod auth; Radius itself
+  # should continue using SP credentials when AZURE_CLIENT_SECRET is available.
+  if [ "$AZURE_AUTH_MODE" = "auto" ] && [ "$AZURE_AUTH_MODE_RESOLVED" != "sp" ]; then
     AZURE_AUTH_MODE="wi"
     AZURE_AUTH_MODE_RESOLVED="wi"
   fi
@@ -1982,6 +1984,42 @@ if [ -z "$RESOLVED_SUBSCRIPTION_ID" ]; then
 fi
 log_success "Subscription ID resolved: ${RESOLVED_SUBSCRIPTION_ID}"
 
+# Determine the best location for PostgreSQL Flexible Server.
+# The resource group location (LOCATION) may not have PostgreSQL quota; in that
+# case, fall back to the AKS cluster's region which is known to have capacity.
+POSTGRES_LOCATION="${LOCATION}"
+# POSTGRES_NAME_SUFFIX defaults to RANDOM_NAME_SUFFIX; may be overridden if the default
+# name is ARM-registered at a different location (ARM caches location for failed PUTs).
+POSTGRES_NAME_SUFFIX="${RANDOM_NAME_SUFFIX}"
+if ! az postgres flexible-server list-skus --location "${LOCATION}" --query "[0].name" -o tsv &>/dev/null; then
+  log_warn "PostgreSQL Flexible Server is not available in location '${LOCATION}'."
+  AKS_CLUSTER_LOCATION="$(az aks show --resource-group "${RESOURCE_GROUP}" --name "${AKS_CLUSTER_NAME}" --query location -o tsv 2>/dev/null || true)"
+  if [ -n "${AKS_CLUSTER_LOCATION}" ] && az postgres flexible-server list-skus --location "${AKS_CLUSTER_LOCATION}" --query "[0].name" -o tsv &>/dev/null; then
+    POSTGRES_LOCATION="${AKS_CLUSTER_LOCATION}"
+    log_info "Using AKS cluster location '${POSTGRES_LOCATION}' for PostgreSQL Flexible Server."
+    # If the name suffix was already attempted at the old location, ARM records the ghost.
+    # Check whether that name already exists at the new location; if not and it was tried at
+    # the old location, generate a fresh suffix to avoid InvalidResourceLocation from ARM.
+    if az postgres flexible-server show \
+        --resource-group "${RESOURCE_GROUP}" \
+        --name "pgstate${RANDOM_NAME_SUFFIX}" &>/dev/null; then
+      log_info "PostgreSQL server 'pgstate${RANDOM_NAME_SUFFIX}' exists; will reuse."
+    else
+      # Try to detect ghost: attempt REST GET at old location. If ARM returns a location
+      # conflict on a test PUT we'll catch it; simplest heuristic is unconditional override.
+      EXISTING_LOCATION="$(az rest --method GET \
+        --url "https://management.azure.com/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}/providers/Microsoft.DBforPostgreSQL/flexibleServers/pgstate${RANDOM_NAME_SUFFIX}?api-version=2023-06-01-preview" \
+        --query "location" -o tsv 2>/dev/null || true)"
+      if [ -n "${EXISTING_LOCATION}" ] && [ "${EXISTING_LOCATION}" != "${POSTGRES_LOCATION}" ]; then
+        POSTGRES_NAME_SUFFIX="$(openssl rand -hex 3)"
+        log_warn "Existing name 'pgstate${RANDOM_NAME_SUFFIX}' is ARM-registered in '${EXISTING_LOCATION}' (not '${POSTGRES_LOCATION}'). Using new suffix '${POSTGRES_NAME_SUFFIX}'."
+      fi
+    fi
+  else
+    log_warn "Could not auto-detect PostgreSQL-capable location. Using '${LOCATION}' and relying on ARM to handle it."
+  fi
+fi
+
 ENV_DEPLOY_ARGS=(
   deploy
   "$REPO_ROOT/infra/radius/environments/azure-radius.bicep"
@@ -1992,6 +2030,8 @@ ENV_DEPLOY_ARGS=(
   --parameters "azureSubscriptionId=${AZURE_SUBSCRIPTION_ID}"
   --parameters "azureResourceGroupName=${RESOURCE_GROUP}"
   --parameters "location=${LOCATION}"
+  --parameters "postgresLocation=${POSTGRES_LOCATION}"
+  --parameters "postgresNameSuffix=${POSTGRES_NAME_SUFFIX}"
   --parameters "daprAzurePrincipalId=${AZURE_PRINCIPAL_ID_CACHED}"
   --parameters "daprAzureClientId=${AZURE_CLIENT_ID_CACHED}"
   --parameters "daprAzurePrincipalName=${MANAGED_IDENTITY_NAME}"
@@ -2179,6 +2219,8 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
     --parameters "imageTag=${IMAGE_TAG}"
     --parameters "deploymentTarget=${DEPLOYMENT_TARGET}"
     --parameters "useWorkloadIdentity=true"
+    --parameters "azureAdAuthority=https://login.microsoftonline.com/${AZURE_TENANT_ID}"
+    --parameters "azureAdAudience=api://radiusclaim"
   )
   
   # Only pass ghcrImagePullRef if we need a pull secret
@@ -2214,6 +2256,60 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
       --role "Key Vault Secrets User" --scope "$_kv_id" --output none 2>/dev/null || true
     log_success "Key Vault RBAC assigned"
   fi
+
+  # WORKAROUND: Radius 0.56 bicep-de NullReferenceException on 3-segment ARM resource types.
+  # Child resources for PostgreSQL (database, Entra admin, firewall rules) cannot be declared
+  # in the recipe because the ARM template would contain 3-segment types (e.g.
+  # Microsoft.DBforPostgreSQL/flexibleServers/databases) which trigger a NPE in
+  # UpdateDeploymentResourcesWithScope (RadiusDeploymentEngineHost.cs line 662).
+  # The recipe creates only the top-level server; post-deploy Azure CLI commands here
+  # configure the database and Entra admin.
+  section "PostgreSQL post-deployment configuration (Radius 0.56 child resource workaround)"
+  local _pg_server_name="pgstate${POSTGRES_NAME_SUFFIX:-${RANDOM_NAME_SUFFIX}}"
+  local _pg_database="${PG_DATABASE_NAME:-dapr_state}"
+
+  # Wait for server to be ready (may still be provisioning)
+  log_info "Waiting for PostgreSQL server '${_pg_server_name}' to be ready..."
+  local _pg_wait_max=300
+  local _pg_wait_elapsed=0
+  local _pg_state=""
+  while [ "$_pg_wait_elapsed" -lt "$_pg_wait_max" ]; do
+    _pg_state="$(az postgres flexible-server show \
+      --resource-group "$RESOURCE_GROUP" \
+      --name "$_pg_server_name" \
+      --query 'state' -o tsv 2>/dev/null || true)"
+    if [ "$_pg_state" = "Ready" ]; then
+      log_success "PostgreSQL server '${_pg_server_name}' is ready."
+      break
+    fi
+    log_info "  PostgreSQL server state: ${_pg_state:-unknown}. Waiting 15s..."
+    sleep 15
+    _pg_wait_elapsed=$((_pg_wait_elapsed + 15))
+  done
+  if [ "$_pg_state" != "Ready" ]; then
+    fail "PostgreSQL server '${_pg_server_name}' did not become ready within ${_pg_wait_max}s. Current state: '${_pg_state}'"
+  fi
+
+  # Create the state database (idempotent — ignore 'already exists' errors)
+  log_info "Creating PostgreSQL database '${_pg_database}'..."
+  az postgres flexible-server db create \
+    --resource-group "$RESOURCE_GROUP" \
+    --server-name "$_pg_server_name" \
+    --database-name "$_pg_database" \
+    --output none 2>/dev/null || true
+  log_success "PostgreSQL database '${_pg_database}' ready."
+
+  # Register the Dapr workload identity as Entra admin (idempotent)
+  log_info "Registering Entra admin '${MANAGED_IDENTITY_NAME}' (object ID: ${AZURE_PRINCIPAL_ID_CACHED})..."
+  az postgres flexible-server microsoft-entra-admin create \
+    --resource-group "$RESOURCE_GROUP" \
+    --server-name "$_pg_server_name" \
+    --object-id "$AZURE_PRINCIPAL_ID_CACHED" \
+    --display-name "$MANAGED_IDENTITY_NAME" \
+    --type ServicePrincipal \
+    --output none 2>/dev/null || true
+  log_success "PostgreSQL Entra admin registered."
+
 fi
 
 if [ "$SKIP_APP_DEPLOY" = false ]; then

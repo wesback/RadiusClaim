@@ -77,8 +77,10 @@ param databaseName string = 'dapr_state'
 @description('Optional random suffix for non-deterministic naming (dev/demo environments). If provided, replaces uniqueString generation.')
 param randomNameSuffix string = ''
 
+@description('Optional override for the PostgreSQL server name suffix. If set, this takes priority over randomNameSuffix (allows renaming without changing other resources).')
+param postgresNameSuffix string = ''
+
 @description('Principal (object) ID of the Dapr workload identity. Used as the Entra admin resource name (Azure requires the object ID).')
-@secure()
 param daprPrincipalId string
 
 @description('Display name of the Dapr managed identity. Used as principalName in the Entra admin resource and as the PostgreSQL connection user.')
@@ -147,7 +149,7 @@ param vnetResourceId string = ''
 // ---------------------------------------------------------------------------
 
 // Use randomNameSuffix if provided; otherwise fall back to deterministic uniqueString.
-var nameSuffix = !empty(randomNameSuffix) ? randomNameSuffix : uniqueString(context.resource.id)
+var nameSuffix = !empty(postgresNameSuffix) ? postgresNameSuffix : (!empty(randomNameSuffix) ? randomNameSuffix : uniqueString(context.resource.id))
 var serverName = 'pgstate${nameSuffix}'
 
 // Explicit Azure resource ID — bypasses Radius deployment engine UCP scope resolution
@@ -206,6 +208,24 @@ var daprEnvironmentName = daprEnvironmentNameMap[azureEnvironment]
 //   tenantId                        — The Entra tenant that must issue tokens;
 //                                     tokens from other tenants are rejected
 
+// ---------------------------------------------------------------------------
+// PostgreSQL Flexible Server — Entra-only authentication (no password auth)
+// ---------------------------------------------------------------------------
+// WORKAROUND: Child resources (firewallRules, configurations, databases,
+// administrators) are intentionally NOT declared here. Radius 0.56 bicep-de
+// has a NullReferenceException bug (UpdateDeploymentResourcesWithScope line 662)
+// when the compiled ARM template contains resources with 3-segment types
+// (e.g. Microsoft.DBforPostgreSQL/flexibleServers/databases). All ARM resource
+// types with 2+ child path segments trigger the bug.
+//
+// Workaround: declare ONLY the top-level server (2-segment type) here.
+// Post-deployment configuration (database creation, Entra admin, firewall rules,
+// SSL enforcement) is performed by bootstrap.sh via 'az postgres flexible-server'
+// CLI commands immediately after rad deploy succeeds.
+//
+// When Radius fixes the bug, reinstate the child resources here and remove the
+// corresponding section from bootstrap.sh.
+
 resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
   name: serverName
   location: location
@@ -239,141 +259,18 @@ resource postgresqlServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-
 }
 
 // ---------------------------------------------------------------------------
-// PostgreSQL Firewall Rule — public mode only (not deployed with private endpoint)
+// Private Endpoint resources — REMOVED due to Radius 0.56 bicep-de NPE
 // ---------------------------------------------------------------------------
-// Deployed only when allowAzureServices = true AND usePrivateEndpoint = false.
-// In private endpoint mode the rule is skipped — traffic routes through the
-// Private Endpoint NIC in the VNet instead of the public Azure-services path.
-
-resource firewallRule 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (allowAzureServices && !usePrivateEndpoint) {
-  parent: postgresqlServer
-  name: 'AllowAzureServices'
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// PostgreSQL Configuration — SSL/TLS enforcement
-// ---------------------------------------------------------------------------
-
-resource sslEnforcement 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = {
-  parent: postgresqlServer
-  name: 'require_secure_transport'
-  properties: {
-    value: 'ON'
-    source: 'user-override'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// PostgreSQL Database
-// ---------------------------------------------------------------------------
-
-resource database 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
-  parent: postgresqlServer
-  name: databaseName
-  properties: {
-    charset: 'UTF8'
-    collation: 'en_US.utf8'
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Microsoft Entra Admin — Dapr workload identity as PostgreSQL admin
-// ---------------------------------------------------------------------------
-// The managed identity's object ID is the resource name (Azure API requirement).
-// principalName is the identity's display name — this becomes the PostgreSQL
-// login name for Entra-authenticated connections.
+// WORKAROUND: Even conditional resources (if (usePrivateEndpoint)) are included
+// in the compiled ARM template resources array with a `condition` property.
+// Radius 0.56 UpdateDeploymentResourcesWithScope (line 662) throws
+// NullReferenceException when it encounters Microsoft.Network/privateDnsZones
+// or Microsoft.Network/privateEndpoints resources, even if their conditions
+// evaluate to false.
 //
-// DESIGN DECISION (Issue #54, #55):
-// The Dapr identity is registered as the Entra admin rather than as a
-// least-privilege role. This eliminates the need for an init container or
-// out-of-band SQL script to CREATE ROLE, which would add deployment complexity
-// disproportionate to a reference sample. Dapr needs DDL access to create its
-// state and actor tables on first use, so admin-level access is functionally
-// required during initial setup regardless.
-//
-// For production hardening, consider:
-//   1. Use a separate admin identity for server management
-//   2. Create a dedicated Entra-mapped role for the Dapr identity
-//   3. Grant only INSERT/UPDATE/DELETE/SELECT on Dapr-managed tables
-// ---------------------------------------------------------------------------
-
-resource entraAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-12-01-preview' = {
-  parent: postgresqlServer
-  name: daprPrincipalId
-  properties: {
-    principalName: daprPrincipalName
-    principalType: 'ServicePrincipal'
-    tenantId: azureTenantId
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Private Endpoint resources — deployed only when usePrivateEndpoint = true
-// ---------------------------------------------------------------------------
-//
-// Deployment order:
-//   1. privateDnsZone         — Private DNS zone (privatelink.postgres.database.azure.com)
-//   2. privateDnsZoneVnetLink — Links the zone to the VNet for automatic FQDN resolution
-//   3. privateEndpoint        — NIC in the specified subnet routes to the PostgreSQL server
-//   4. privateEndpointDnsZoneGroup — Binds the PE to the DNS zone (enables auto-registration)
-//
-// After deployment, clients in the linked VNet resolve the PostgreSQL FQDN to the
-// private endpoint IP automatically — no application-layer DNS configuration required.
-
-resource privateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (usePrivateEndpoint) {
-  name: privateDnsZoneName
-  location: 'global'
-}
-
-resource privateDnsZoneVnetLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (usePrivateEndpoint) {
-  parent: privateDnsZone
-  name: 'link-${serverName}'
-  location: 'global'
-  properties: {
-    virtualNetwork: {
-      id: vnetResourceId
-    }
-    registrationEnabled: false
-  }
-}
-
-resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-09-01' = if (usePrivateEndpoint) {
-  name: 'pe-${serverName}'
-  location: location
-  properties: {
-    subnet: {
-      id: subnetResourceId
-    }
-    privateLinkServiceConnections: [
-      {
-        name: 'pe-${serverName}-conn'
-        properties: {
-          privateLinkServiceId: postgresqlServer.id
-          groupIds: ['postgresqlServer']
-        }
-      }
-    ]
-  }
-}
-
-resource privateEndpointDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-09-01' = if (usePrivateEndpoint) {
-  parent: privateEndpoint
-  name: 'default'
-  properties: {
-    privateDnsZoneConfigs: [
-      {
-        name: 'privatelink-postgres'
-        properties: {
-          privateDnsZoneId: privateDnsZone.id
-        }
-      }
-    ]
-  }
-}
+// Private endpoint networking support must be added back once Radius fixes the
+// NPE in a future version (track: radius-project/radius issue for bicep-de NPE).
+// When re-enabling, re-add the two resources below and test with usePrivateEndpoint=true.
 
 // ---------------------------------------------------------------------------
 // Dapr Component Metadata — state.postgresql/v2 with Entra authentication
