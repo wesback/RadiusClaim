@@ -79,6 +79,12 @@ param azureTenantId string = ''
 @description('Allow the Azure-services magic firewall rule on the PostgreSQL state store. Defaults to true for dev/demo deployments. Set false and use usePrivateEndpoint=true for production.')
 param allowAzureServices bool = true
 
+@description('Azure environment (cloud) for sovereign cloud DNS suffix resolution. Options: AzurePublicCloud, AzureUSGovernment, AzureChina. Passed through to the state-store recipe.')
+param azureEnvironment string = 'AzurePublicCloud'
+
+@description('Enable a Private Endpoint for PostgreSQL state store. Set true with subnetResourceId/vnetResourceId for production network isolation. Defaults to false for dev/demo.')
+param usePrivateEndpoint bool = false
+
 // ── Environment ─────────────────────────────────────────────────────────────
 
 resource env 'Applications.Core/environments@2023-10-01-preview' = {
@@ -132,6 +138,8 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
             azureResourceGroupName: azureResourceGroupName
             azureTenantId: azureTenantId
             allowAzureServices: allowAzureServices
+            azureEnvironment: azureEnvironment
+            usePrivateEndpoint: usePrivateEndpoint
           }
         }
       }
