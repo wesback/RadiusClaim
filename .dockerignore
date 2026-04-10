@@ -1,0 +1,7 @@
+.git
+.github
+.copilot
+.squad
+**/bin
+**/obj
+**/TestResults

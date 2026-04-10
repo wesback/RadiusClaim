@@ -1,0 +1,63 @@
+# Squad: ignore runtime state (logs, inbox, sessions)
+.squad/orchestration-log/
+.squad/log/
+.squad/decisions/inbox/
+.squad/sessions/
+# Squad: SubSquad activation file (local to this machine)
+.squad-workstream
+# Copilot CLI artifacts
+.commit-msg
+
+# Generated Dapr components (contains secrets)
+dapr-components-generated.yaml
+
+# Bicep compiled artifacts (keep bicepconfig.json and *.parameters.json)
+infra/radius/**/*.json
+!infra/radius/bicepconfig.json
+!infra/radius/**/*.parameters.json
+
+# .NET build outputs
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+
+# IDE and editor files
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln.iml
+
+# NuGet
+*.nupkg
+*.snupkg
+.nuget/
+
+# Local testing and coverage
+TestResults/
+coverage/
+*.trx
+
+# Build and bootstrap logs
+*.log
+
+# Rider
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Generated Dapr components (contains secrets — never commit)
+dapr-components-generated.yaml
+
+# Compiled Bicep artifacts (build outputs, not sources)
+infra/radius/*.json
+!infra/radius/bicepconfig.json
+
+# Compiled Radius environment templates (auto-generated from bicep)
+azure-radius.yaml
+.squad/agents/pete/history.md

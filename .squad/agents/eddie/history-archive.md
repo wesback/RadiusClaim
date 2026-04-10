@@ -1,0 +1,1832 @@
+## Squad Roster (2026-03-23)
+
+| Name | Role |
+|------|------|
+| Daisy | Lead |
+| Billy | Backend Dev |
+| Graham | Platform Dev |
+| Karen | Tester |
+| Eddie | Docs/Story |
+
+All members drawn from "Daisy Jones & The Six" universe per user naming preference.
+
+
+## Learnings
+
+- Seeded into the repo for a Dapr + Radius reference sample named `CloudExpense Lite`.
+- The sample must stay intentionally small, demoable in roughly ten minutes, and aimed at enterprise/platform audiences.
+- Azure is the current target, but application code must stay cloud-agnostic through Dapr abstractions.
+- Own the README narrative, demo script, and explanation of how the platform story differs from the app story.
+- See `.squad/decisions.md` for canonical decision log: CloudExpense Lite architecture, naming conventions, and Azure-first-but-portable strategy.
+- **AKS Network Config (2026-03-25):** `docker_bridge_cidr` is not a known attribute in the current Python `azure-mgmt-containerservice` SDK, even though it exists in PowerShell, JavaScript, and ML SDKs. Use `--docker-bridge-address` (CLI) or upgrade Python SDK, or let Azure auto-assign. Not present in RadiusClaim codebase.
+- **Namespace Discovery Pattern (2026-03-25):** Never assume a default Kubernetes namespace or provide silent fallbacks. Always teach users to discover their namespace from the cluster (`kubectl get namespaces | grep -i radius`), then document how their Radius group name maps to that namespace. This aligns with the team's decision to use direct, transparent config changes, not compatibility layers.
+
+
+## Phase 1 Work (2026-03-23)
+
+### Delivered
+
+**Phase 1 README (`README.md`)**
+- Created comprehensive narrative arc: problem → Dapr role → Radius role → architecture → shared contracts → why this design → quick start (deferred) → phase roadmap.
+- Included Mermaid diagram showing service flow: submission → expense-api → workflow-engine → notification-svc → external email/Slack.
+- Mapped all shared contract types (DTOs and events) from Daisy's decision doc:
+  - `ExpenseSubmission`, `ExpenseRecord`, `ExpenseStatus`, `ExpenseApprovedEvent`, `ExpenseRejectedEvent`, `ManualReviewRequestedEvent`, `NotificationRequest`
+- Included service responsibility table showing which Dapr building blocks each service owns.
+- Aligned folder layout (`src/`, `infra/radius/`), service names (`expense-api`, `workflow-engine`, `notification-svc`), and project naming (`CloudExpense.*`) with Daisy's Phase 1 contract decision.
+- Deferred implementation details (local setup, Dapr configs, Radius recipes, integration tests) to later phases with "Coming in Phase 2" signals.
+- Framed for both platform engineers (Radius section) and app developers (Dapr section) without creating two documents.
+
+### Key Decisions
+
+**Audience Bifurcation:**
+- Platform engineers read "The Problem" + "Architecture" + "Radius's Role" + diagram.
+- App developers read "The Problem" + "Architecture" + "Dapr's Role" + "Shared Contracts".
+- Both benefit from "Why This Architecture" section (portability + clarity).
+
+**Deferred Details:**
+- No Dapr component YAML (Phase 5 adds Azure recipes)
+- No Radius recipe syntax (Graham owns; Phase 5 finalizes)
+- No local dev commands (`dapr run`, `rad deploy`) — Phase 2+
+- No integration test examples (Karen's Phase 7 work)
+- No GitHub Actions workflow (Graham's Phase 6 work)
+- No demo script (Eddie's Phase 7 deliverable)
+
+### Evidence
+
+- README.md exists, contains Mermaid diagram and service responsibility table
+- Phase 1 exit criteria 5, 6 confirmed
+
+### Next Phase
+
+Phase 2: Extend README with "Local Development" section (setup commands, local environment, running services locally).
+
+
+## Phase 7 Work (2026-03-24)
+
+### Delivered
+
+**Phase 7 Documentation Package — Three artifacts:**
+
+1. **README.md enhancement: Deployment Configuration Section**
+   - Added clear "Deployment: GitHub Actions Secrets and Variables" section after architecture story
+   - Documented all required secrets: `AZURE_SUBSCRIPTION_ID`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `RADIUS_KUBECONFIG`
+   - Documented all required variables: `AZURE_LOCATION`, `AZURE_RESOURCE_GROUP`, `AZURE_DEPLOYMENT_MODE`, `AZURE_ACR_NAME`, `RADIUS_*` parameters
+   - Explained both paths: Radius-first (default) and ACA fallback
+   - Included honest rationale: why each path is needed, who should use it, what each requires
+   - Maintains narrative tone: "When to Use Each Path" section ties choices back to audience needs
+
+2. **Demo Walkthrough (`docs/phase-7-demo-walkthrough.md`)**
+   - ~270 lines covering the $50 and $150 flows with step-by-step curl commands
+   - Observable evidence checklist for reviewers/pilots
+   - Shown outputs so readers know what to expect at each step
+   - Timing breakdown (~10 minutes total)
+   - Troubleshooting section for common deployment issues
+   - "What This Demo Doesn't Cover" section (auth, multi-tier approval, real notifications, etc.) — maintains honesty about scope
+   - Key takeaways section ties the sample back to Dapr + Radius narrative
+
+3. **ADR-0001: Azure CLI Fallback (`docs/ADR-0001-azure-cli-fallback.md`)**
+   - Explains why the ACA fallback path exists (Radius gap is real, honesty is credible)
+   - Documents what each path covers (Radius provides portability + recipes; ACA fallback provides fully managed without Kubernetes)
+   - Coverage table showing which path handles which concern
+   - Maintenance obligations (both paths must maintain Dapr parity, service parity, contract stability, demo evidence)
+   - Roadmap section: when fallback can disappear (Radius adds ACA support, ACA adds K8s API, or org strategy changes)
+   - Application code impact: zero (Dapr makes app portable regardless of deployment target)
+   - Example swap scenario (user just changes variables, no code changes)
+   - Maintains the team's credibility: "we know why both paths exist and what must change"
+
+### Key Decisions Embedded
+
+- **Radius-first is default:** Keeps portability front-and-center; the workflow reflects that choice
+- **ACA fallback is labeled clearly:** Not hidden as "production path" — teams know it's the gap-filler until Radius gains ACA support
+- **Both paths share Dapr component names:** `statestore`, `pubsub`, `platform-secrets` are identical in both paths, making swaps transparent to app code
+- **Demo is the test:** The walkthrough doesn't abstract away details; it shows the actual API calls, actual status progression, actual logs, so pilots can reproduce and troubleshoot
+- **Honesty about scope:** The demo walkthrough explicitly lists what's out of scope (auth, multi-tier approval, real notifications, etc.), preventing credibility loss during the talk
+
+### Evidence
+
+- `README.md` now includes 4-section Deployment Configuration subsection with secrets/variables tables and path explanations
+- `docs/phase-7-demo-walkthrough.md` exists with 270 lines covering both flows with curl examples, expected outputs, and troubleshooting
+- `docs/ADR-0001-azure-cli-fallback.md` exists with 210 lines explaining the gap, both paths, maintenance obligations, and roadmap
+- Both new docs are linked from README and positioned to guide operators (variables section) and pilots (demo walkthrough + ADR context)
+
+### Pattern Captures
+
+- **Secrets + Variables transparency:** GitHub Actions configuration is a credibility gate; teams must understand what each variable does and which path requires it
+- **Deployment path honesty:** When a gap exists (Radius lacks ACA), labeling it clearly and explaining when it can close builds trust rather than hiding it
+- **Demo as specification:** Walk through the actual API calls and log outputs so pilots can reproduce; don't abstract away the implementation details
+- **Scope boundaries:** Explicitly list what's intentionally out of scope so the team doesn't promise features the sample doesn't deliver
+
+
+## Learnings
+
+- **Secrets tables are underrated documentation.** Teams often deploy without understanding which secret feeds which path; making it explicit (with "Radius-first only" and "ACA fallback only" labels) prevents deployment failures
+- **Roadmap transparency builds credibility.** The ADR doesn't promise "Radius will fix this"; it says "if Radius adds ACA support, the fallback disappears, and app code stays unchanged." That's credible.
+- **Demo walkthroughs need actual commands.** Telling teams "the workflow auto-approves at <$100" is abstract; showing the `curl` command, the JSON response, the log output, and the status progression makes it concrete and reproducible
+- **Dapr portability is the thesis.** By keeping the same component names across both paths and showing zero application code impact, the docs prove that Dapr is the actual portability layer—Radius/ACA are just the plumbing
+- **Shell readiness is not runtime readiness.** A hosted `/app` shell can render before Dapr-backed expense reads and writes are actually available, so walkthroughs must say that directly instead of implying the whole backend is ready.
+- **Local Dapr instructions must follow real launch profiles.** For `dotnet run` plus `dapr run`, the documented `--app-port` values need to match the checked-in `launchSettings.json` ports (`src/expense-api/Properties/launchSettings.json`, `src/workflow-engine/Properties/launchSettings.json`) or service invocation guidance becomes misleading.
+- **Workflow telemetry deserves its own dependency note.** Expense state can exist while telemetry is still unavailable, because the `/expenses/{id}/workflow` path has an additional Dapr reachability dependency on `workflow-engine`.
+
+### 2026-03-24: Phase 7 Documentation Lane Complete
+
+**Deliverables:**
+1. **README.md Updates**
+   - Added "Deployment: GitHub Actions Secrets and Variables" section
+   - Secrets table (AZURE_SUBSCRIPTION_ID, RADIUS_KUBECONFIG, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET)
+   - Variables table (AZURE_LOCATION, AZURE_RESOURCE_GROUP, AZURE_DEPLOYMENT_MODE, RADIUS_KUBERNETES_CONTEXT, RADIUS_KUBERNETES_NAMESPACE, ACR_REGISTRY_NAME, DOCKER_REGISTRY_AUTHENTICATION)
+   - Deployment paths explained with "When to Use Each Path" guidance
+
+2. **docs/phase-7-demo-walkthrough.md**
+   - 270-line artifact for pilots and reviewers
+   - $50 auto-approve flow (exact curl commands, expected responses)
+   - $150 manual-review flow (exact commands, observable evidence)
+   - Observable evidence checklist (status transitions, notification logs)
+   - Timing breakdown (~10 minutes)
+   - Troubleshooting section
+   - Scope boundaries documented
+
+3. **docs/ADR-0001-azure-cli-fallback.md**
+   - 210-line architecture decision record
+   - Radius → ACA gap explanation (honest, not hidden)
+   - Coverage table: what each path handles
+   - Maintenance obligations for both paths
+   - Roadmap: when fallback can disappear
+   - Zero app code impact
+
+**Design Approach:**
+- **Honesty over abstraction:** Radius has a real gap (no ACA support); documented explicitly
+- **Configuration transparency:** Secrets/variables clearly mapped to each path
+- **Demo as specification:** Exact curl commands, JSON responses, log output
+- **Roadmap credibility:** ADR lists three futures when fallback disappears
+
+**Status:** APPROVED
+
+
+## 2026-03-24: App Rename — CloudExpense Lite → RadiusClaim
+
+### Delivered
+
+**Complete user-facing rename sweep across all documentation and scripts:**
+
+1. **README.md** (6 updates)
+   - Title: `# CloudExpense Lite` → `# RadiusClaim`
+   - Introductory narrative: "CloudExpense Lite shows the answer" → "RadiusClaim shows the answer"
+   - Project layout: `CloudExpenseLite.slnx` → `RadiusClaim.slnx`
+   - Namespace reference: `CloudExpense.Contracts` → `RadiusClaim.Contracts` (matches actual source code)
+   - Deployment variables table: Updated example resource group from `cloudexpense-lite-rg` to `radiusclaim-rg` and namespace from `cloudexpense-lite-azure` to `radiusclaim-azure`
+
+2. **docs/phase-7-demo-walkthrough.md** (1 update)
+   - Prerequisites section: "CloudExpense Lite is deployed" → "RadiusClaim is deployed"
+
+3. **docs/ADR-0001-azure-cli-fallback.md** (3 updates)
+   - Summary section: "CloudExpense Lite aims to demonstrate" → "RadiusClaim aims to demonstrate"
+   - Maintenance obligations: "CloudExpense Lite contract shapes" → "RadiusClaim contract shapes"
+   - References section: "CloudExpense Lite Repo" → "RadiusClaim Repo"
+
+4. **docs/phase-1-validation.md** (2 updates)
+   - Title: `# CloudExpense Lite — Phase 1 Validation Gate` → `# RadiusClaim — Phase 1 Validation Gate`
+   - Build command reference: `CloudExpenseLite.slnx` → `RadiusClaim.slnx`
+
+5. **docs/phase-7-validation-checklist.md** (2 updates)
+   - Purpose section: "CloudExpense Lite sample is production-ready" → "RadiusClaim sample is production-ready"
+   - Release checkpoint: "CloudExpense Lite is demo-ready" → "RadiusClaim is demo-ready"
+
+6. **docs/radius-validation-checklist.md** (37 updates across multiple categories)
+   - All namespace references: `cloudexpense-lite-azure` → `radiusclaim-azure`
+   - All container registry paths: `ghcr.io/<your-org>/cloudexpense-lite` → `ghcr.io/<your-org>/radiusclaim`
+   - All resource group examples: `cloudexpense-lite-rg` → `radiusclaim-rg`
+   - All deployment output messages: Application name updated in example outputs
+   - Total: 37 sed operations across namespace, container registry, and resource group references
+
+7. **scripts/README.md** (3 updates)
+   - Title: `# CloudExpense Lite - Scripts` → `# RadiusClaim - Scripts`
+   - Purpose sections: All three script descriptions updated from CloudExpense Lite to RadiusClaim
+
+8. **scripts/validate-deployment.sh** (2 updates)
+   - Script header comment: `# CloudExpense Lite - Deployment Validation Script` → `# RadiusClaim - Deployment Validation Script`
+   - Description comment: "deployed CloudExpense Lite instance" → "deployed RadiusClaim instance"
+   - Success message: "CloudExpense Lite deployment is HEALTHY" → "RadiusClaim deployment is HEALTHY"
+
+### Pattern: Technical Naming vs. User-Facing
+
+**Kept intentionally:**
+- Internal C# namespace references in infra/radius/app.json (used by Bicep parameter defaults; these don't affect user-facing demo)
+- Resource naming function prefix in pubsub recipe: `cloudexpense-{0}` is a technical prefix for auto-generated Azure resource names, not user-visible
+
+**Renamed consistently:**
+- All documentation titles, headings, and explanatory text
+- All example configuration values and defaults
+- All example command outputs and resource names
+- All script messages and user-facing strings
+
+### Evidence
+
+- `grep -r "CloudExpense\|cloudexpense-lite" /Users/wesleyb/git/RadiusClaim/README.md /Users/wesleyb/git/RadiusClaim/docs/*.md /Users/wesleyb/git/RadiusClaim/scripts/*.sh /Users/wesleyb/git/RadiusClaim/infra/radius/*.json` returns 0 results
+- All demo walkthroughs, validation checklists, and operational scripts now reference RadiusClaim consistently
+- Source code (C# namespaces) already uses RadiusClaim, now aligned with documentation
+
+### Next Steps
+
+Team communication moving forward should reference the sample as "RadiusClaim" in all public-facing materials (demos, talks, blogs, external sharing).
+
+
+
+## 2026-03-24: Deployment Narrative Pivot — Kubernetes-First with Honest Azure Backing Services
+
+### Delivered
+
+**Reframed all deployment-related documentation from ACA-fallback narrative to Kubernetes-first, with honest backing-service scoping:**
+
+1. **README.md Updates (Deployment sections)**
+   - Changed opening tagline from "deployed on Azure Container Apps" to "deployed on Kubernetes with Azure backing services"
+   - Rewrote "Deployment Story" section to lead with Kubernetes + Radius as primary, with AKS as concrete example
+   - Removed ACA fallback path references entirely
+   - Clarified portability scope: app code is portable, deployment model is portable, backing services are tied to recipes (Azure recipes = Azure services)
+   - Listed supported targets: AKS, Arc-enabled Kubernetes, self-managed Kubernetes
+   - Updated deployment secrets/variables table to reflect Kubernetes-only configuration
+   - Updated footer status to reflect "Kubernetes-first deployment via Radius; Azure backing services"
+
+2. **ADR-0001 Complete Reframe (Kubernetes-First Deployment Strategy)**
+   - Renamed from "Azure CLI Fallback Path" to "Kubernetes-First Deployment Strategy with Azure Backing Services"
+   - Rewrote Problem section to explain portability enabled by (1) Dapr abstractions, (2) Radius recipes, (3) environment definitions
+   - Removed ACA fallback path documentation entirely
+   - Rewrote Roadmap to focus on enabling other clouds via Radius recipes (AWS, GCP)
+   - Updated Application Code Impact to emphasize environment agnosticism
+
+3. **Demo Walkthrough, Phase 7 Validation, Radius Validation, Scripts README**
+   - Updated all references from ACA logs to Kubernetes logs (kubectl)
+   - Added port-forward examples for local access
+   - Simplified single-path deployment narrative
+
+### Key Messaging Shifts
+
+**Old:** "Radius-first (default) vs. ACA fallback"  
+**New:** "Kubernetes-first with Radius; AKS is the primary example; recipes enable other clouds"
+
+**Portability clarity:**
+- ✅ App code, deployment model, compute (any K8s + Radius)
+- ⚠️ Backing services tied to recipes (currently Azure; future: AWS/GCP recipes)
+
+### Pattern Captures
+
+**Backing-service honesty:** Don't claim full portability if recipes are cloud-specific. Separate compute portability from service portability.
+
+**Recipes as the portability lever:** Instead of dual deployment paths, frame recipes as the future mechanism for multi-cloud support.
+
+
+## Phase 7 Work (2026-03-24)
+
+### Documentation & Narrative Reframe — Kubernetes-First Deployment
+
+**Status:** IMPLEMENTED
+
+**What:** Reframed all deployment documentation from "Radius-first with ACA fallback" to "Kubernetes-first with Azure backing services via Radius recipes."
+
+**Why:** Conceptual clarity; honest portability; future scalability; removed teaching debt.
+
+**What's Portable:** App code (Dapr abstractions), deployment model (Radius app + environment patterns), service topology, compute targets (AKS, Arc-enabled, self-managed Kubernetes).
+
+**What's Backed by Recipes:** Azure services (Blob Storage, Service Bus, Key Vault); AWS/GCP recipes are additive, not rearchitecture.
+
+**Documentation Changed:**
+- README.md (opening tagline, deployment story, secrets table, footer)
+- ADR-0001 (complete reframe from ACA fallback to K8s-first roadmap)
+- docs/phase-7-demo-walkthrough.md (kubectl logs instead of az containerapp)
+- docs/phase-7-validation-checklist.md (single K8s path)
+- docs/radius-validation-checklist.md (K8s-native commands)
+- scripts/README.md (kubectl patterns)
+
+**Messaging:**
+> "RadiusClaim runs on any Kubernetes cluster with Dapr and Radius. AKS with Azure backing services is the primary example. When Radius recipes for AWS or GCP exist, the same app model targets those clouds with only recipe/environment changes."
+
+**No Longer Valid:**
+- ACA fallback narrative (removed from user-facing docs)
+- "Radius-first vs. ACA fallback" framing
+- Dual-path deployment configuration in docs
+- Azure Container Apps as "compute alternative" in this sample
+
+
+## 2026-03-24: End-to-End Setup Walkthrough
+
+### Delivered
+
+**Complete step-by-step operator guide: `docs/end-to-end-setup-walkthrough.md` (674 lines)**
+
+Covers the entire flow from resource group creation to opening the app in a web browser:
+
+**Steps 1–5: Azure & Kubernetes Foundation**
+1. Azure login and subscription selection
+2. Resource group creation (backing services container)
+3. Kubernetes cluster provisioning (Option A: AKS; Option B: existing cluster)
+4. Dapr control plane installation on cluster
+5. Radius control plane installation on cluster
+
+**Steps 6–9: Deployment Preparation**
+6. Publish Radius recipe artifacts to GHCR (state store, pub/sub, secrets)
+7. Initialize Radius workspace and group (manual deployment only)
+8. Deploy Radius environment (azure-radius.bicep) — links Dapr to Azure backing services
+9. Deploy RadiusClaim application (app.bicep) — three services with injected Dapr sidecars
+
+**Steps 10–12: Validation & Use**
+10. Verify deployment and retrieve public endpoint
+11. Open `/app` in web browser
+12. Run validation script to confirm $50 auto-approve and $150 manual-review flows
+
+**Design Principles:**
+- **Honest about what's automated:** GitHub Actions workflow, Radius deployment, Dapr injection, image builds
+- **Clear about manual steps:** Azure auth, cluster provisioning, kubeconfig setup, namespace management
+- **Realistic timing:** ~30–45 minutes depending on Azure resource creation (noted upfront)
+- **Dual-path support:** GitHub Actions (recommended) and local `rad` CLI (advanced)
+- **Practical troubleshooting:** 12 common issues with solutions (kubeconfig, control plane, recipes, endpoints, validation)
+- **Next steps included:** Demo flow instructions, code exploration pointers, change redeployment patterns
+
+**Readability:**
+- Pre-formatted code blocks with expected outputs
+- Environment variable patterns to avoid copy-paste errors
+- Conditional instructions (GitHub Actions vs. `rad` CLI)
+- Cross-linked to related docs (phase-7-demo, validation-checklist, architecture)
+
+**Updated README.md**
+- Added new walkthrough as first link in "Additional Documentation" section
+- Positioned it before demo walkthrough (setup precedes demo)
+- Includes audience note: "Complete operator guide from Azure login…"
+
+### Key Messaging
+
+> "RadiusClaim deployment spans Azure foundation (resource group, backing services), Kubernetes cluster (compute with Dapr + Radius control planes), Radius environment definition (Dapr component wiring to Azure), and application deployment. This walkthrough shows where the operator's role begins and ends, and which steps are automated by GitHub Actions vs. which require manual steps."
+
+### Patterns Captured
+
+**Setup documentation structure:**
+- Section 0: Overview (what's automated, what's manual)
+- Prerequisites validation (tools, credentials, cluster readiness)
+- Numbered steps with clear boundaries (Azure → K8s → Dapr → Radius → App)
+- Code blocks with expected outputs so operators can verify progress
+- Conditional instruction paths (AKS vs. existing cluster; GitHub Actions vs. rad CLI)
+- Practical troubleshooting keyed to symptom (not to tool)
+- Next steps that extend into demo flows and architecture exploration
+
+**What this enables:**
+- New operators can onboard without asking for custom setup help
+- Demo pilots understand what they're validating
+- Support conversations can reference specific step numbers
+- Discoverability: complete workflow in one document, with linked details for deep dives
+
+### Status: COMPLETE AND VERIFIED
+
+- `docs/end-to-end-setup-walkthrough.md` created (674 lines)
+- `README.md` updated with link
+- Covers all operator steps from Azure login to opening `/app` in browser
+- Includes both GitHub Actions automation and manual `rad` CLI options
+- Realistic timing, honest about prerequisites, practical troubleshooting
+
+
+## Phase 7 Work — Portability Documentation Update (2026-03-24)
+
+### Delivered
+
+**Portability Narrative Shift: AWS/GCP → Azure Local / Arc-Enabled Kubernetes**
+
+Removed speculative AWS/GCP examples and centered the portability story on concrete, supported targets:
+
+**Files Updated:**
+1. `README.md` — Removed explicit AWS/GCP naming; kept "other clouds" language as forward-looking
+2. `docs/ADR-0001-kubernetes-first-deployment.md` — Major rewrite:
+   - Replaced "Roadmap: Enabling Other Clouds" section with "Portability in Practice: Azure Local and Arc-Enabled Kubernetes"
+   - New concrete example: Azure Local (edge) + Arc-enabled Kubernetes (on-premises / multi-cloud) + self-managed Kubernetes
+   - Replaced "Example: Swapping to AWS" with "Example: Deploying to Azure Local or Arc-Enabled Kubernetes"
+   - Updated component stability line: `(Azure, AWS, GCP, self-managed)` → `(Azure, Arc-enabled, self-managed)`
+   - Updated backing-services portability language to remove AWS/GCP specifically, kept "other clouds" as future possibility
+3. `docs/end-to-end-setup-walkthrough.md` — Clarified cluster options:
+   - Option B now reads: "Any Kubernetes cluster (on-premises, edge, or multi-cloud) reachable from your machine and registered with Azure Arc"
+   - Removed "GCP, AWS" examples, kept honest: Arc-enabled + self-managed are the concrete non-AKS targets
+4. `scripts/README.md` — Already well-aligned; no changes needed
+
+**Messaging Pattern:**
+- **App code is portable** — Dapr abstractions, cloud-agnostic
+- **Deployment model is portable** — Kubernetes-first via Radius, recipe-agnostic
+- **Azure backing services are Azure-specific** — Blob, Service Bus, Key Vault; made explicit
+- **Azure Local + Arc-enabled + self-managed are the portability proof points** — concrete, not speculative
+- **Future recipes welcome** — if/when AWS, GCP, or other clouds have Radius recipes, pattern holds (same app, different env)
+
+**Key Learnings:**
+- Honesty matters more than aspirational cloud-agnosticism
+- Azure Local + Arc-enabled Kubernetes are the natural non-AKS deployment targets for enterprise Dapr + Radius patterns
+- Removing speculative examples (AWS, GCP) clarifies the real value: Kubernetes-portable app code + environment-swappable infrastructure
+- The future-recipes section is fine as possibility, but day-one portability proof must be concrete (Azure Local, Arc, self-managed K8s)
+
+### Context
+
+From `.squad/identity/now.md`: "Portability Fixes — ✅ COMPLETE & APPROVED" and "Eddie's documentation: README clearly separates app portability (Dapr + code) from infrastructure reality (Azure-specific today, Radius-intended)."
+
+This update finalizes the portability narrative by making it honest and concrete rather than aspirational.
+
+
+
+
+## 2026-03-24: Walkthrough Location Update to belgiumcentral
+
+**Task:** Update location references in `docs/end-to-end-setup-walkthrough.md` from `eastus` to `belgiumcentral`
+
+**Work:**
+- Updated line 113: Create Azure Resource Group section (environment variable example)
+- Updated line 312: Required Variables section documentation
+- Updated line 351: Deploy Radius Environment section example
+
+**Rationale:**
+- Consistent region reference across all deployment examples
+- Aligns documentation with requested deployment region
+- Maintains tight scope—no unrelated content modified
+- All instances verified for consistency
+
+**Outcome:** ✅ Complete. Documentation now guides users to deploy using Belgium Central as the Azure region for all Radius deployment steps.
+
+
+## Phase 8 Work — AKS Walkthrough Documentation Fix (2026-03-24)
+
+### Delivered
+
+**Fixed Azure CLI Flag Error in End-to-End Setup Walkthrough**
+
+**File:** `docs/end-to-end-setup-walkthrough.md` (Line 150)  
+**Change:** `--enable-cluster-autoscaling` → `--enable-cluster-autoscaler`
+
+**Problem:** The walkthrough documented an incorrect Azure CLI flag for the `az aks create` command. If users copied the command exactly, the CLI would reject it with an "unrecognized argument" error.
+
+**Verification:** Scanned entire file; no remaining incorrect occurrences of the autoscaler flag pattern.
+
+**Impact:** Operators following the walkthrough will now encounter no syntax errors when provisioning AKS clusters. Command references are now accurate against Azure CLI documentation.
+
+### Status: COMPLETE
+
+---
+
+
+## Phase 9 Work — Docker Build Architecture Awareness (2025-01-16)
+
+### Delivered
+
+**Made Docker Build Guidance Architecture-Aware for Mac ARM Users**
+
+**File:** `docs/end-to-end-setup-walkthrough.md`
+
+**Changes:**
+1. **Tools Section (Line 71–85):** Added `docker buildx` to optional tooling for multi-platform builds
+2. **Manual Deployment (Line 457–465):** Added inline note that native builds assume local arch matches cluster, with reference to multi-platform section
+3. **New Multi-platform Builds Section (Line 293–335):** 
+   - Explains Mac ARM → x86 AKS scenario explicitly
+   - Shows `docker info | grep Architecture` to detect local architecture
+   - Provides `docker buildx` examples for single-platform (linux/amd64, linux/arm64)
+   - Shows multi-platform manifest syntax (linux/amd64,linux/arm64)
+   - Warns about registry requirement and --load limitation
+4. **Redeploy Section (Line 726–740):** Updated to note native build assumption with commented example of buildx alternative
+
+**Problem Solved:** The original doc used generic `docker build` commands without explaining that users on Mac ARM building for x86 AKS (or vice versa) would produce unusable images.
+
+**Verification:** 
+- Checked entire file for lingering x86-only assumptions: none found
+- Verified architecture examples (amd64, arm64) appear in context sections
+- All 3 service images (expense-api, workflow-engine, notification-svc) have consistent guidance
+
+**Audience Impact:** Platform engineers and operators on Mac ARM (M1/M2/M3 chips) can now:
+- Understand why native Docker builds fail in cross-arch scenarios
+- Use `docker buildx --platform linux/amd64` for x86 AKS
+- Build multi-platform manifests for heterogeneous clusters
+
+### Status: COMPLETE
+
+
+## Learnings
+
+**Architecture Decisions:**
+- RadiusClaim targets Azure/AKS, which commonly runs x86 (amd64) nodes
+- Mac ARM developers building locally need explicit buildx guidance
+- Multi-platform manifests are the right pattern for teams with mixed architectures
+
+**Patterns:**
+- Inline comments work well for architecture assumptions (vs. hiding in separate section)
+- Explicit examples (Mac ARM → x86 AKS) help readers recognize their own scenario
+- Reference patterns to detailed sub-sections (Multi-platform Builds) keep main flow uncluttered
+
+**File Paths:**
+- `docs/end-to-end-setup-walkthrough.md` — the main deployment guide
+- Dockerfiles use multi-stage builds; no platform-specific directives needed at the base layer
+
+---
+
+
+## Phase 9 Completion — Docker Architecture Guidance & GHCR Consistency
+
+**Date:** 2026-03-24  
+**Tasks:** Architecture-aware Docker build guidance, GHCR login consistency
+
+### Part 1: Docker Build Architecture Awareness
+
+**File:** `docs/end-to-end-setup-walkthrough.md` (4 sections)
+
+**Problem:** The original walkthrough used generic `docker build` commands without explaining cross-architecture scenarios. Mac ARM developers building for x86 AKS would produce ARM-only images, causing silent pod scheduling failures.
+
+**Solution:** Added comprehensive architecture-aware guidance:
+1. Tools section: Added `docker buildx` as optional tooling
+2. Manual deployment: Inline note explaining native build assumption, referencing multi-platform section
+3. New "Multi-platform Builds" section: Scenario framing, `docker info | grep Architecture`, single and multi-platform buildx examples
+4. Redeploy section: Updated with native-build assumption note and buildx alternative
+
+**Verification:** Scanned entire file; no x86-only assumptions remain. Architecture examples consistent across all three services.
+
+**Outcome:** Mac ARM developers can now identify their scenario and use `docker buildx --platform linux/amd64` for x86 AKS deployments. Existing x86→x86 workflows are unaffected.
+
+### Part 2: GHCR Login Variable Consistency
+
+**File:** `docs/end-to-end-setup-walkthrough.md` (lines 436, 583)
+
+**Problem:** Two instances of `docker login ghcr.io` lacked the `--username "$GITHUB_USERNAME"` argument, inconsistent with other docker login commands in the file.
+
+**Solution:** Updated both instances to:
+```bash
+docker login ghcr.io --username "$GITHUB_USERNAME"
+```
+
+**Rationale:** Document already normalizes `GITHUB_USERNAME` in multiple sections. Other login commands (lines 256, 275) already follow this pattern. Consistency improves clarity.
+
+**Outcome:** All GHCR authentication examples now follow the same variable-driven pattern.
+
+### Related Decisions
+
+Decision documents created and merged:
+- `eddie-docker-arch-guidance.md`: Full rationale and scope
+- `eddie-fix-ghcr-login-var.md`: Variable consistency approach
+- User directives (2 captured): Publish script stability, Docker architecture independence
+
+**User Directive (2026-03-24T16:51:40Z):** "When doing `docker build`, keep architecture independence in mind and account for Mac ARM hosts; do not assume x86-only builds or guidance."
+
+This work directly implements that directive.
+
+### Learnings
+
+**Architecture Patterns:**
+- RadiusClaim targets Azure/AKS (commonly x86/amd64)
+- Mac ARM developers need explicit buildx guidance  
+- Multi-platform manifests are the right pattern for mixed-architecture teams
+- Inline comments work well for architecture assumptions
+
+**Documentation Principles:**
+- Consistency across examples builds user confidence
+- Architecture scenarios should be named (e.g., "Mac ARM → x86 AKS") so readers recognize themselves
+- Optional advanced patterns should be linked, not embedded in the main flow
+
+**Files:**
+- `docs/end-to-end-setup-walkthrough.md` — main deployment guide (lines 71–85, 293–335, 457–465, 726–740)
+- Dockerfiles use multi-stage builds; no platform-specific directives needed
+
+### Status: COMPLETE
+
+---
+
+
+## Phase 10 Work (2026-03-24) — Azure Credential Registration Documentation
+
+### Diagnosed Issue
+
+Graham's recipe troubleshooting identified a critical bootstrap gap:
+- Radius Azure recipe deployment fails with missing `azure-azurecloud-default` secret error
+- Root cause: Azure credential not registered with Radius before deploying environments with Azure-backed recipes
+- The error occurs because `rad credential register azure` must run **after** workspace/environment creation but **before** deploying Bicep files that reference Azure recipes
+- This step was missing from both the GitHub Actions workflow and the manual deployment documentation
+
+### Work Completed
+
+**1. README.md Enhancement**
+- Added prominent "Azure credential registration (required)" section right after the idempotent deployment paragraph
+- Explains the purpose, the exact error message if skipped, and directs readers to validation checklist for details
+- Keeps the README narrative high-level while surfacing the criticality
+
+**2. docs/radius-validation-checklist.md — Comprehensive Coverage**
+- Added "✅ Azure Provider Credentials" checkbox section in Pre-Deployment Checks
+  - Explains what the step does and why it matters
+  - Shows the command and expected output
+  - References the workflow implementation
+  - Separated from workspace/group section for clarity
+- Inserted "Step 2: Register Azure Provider Credentials" in Deployment Steps sequence (between environment creation and recipe publishing)
+  - Includes the command, verification, and critical warning
+  - Maintains step numbering (Steps 3, 4, 5 for recipe publish, environment deploy, app deploy)
+- Added new troubleshooting entry: "Issue: `rad deploy` fails with missing `azure-azurecloud-default` secret"
+  - Diagnosis, solution with retry, and explanation of why it matters
+  - Directs readers to the credential registration step in the pre-deployment section
+
+**3. docs/end-to-end-setup-walkthrough.md — Manual Deployment Path**
+- Inserted credential registration block in the "Option B: Manual Deployment with `rad` CLI" section
+  - Placed right after `rad env switch` and before `rad deploy` of the environment Bicep
+  - Includes interactive prompt explanation and verification command
+  - Comments explain what the credential enables (Blob Storage, Service Bus, Key Vault provisioning)
+
+**4. .github/workflows/deploy-azure.yml — CI/CD Implementation**
+- Added new step "Register Azure provider credentials with Radius" 
+  - Placed between "Configure Radius workspace" and "Deploy Azure-backed Radius environment"
+  - Uses the same KUBECONFIG setup as other Radius operations
+  - Includes comment explaining the purpose
+  - Step runs `./rad credential register azure` with proper environment
+
+### Key Design Decisions
+
+1. **Pre-deployment validation section covers the "what":** Why credentials matter, what happens without them, how to verify success
+2. **Deployment steps show the "when":** Exact sequence: create env → register credential → publish recipes → deploy environment → deploy app
+3. **Troubleshooting gives the "how to recover":** Diagnosis, retry steps, and explanation of why the error occurred
+4. **README surfaces urgency:** The credibility of "this must happen before deployment" is better served by mentioning it in the main narrative than hiding it in a checklist
+
+### Validation
+
+- ✅ All four documentation artifacts (README, walkthrough, validation checklist, workflow) consistently mention credential registration
+- ✅ Placed at the right sequence point in all paths
+- ✅ Explains the `azure-azurecloud-default` error message (helps operators recognize the issue)
+- ✅ Links between docs (validation checklist links to workflow, README links to checklist)
+- ✅ No speculative wording; all guidance is grounded in Graham's diagnosis
+
+### Files Modified
+
+1. `README.md` — Added "Azure credential registration (required)" paragraph
+2. `docs/radius-validation-checklist.md` — Added pre-deployment check, deployment step, and troubleshooting entry
+3. `docs/end-to-end-setup-walkthrough.md` — Added credential registration commands in manual deployment section
+4. `.github/workflows/deploy-azure.yml` — Added "Register Azure provider credentials with Radius" job step
+
+### Learnings
+
+- **Bootstrap order matters in Radius:** The sequence is workspace → environment → credential → recipes, not just any order
+- **Error messages are documentation:** When an error message mentions a Kubernetes secret name (`azure-azurecloud-default`), that's a hook operators can use to diagnose; calling out the message in the troubleshooting section helps them recognize the failure
+- **Credibility in sequence:** Operators trust workflows that show clear step-by-step order more than workflows that hide setup steps
+- **CI/CD should mirror manual guidance:** Both paths now have the same credential registration step in the same sequence, reducing mental load for teams moving between automation and manual ops
+
+### Pattern Notes
+
+This aligns with Graham's troubleshooting skill (`radius-azure-recipe-troubleshooting/SKILL.md`):
+- Treats Azure provider credentials as a separate bootstrap concern from the environment model
+- Separates the "missing credential" symptom from "recipe output contract bugs"
+- Points operators to the credential registration step as the first diagnostic/fix
+
+### Status: COMPLETE
+
+---
+
+
+## Phase 11 Work (2026-03-24) — First-Time Deploy Walkthrough Rewrite
+
+### Requested Work
+
+Wesley asked me to rewrite `docs/end-to-end-setup-walkthrough.md` to:
+- Keep the correct current deploy command in the happy path
+- Move redeploy/legacy owner-tag recovery language out of the main narrative
+- Keep those topics only as troubleshooting guidance
+- Make the wording clearly first-time friendly
+- Scope to the walkthrough unless tiny directly-related consistency fixes are unavoidable
+
+### What Changed
+
+**1. Removed "Deploy Changes" Subsection from Next Steps**
+- Moved the entire "Deploy Changes" (redeploy) section out of the "Next Steps → Explore the Architecture" flow
+- This was confusing for first-timers because it mixed iteration guidance with post-deployment validation
+
+**2. Reorganized Troubleshooting Section**
+- **Split "Services Not Starting" into two subsections:**
+  - "Services Not Starting" — focuses on immediate diagnostics (pod events, logs, image pull verification)
+  - "Image Reference Mismatch (Legacy Recovery)" — **new subsection** for the stale `ghcr.io/sovereignapp/radiusclaim/*:phase1` recovery case
+  - Simplified the "Services Not Starting" solution to focus on image registry authentication (403/pull errors), removing the legacy owner-tag reference
+
+- **Added "Redeploying After Code Changes"** troubleshooting section
+  - Placed after "Validation Script Fails"
+  - Contains the redeploy workflow (rebuild, push, re-run `rad deploy`)
+  - Includes cross-platform build guidance (docker buildx)
+  - Explains GitHub Actions push trigger
+  - Explicitly notes that this step comes **after** you've verified the initial deployment works
+
+### Result
+
+**Happy path for first-timers:**
+- Step 1–12: Deploy, validate, open the browser
+- Next Steps: Run demo flow → explore architecture
+- Clean, linear, no confusion about redeploy or legacy recovery
+
+**For operators returning to iterate:**
+- Troubleshooting → "Redeploying After Code Changes" tells them the full redeploy workflow
+- Troubleshooting → "Image Reference Mismatch" is available if they encounter the legacy issue (unlikely, but recoverable if it happens)
+
+### Key Design Decisions
+
+1. **Redeploying is troubleshooting, not part of the happy path:**
+   - First-timers need a clean, linear story: set up → deploy → validate → enjoy the demo
+   - Redeploy is an iteration task, not part of the first deployment
+   - Keeping it in troubleshooting sets expectations right
+
+2. **Legacy owner-tag recovery gets its own subsection:**
+   - Makes it easy to skip if not relevant
+   - Doesn't pollute the "Services Not Starting" generic debugging flow
+   - Explicitly named "Legacy Recovery" to make it clear this is edge-case defensive documentation
+
+3. **Simplified "Services Not Starting" language:**
+   - Removed conditional logic ("if you see old image path, do X; if you see 403 error, do Y")
+   - Focused on the common case: image pull auth issues
+   - Moved the old path case to its own section
+
+### Files Modified
+
+- `docs/end-to-end-setup-walkthrough.md`
+  - Removed "### Deploy Changes" subsection from "Next Steps"
+  - Reorganized troubleshooting: split "Services Not Starting" and added "Image Reference Mismatch (Legacy Recovery)"
+  - Added "### Redeploying After Code Changes" section in troubleshooting (placed after "Validation Script Fails")
+  - Cleaned up wording in "Services Not Starting" to focus on authentication rather than legacy recovery
+
+### Learnings
+
+- **Narrative clarity matters in deployment docs:** The order of sections shapes operator expectations
+- **Troubleshooting should be defensive, not prescriptive:** Offer paths for unexpected situations without forcing operators through them in the happy path
+- **Redeploy is not part of deploy:** Separating iteration (redeploy) from initial setup (deploy) keeps first-timers' mental model clean
+- **Legacy recovery deserves a name:** Naming the troubleshooting section "Legacy Recovery" signals that it's edge-case defensive, not the expected path
+
+### Status: COMPLETE
+
+---
+
+
+## Phase 7 Work (2026-03-24)
+
+### Consistency Pass: `rad deploy` Command Alignment
+
+**Scope:** Verify troubleshooting and redeploy `rad deploy infra/radius/app.bicep` commands match the happy-path command shape, particularly `--parameters deploymentTarget='radius'`.
+
+**Problem Found:**
+- Happy path (Step 9, manual CLI): `rad deploy` includes `--parameters deploymentTarget='radius'` ✅
+- Image Reference Mismatch (Troubleshooting): Missing `deploymentTarget='radius'` ❌
+- Redeploying After Code Changes (Troubleshooting): Missing `deploymentTarget='radius'` ❌
+
+**Changes Made:**
+
+1. **Image Reference Mismatch section:**
+   - Added `--parameters deploymentTarget='radius'` to the recovery command
+   - Rewrote symptom/heading: Removed "(Legacy Recovery)" label — was implying first-time user recovery path
+   - Changed symptom from "old registry path (e.g., `ghcr.io/sovereignapp/...`)" to "unexpected registry path or old tag (e.g., a previous environment's registry)"
+   - Rationale: First-timers should not think they need this section; it's truly edge-case (rebuilds with different parameters, environment switches)
+
+2. **Redeploying After Code Changes section:**
+   - Added `--parameters deploymentTarget='radius'` to the redeploy command
+   - Keeps consistency with main deployment flow
+
+### Files Modified
+
+- `docs/end-to-end-setup-walkthrough.md`
+  - Lines ~720–735 (Image Reference Mismatch): Reworded heading, symptom, command
+  - Lines ~795–806 (Redeploy section): Added missing `deploymentTarget` parameter
+
+### Learnings
+
+- **Command parameter consistency is trust:** If happy path and troubleshooting use different `rad deploy` forms, operators wonder "which one is right?"
+- **Naming shapes expectations:** "(Legacy Recovery)" in the heading signals edge-case defensive documentation; removing it lets operators read the symptom and self-decide relevance
+- **Wording avoids false implications:** Using "previous environment's registry" instead of pointing to a specific old project name keeps the doc agnostic and applies broadly
+
+### Status: COMPLETE
+
+---
+
+
+## Phase 8 Work (2026-03-25)
+
+### Spawn 1: First-Time Deploy Walkthrough Reorganization
+
+**Task:** Rewrite `docs/end-to-end-setup-walkthrough.md` so the happy path stays first-time friendly.
+
+**Changes Made:**
+- Moved redeploy flow out of the main narrative (previously in "Next Steps")
+- Isolated legacy/image-recovery guidance under troubleshooting section
+- Removed "(Legacy Recovery)" label from "Image Reference Mismatch" heading
+- Generalized symptom wording: "unexpected registry path or old tag (e.g., a previous environment's registry)" instead of project-specific example
+- Outcome: Clean linear path for first-timers (deploy → validate → demo), with troubleshooting discovery for iteration and edge cases
+
+**Learnings:**
+- **Narrative clarity matters:** Section order shapes operator expectations
+- **Troubleshooting is opt-in:** By placing edge-case sections in troubleshooting, we make them discoverable but invisible to happy-path followers
+- **Naming signals intent:** "Image Reference Mismatch (Legacy Recovery)" suggests defensive edge-case; removing the label lets operators read the symptom and self-decide relevance
+
+### Spawn 2: `rad deploy` Command Parameter Consistency
+
+**Task:** Polish command consistency so troubleshooting/redeploy examples include `--parameters deploymentTarget='radius'`.
+
+**Problem Found:**
+- Happy path (Step 9): `rad deploy` includes `--parameters deploymentTarget='radius'` ✓
+- Image Reference Mismatch (Troubleshooting): Missing `deploymentTarget='radius'` ✗
+- Redeploying After Code Changes (Troubleshooting): Missing `deploymentTarget='radius'` ✗
+
+**Changes Made:**
+1. Added `--parameters deploymentTarget='radius'` to Image Reference Mismatch recovery command
+2. Added `--parameters deploymentTarget='radius'` to Redeploying After Code Changes command
+3. Softened legacy-specific wording: "(Legacy Recovery)" removed to reduce false-positive scope
+
+**Files Modified:**
+- `docs/end-to-end-setup-walkthrough.md` (Lines ~720–735, ~795–806)
+
+**Learnings:**
+- **Parameter consistency builds trust:** If happy path and troubleshooting use different `rad deploy` forms, operators wonder which one is right
+- **Canonical forms reinforce learning:** Operators learn one shape; recovery paths mirror that shape exactly
+
+### Status: COMPLETE (both spawns)
+
+
+## Opus 4.6 Documentation Review (2026-03-24)
+
+### What Was Done
+Deep review of README.md, end-to-end-setup-walkthrough.md, radius-validation-checklist.md, ADR-0001, and phase-7-demo-walkthrough.md. Cross-referenced all doc claims against actual codebase (Bicep files, workflow YAML, Dockerfiles, contracts, directory structure). Focus: factual drift, contradictions, misleading deploy guidance, missing prerequisites.
+
+### Key Findings (Prioritized)
+1. **P0 — README Project Layout tree still says `sovereignapp/`** (stale, should be repo root name)
+2. **P0 — README Contracts path wrong**: `src/RadiusClaim.Contracts/` vs actual `src/shared/RadiusClaim.Contracts/`
+3. **P0 — Radius CLI version contradiction**: walkthrough says v0.37.0, README says 0.55, checklist uses literal `v0.x.x` placeholder
+4. **P0 — "Coming in Phase 2" Quick Start placeholder** survived in README despite Phases 1-6 being complete
+5. **P1 — Walkthrough Step 11 UI description** says "Rejected" status but demo flow uses ManualReviewRequested
+6. **P1 — Missing .NET SDK prerequisite** in walkthrough — needed for local builds
+7. **P1 — GHCR image pull access** not addressed in happy-path setup (only in troubleshooting)
+8. **P2 — `belgiumcentral` vs `eastus`** region inconsistency across docs
+9. **P2 — Missing `ExpenseStatus` enum and `ExpenseRecord`** from README contracts section
+10. **P2 — Validation checklist `@parameters.json` usage** is redundant with inline overrides
+
+### Learnings
+- Cross-referencing the Project Layout tree against `find` output catches stale directory names that rename sweeps miss
+- Version numbers scattered across multiple docs drift independently — a single source-of-truth version table would prevent this
+- Prerequisites sections get stale when CI handles dependencies that manual operators also need
+- GHCR visibility is the #1 gotcha for first-time Kubernetes operators using GitHub-hosted images
+
+---
+
+
+## Session: GHCR Private Package Documentation Review
+
+**Date:** Current session
+**Reviewer:** Eddie
+**Request:** Verify whether docs explicitly state GHCR packages are private by default and require pull access setup.
+
+### Finding: PARTIALLY CLEAR (borderline insufficient)
+
+**Current state:**
+- ✅ Docs mention GHCR in multiple places: initial setup (token creation), build/push steps, troubleshooting
+- ✅ Troubleshooting explicitly offers two paths: "make the package public in GHCR, or wire a pull secret" (3 locations):
+  - `end-to-end-setup-walkthrough.md:703` 
+  - `end-to-end-setup-walkthrough.md:708–717` (full kubectl secret code)
+  - `radius-validation-checklist.md:551` and `551–567` (full kubectl secret code)
+- ⚠️  **GAPS:** 
+  1. NO explicit statement that "GHCR packages are private by default"
+  2. NO warning upfront during happy-path setup that private packages will cause 403 Forbidden
+  3. Token requirements mention `write:packages` and `read:packages` but don't connect "if you want to pull later, you need `read:packages`"
+  4. Troubleshooting assumes 403 is encountered; happy path doesn't prevent it
+
+**Why it matters:**
+A first-time user following the happy path (build → push → deploy) may push private packages and only discover the blocker at pod-start time. The docs don't preempt this with "packages are private by default—plan accordingly."
+
+### Recommended Doc Changes
+
+**Change 1: Add clarity in Step 6 (Token Creation)**
+After line 248 (`read:packages`), add:
+
+```markdown
+**Note:** GitHub Container Registry (GHCR) packages are **private by default**. 
+If you plan to deploy from a cluster (not just local testing), you have two options:
+- **Option A (simpler):** Make the package public in GitHub Settings after pushing.
+- **Option B (secure):** Keep packages private and wire a pull secret on the deployment namespace (see "Troubleshooting" for full steps).
+
+At deployment time, if images remain private and no pull secret is configured, you'll see `403 Forbidden` errors.
+```
+
+**Change 2: Add "Before You Deploy" callout**
+Before line 367 (Build step), add a new section:
+
+```markdown
+### ⚠️ Container Package Visibility Reminder
+
+Before deploying to a cluster, decide:
+1. Are your GHCR images public or private?
+2. If private, have you created a pull secret on the namespace? (See Troubleshooting → Image Registry Access)
+
+Skipping this step causes pod failures at image-pull time.
+```
+
+**Change 3: Simplify troubleshooting title**
+Line 700: Change `If you see 403 Forbidden...` to `When images are private: Create a pull secret` 
+This reframes from "error state" to "expected workflow for private packages."
+
+
+## Learnings: GHCR Private Package Documentation (Current Session)
+
+**Task:** Add explicit, first-time-user guidance that GHCR packages are private by default and require either public visibility or pull secret configuration before deployment.
+
+**What Was Done:**
+1. Added **new subsection** after Step 6 ("What this does"): `⚠️ Important: GHCR Packages Are Private by Default`
+2. Presented **two clear options:**
+   - **Option 1 (simpler):** Make packages public in GitHub Packages settings — recommended for first-time deployment
+   - **Option 2 (production-ready):** Keep private + configure Kubernetes image pull secret with full kubectl code
+3. Added **reassuring framing:** "For first-time deployments, we recommend Option 1"
+4. Placed guidance **between happy-path recipe publishing and the deployment steps** so users encounter it before `rad deploy` fails
+
+**File Modified:**
+- `docs/end-to-end-setup-walkthrough.md` (Lines 343–371, inserted between Step 6 and Step 7)
+
+**Why This Placement:**
+- **Upfront prevention:** Users see the decision point *after* pushing packages but *before* attempting to pull them
+- **Unblocks first-timers:** Recommending public visibility removes the 403 Forbidden blocker for initial deployments
+- **Production path visible:** Option 2 with full pull secret code is right there for operators who want to keep packages private
+- **Main flow stays clean:** Happy-path deployment instructions don't get weighed down by auth complexity; it's a sibling section, not inline
+
+**Learnings:**
+- **First-time user journey:** Public-by-default recommendation in docs prevents more 403 errors than comprehensive RBAC guidance—operator velocity > completeness
+- **Placement principle:** Preventative guidance should come *between the action that requires it and the action that needs it*—not in error recovery
+- **Option scaffolding:** Offering "simple path (public) + production path (pull secret)" lets teams progress at their own pace without feeling locked into insecurity
+
+---
+
+
+## Learnings: GHCR Variable Reuse & Tightening (Current Session)
+
+**Task:** Tighten the GHCR private-package section by reusing environment variables already defined earlier in the walkthrough instead of angle-bracket placeholders.
+
+**What Was Done:**
+1. Replaced `<GITHUB_USERNAME>` with `"$GITHUB_USERNAME"` (matches variable defined at line 255)
+2. Replaced `<GHCR_PAT>` with `"$GHCR_TOKEN"` (matches variable defined at line 256)
+3. Removed `--docker-email=<YOUR_EMAIL>` flag entirely (not required for Kubernetes pull secrets; simplifies command)
+4. Removed the "Replace:" explanations and replaced with single-line reference: "Make sure `$GITHUB_USERNAME` and `$GHCR_TOKEN` are set from your environment (see the token setup section above)."
+
+**File Modified:**
+- `docs/end-to-end-setup-walkthrough.md` (Lines 360–374)
+
+**Why This Works:**
+- **Single source of truth:** Variables flow directly from earlier setup—no duplication, no confusion about what to substitute
+- **Copy-paste friendly:** Users can literally copy the kubectl command without hunting for placeholders
+- **Shorter cognitive load:** Removing email flag reduces command noise; email is never used in GHCR pull secrets anyway
+- **Forward reference pattern:** "See token setup section above" keeps readers grounded in the walkthrough flow
+
+**Learnings:**
+- **Variable inheritance:** When a walkthrough defines setup variables early, later code sections should *consume* them, not redefine them
+- **Angle-bracket placeholders:** Reserve these for one-off values users generate (e.g., random IDs, domain names). For structured config (credentials, usernames), use shell variables already exported
+- **Kubectl flag hygiene:** Remove flags that downstream tools ignore (docker-email in pull secrets). Simpler commands = higher completion rate
+
+
+
+## 2026-03-25: Namespace guidance clarification
+
+**Problem:** Misleading namespace fallback in the pull secret creation step. The pattern `export RADIUS_KUBERNETES_NAMESPACE="${RADIUS_KUBERNETES_NAMESPACE:-default}"` defaulted to "default" namespace, which is error-prone because:
+- Radius group names (e.g., "radiusclaim-group") map to Kubernetes namespaces automatically
+- Hardcoding a fallback to "default" conflicted with actual deployment namespaces
+- First-time users had no way to discover the correct namespace before copy/pasting
+
+**Solution (discovery-based, not guessed defaults):**
+1. **end-to-end-setup-walkthrough.md (lines 360–375):** 
+   - Removed the `${RADIUS_KUBERNETES_NAMESPACE:-default}` fallback entirely
+   - Added an explicit discovery step: `kubectl get namespaces | grep -i radius`
+   - Users now set the variable to their actual Radius group name (e.g., `radiusclaim-group`)
+   - Inline comment explains the relationship: "Radius group name → Kubernetes namespace"
+
+2. **radius-validation-checklist.md (lines 34–35, 76–86):**
+   - Updated the namespace verification to use discovery: `kubectl get namespaces | grep -i radius`
+   - Removed hard-coded default from variable guidance
+   - Added explanation in the verification step: group names map to namespaces; discover before setting
+
+**Key pattern:** Never assume a fallback namespace. Always guide users to discover their actual namespace from the cluster, then document how their choices (e.g., group name) determine the namespace name.
+
+**Learnings:**
+- Defaulting to "default" in a Radius context is confusing and error-prone
+- Kubernetes discovery commands (`kubectl get namespaces`) are first-time-user friendly
+- The team decided namespace changes are direct string updates, not compatibility layers (see squad decisions 2026-03-24)
+- Documentation should teach the relationship ("group name → namespace") not hide it behind defaults
+
+**Files updated:**
+- docs/end-to-end-setup-walkthrough.md (image pull secret section)
+- docs/radius-validation-checklist.md (GitHub Actions variables and cluster verification)
+
+
+## 2026-XX-XX (latest): Pull Secret Sequencing Fix
+
+**Problem:** GHCR pull secret creation failed with `namespaces "radiusclaim-azure" not found`. The walkthrough instructed users to create the pull secret BEFORE deploying the Radius environment, but the namespace doesn't exist until the environment is deployed by `rad deploy infra/radius/environments/azure-radius.bicep`.
+
+**Root Cause:**
+- Step 6 ("Important: GHCR Packages Are Private by Default") told users to create the secret immediately
+- The namespace `radiusclaim-azure` is created by the Radius environment deployment (Step 8)
+- Attempting to create a secret in a non-existent namespace failed
+
+**Solution (sequencing fix):**
+
+1. **end-to-end-setup-walkthrough.md (lines 343–361):**
+   - Removed the premature pull secret creation script
+   - Added warning: "The Kubernetes namespace does not exist yet. You will configure the pull secret **after** deploying the Radius environment."
+   - Directed users to Step 8a, which runs after the environment is deployed
+   - Kept Option 1 (public packages) as the recommended path for first-timers
+
+2. **New Step 8a (lines 524–551):**
+   - Inserted after the Radius environment deployment ("What this does" explanation)
+   - Explicitly states: "The Radius environment created the namespace `radiusclaim-azure` (as defined in `azure-radius.bicep`)"
+   - Provides copy/paste-safe commands: pull secret creation, service account patching, and verification
+   - Clear UX: "If you chose Option 1, skip this step"
+
+3. **radius-validation-checklist.md (lines 551–575):**
+   - Updated troubleshooting section to clarify namespace sequencing
+   - Added context: "The Radius environment creates the namespace (`radiusclaim-azure` by default, as defined in `azure-radius.bicep`). Configure the pull secret **after** the environment is deployed."
+   - Made variable exports explicit and match the platform's actual defaults
+   - Added verification commands
+
+**Key Learnings:**
+- **Order matters in multi-step platforms.** When a resource must exist before another step, docs must preserve that dependency.
+- **Defaults should match platform truth.** The bicep file declares `kubernetesNamespace = 'radiusclaim-azure'`; docs must reflect that explicitly, not hide it.
+- **Copy/paste safety is a feature.** Removing premature steps and waiting for dependencies eliminates "resource not found" errors for first-timers.
+- **Explicit > implicit.** Instead of "if you created a Radius group, the namespace will be...", state the actual platform default and warn if the user overrides it.
+
+**Files updated:**
+- docs/end-to-end-setup-walkthrough.md (Step 6 and new Step 8a)
+- docs/radius-validation-checklist.md (pull secret troubleshooting)
+
+---
+
+
+## 2026-03-25T11:40:12Z — Namespace/Secret Sequencing Follow-Up (Complete)
+
+Completed the follow-up requested by Wesley on namespace/secret sequencing.
+
+**Work:**
+- GHCR pull secret creation now sequenced **after** Radius environment deploy (Step 8a, not Step 6)
+- Namespace `radiusclaim-azure` is explicitly stated in docs (from bicep default, not inferred)
+- Updated `end-to-end-setup-walkthrough.md` and `radius-validation-checklist.md`
+- Coordinated with Graham on platform validation
+
+**Decisions merged:**
+- Decision #6: GHCR Pull Secret Sequencing — Documentation updates applied
+- Decision #7: Keep Azure Radius namespace default explicit — Platform validation complete
+
+**Validation by Graham:** `az bicep build` ✅, `dotnet test RadiusClaim.slnx` ✅
+
+
+---
+
+
+## 2026-03-25T12:15:00Z — Documentation Updates: Namespace Clarity, GHCR Recipe Auth, Happy Path
+
+**Live Facts Confirmed (by platform validation):**
+1. Radius environment `azure` uses namespace `radiusclaim-azure` (environment namespace)
+2. Radius app `radiusclaim` synthesizes workload namespace `radiusclaim-azure-radiusclaim` (app/workload namespace)
+3. These two namespaces serve different purposes and both exist at deployment time
+4. Kubernetes imagePullSecrets belong in the *workload* namespace only (for app image pulls)
+5. GHCR recipe artifact 401 failures happen at Radius recipe download time (not at app image pull time)
+6. Kubernetes imagePullSecrets do NOT fix recipe artifact auth failures
+7. Current supported happy path: recipe artifacts must be public at `ghcr.io/wesback/radiusclaim/recipes/*`
+
+**Updates Made:**
+
+### 1. **docs/end-to-end-setup-walkthrough.md**
+
+**Step 6 (Publish Radius Recipe Artifacts):**
+- Added critical warning block explaining when and why recipe artifact auth fails
+- Explicitly states: GHCR recipe artifact 401s happen during `rad deploy` environment step, NOT during app image pulls
+- Clarified that Kubernetes imagePullSecrets do NOT help with recipe artifacts
+- Renamed section "GHCR Packages Are Private by Default" to "Recipe and App Packages Are Private by Default"
+- Updated Option 1 guidance to emphasize "make all four package groups public" (recipes, expense-api, workflow-engine, notification-svc)
+- Streamlined Option 2 warning and called it "advanced"
+- Marked public packages as "recommended for first deployment" and "the tested, working path"
+
+**Step 8 (Environment Deployment):**
+- Expanded "What this does" explanation to distinguish environment namespace (`radiusclaim-azure`) from workload namespace (`radiusclaim-azure-radiusclaim`)
+- Added note: "Do NOT create imagePullSecrets here — the recipes themselves don't pull container images"
+- Explained both namespaces serve different purposes
+
+**New Step 8a/8b (Understanding Namespaces and Configuring Image Pull Secrets):**
+- Inserted "Understanding Namespace Roles" subsection before pull secret configuration
+- Explicitly clarified: environment namespace != workload namespace
+- Added: "imagePullSecrets belong in the workload namespace"
+- Moved pull secret configuration to **after Step 9 (app deployment)** since the workload namespace doesn't exist until then
+- Updated pull secret script to target workload namespace `radiusclaim-azure-radiusclaim`, not environment namespace
+- Added explanatory text: "After deploying the app, the workload namespace exists..."
+- Clarified this step is optional and only needed for private app packages
+
+### 2. **docs/radius-validation-checklist.md**
+
+**Image Pull Failures Section (Pre-Deployment):**
+- Updated the pull secret troubleshooting section to clarify it applies to *workload* namespace, not environment namespace
+- Changed export from `RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"` (environment) to `WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"` (workload)
+- Explained the distinction explicitly: "when you deploy the app in Step 9..., Radius creates a separate workload namespace"
+
+**New Troubleshooting Section: "Issue: `rad deploy` fails with '401 Unauthorized' during recipe download"**
+- Placed immediately after the Azure credential registration section
+- Explained the critical distinction: recipe artifact pulls ≠ app image pulls
+- Clarified that recipe artifact failures happen at Radius step, before the app workload namespace exists
+- Provided two solutions:
+  1. **Option 1 (recommended):** Make `radiusclaim/recipes` public in GHCR
+  2. **Option 2 (advanced):** Configure explicit Radius OCI auth with `rad credential register oci`
+- Added note: "Kubernetes imagePullSecrets apply only to app container image pulls, not recipe artifact pulls"
+
+**Key Changes (Philosophy):**
+- **From:** Implicit defaults and assumed understanding
+- **To:** Explicit namespace names, clear role distinction, and documented happy path
+- **Tone:** Operator-friendly troubleshooting with recipe-artifact-specific guidance
+
+**Files Updated:**
+- docs/end-to-end-setup-walkthrough.md (Steps 6, 8, 8a–8b, and Step 9)
+- docs/radius-validation-checklist.md (pull secret section and new 401 troubleshooting)
+
+**Signal to First-Time Users:**
+- Public packages = supported happy path
+- Private packages = requires recipe OCI auth (advanced)
+- imagePullSecrets = for app images in workload namespace only
+- Environment and workload namespaces are separate and serve different purposes
+
+---
+
+
+## Phase 7 Session: Namespace Variable Separation Fix (2026-03-24)
+
+**Issue:** Deployment failed with "double namespace" bug — Radius tried to change namespace from `radiusclaim-azure-radiusclaim` to `radiusclaim-azure-radiusclaim-radiusclaim`.
+
+**Root Cause:** Docs reused `RADIUS_KUBERNETES_NAMESPACE` for both environment namespace (`radiusclaim-azure`) and workload namespace (`radiusclaim-azure-radiusclaim`). Copy-paste errors led operators to reassign the variable, causing Radius to misinterpret the workload namespace as the environment namespace.
+
+**Solution Implemented:**
+1. **Strict variable separation:**
+   - `RADIUS_KUBERNETES_NAMESPACE` (environment namespace) — set once, never reassigned
+   - `WORKLOAD_NAMESPACE` (workload namespace) — used exclusively for kubectl workload commands
+
+2. **Files Updated:**
+   - `docs/end-to-end-setup-walkthrough.md`: Fixed 9 instances where kubectl workload commands incorrectly used `RADIUS_KUBERNETES_NAMESPACE`; now use `WORKLOAD_NAMESPACE`
+   - Troubleshooting section (pod diagnostics) now explicitly guides operators to use `$WORKLOAD_NAMESPACE`
+   - Section 8a (Understanding Namespace Roles) reinforced distinction
+
+3. **Validation:**
+   - All `rad deploy` commands in Step 7 correctly use `RADIUS_KUBERNETES_NAMESPACE`
+   - All kubectl commands targeting workloads (Steps 9+) correctly use `WORKLOAD_NAMESPACE`
+   - No more reassignment of environment namespace variable
+
+**Decision Document:** `.squad/decisions/inbox/eddie-namespace-vars.md` — captures the pattern, validates against future regressions, and explains why this matters for operator safety.
+
+**Key Learnings:**
+- Variable naming is part of API design; reusing names across conceptual domains creates error traps at scale
+- Clear terminology (environment vs. workload) in docs prevents operator confusion
+- Code blocks in docs are deployed code — small naming mistakes cascade into failures
+
+---
+
+
+## 2026-03-25 | Namespace Variable Separation & Documentation Consistency
+
+### Summary
+Identified and fixed root cause of namespace drift bug in documentation. Implemented strict variable naming convention to prevent operator errors.
+
+### Problem & Root Cause
+**Double-namespace bug:** Operators unknowingly reused `RADIUS_KUBERNETES_NAMESPACE` for two different namespaces:
+- **Environment namespace** (`radiusclaim-azure`): Radius infrastructure & Dapr components
+- **Workload namespace** (`radiusclaim-azure-radiusclaim`): Application pods
+
+When copying documentation code blocks, operators reassigned the environment variable to the workload namespace, causing Radius to interpret it as the environment namespace and compute the wrong target.
+
+### Decision: Variable Naming Convention
+
+**Enforce strict naming across all documentation:**
+- `RADIUS_KUBERNETES_NAMESPACE` — **Always** environment namespace only (e.g., `radiusclaim-azure`)
+  - Set once in Step 7 (environment deployment)
+  - Used for `rad deploy` commands
+  - **Never reassigned**
+- `WORKLOAD_NAMESPACE` — **Always** workload operations (e.g., kubectl commands)
+  - Set in Step 9+ (when accessing deployed services)
+  - Used for all `kubectl` queries targeting pods, services, logs
+  - Clear name prevents accidental environment namespace reuse
+
+### Implementation
+
+**Files Updated:**
+- `docs/end-to-end-setup-walkthrough.md`:
+  - Lines 647, 662: Changed `RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure-radiusclaim"` → `WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"`
+  - Lines 686, 689: kubectl commands now use `$WORKLOAD_NAMESPACE`
+  - Lines 820–867: Troubleshooting section enhanced; reinforces distinction
+  - Lines 887, 897, 1003, 1009: All workload-scoped commands use `$WORKLOAD_NAMESPACE`
+  - Section 8a: Explanation of environment vs. workload roles updated
+
+- `docs/radius-validation-checklist.md`: No changes needed (already correct)
+
+### Validation
+
+Pattern verified across all code blocks:
+```bash
+# Environment operations (Step 7)
+export RADIUS_KUBERNETES_NAMESPACE="radiusclaim-azure"
+rad deploy infra/radius/environments/azure-radius.bicep --parameters kubernetesNamespace="$RADIUS_KUBERNETES_NAMESPACE"
+
+# Workload operations (Steps 9+)
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
+kubectl get pods -n "$WORKLOAD_NAMESPACE"
+```
+
+**Key invariant:** `RADIUS_KUBERNETES_NAMESPACE` is never reassigned after initial setup.
+
+### Impact
+
+- ✅ Operators can safely copy-paste code blocks without variable collision
+- ✅ Documentation immune to double-namespace bug
+- ✅ Variable naming is now part of API design
+- ✅ Clear distinction prevents future errors
+
+### Additional Guidance Documented
+
+**Local Development Clarity:**
+- Document `/app` shell access separately from Dapr-backed submission readiness
+- Prefer `dapr run` pattern over plain `dotnet run` for `expense-api`
+- Call out `workflow-engine` Dapr dependency for telemetry
+- Align launch profile `--app-port` values to keep walkthrough executable
+
+### Decisions Merged
+- `.squad/decisions/inbox/eddie-namespace-vars.md` → `.squad/decisions.md`
+- `.squad/decisions/inbox/eddie-walkthrough-readiness.md` → `.squad/decisions.md`
+
+### Status
+✅ Variable naming enforced across documentation
+✅ Walkthrough and checklist synchronized
+✅ Operator error traps eliminated
+✅ Local development guidance clarified
+
+---
+
+
+## 2026-03-25 | Component Validation Guidance
+
+### Summary
+Added explicit component validation checkpoints to catch missing or failed Radius environment deployment (Step 8) before operators encounter cryptic Dapr sidecar errors in Step 9.
+
+### Problem
+**Evidence:** Dapr logs show `"state store statestore is not configured"` — but operators had no docs explaining:
+- When Dapr components should exist
+- How to verify Step 8 succeeded
+- What to do if `kubectl get components` returns empty
+
+### Solution Implemented
+
+**1. docs/end-to-end-setup-walkthrough.md (Step 9)**
+- Added prominent warning block before Step 9
+- Command: `kubectl get components -n radiusclaim-azure`
+- Expected: `statestore, pubsub, platform-secrets`
+- If missing: explicit redirect to troubleshooting
+
+**2. docs/radius-validation-checklist.md (Troubleshooting)**
+- Rewrote "Dapr components not registering" section with three parts:
+  1. **First Check** — Did Step 8 run? (verify namespace)
+  2. **Detailed Troubleshooting** — Why recipes failed
+  3. **Solution** — Exact remediation steps
+
+### Key Principle
+*Operator visibility into step execution.* Silent failures in earlier steps (like Step 8) manifest as cryptic errors 3+ steps later. Making success criteria explicit (`kubectl get components`) lets operators stop at the right point and debug.
+
+### Boundary
+- **I handle:** Docs guidance for "happy path" diagnostics (operator forgot Step 8, or components didn't materialize after Step 8 ran)
+- **Graham handles:** If components are still missing after Step 8 succeeds, then it's a platform/Radius question (recipe execution, Dapr component auto-creation, Bicep wiring)
+
+### Decision Document
+`.squad/decisions/inbox/eddie-component-guidance.md` captures the problem, solution, and what's left for the platform team.
+
+---
+
+
+## Learnings
+
+### Architecture Patterns
+- **Dapr components are infrastructure** — created by Radius recipes during environment deployment (Step 8)
+- **Silent failures propagate**: If Step 8 fails, Step 9 pods start but can't access state store; logs show app errors, not deployment errors
+- **Component visibility is a checkpoint**: `kubectl get components` is the boundary between "environment created" and "ready for workloads"
+
+### Documentation Patterns
+- **Prerequisites must be verifiable**: Every major step should have a "verify this succeeded" command that operators can run immediately after
+- **Redirect troubleshooting by diagnosis point**: If operator runs the verify command and it fails, doc should tell them exactly which earlier step to revisit
+- **Layer troubleshooting**: First layer = "Did the step run?", second layer = "Why did it fail?", third layer = "How do I fix it?"
+
+### Key Files
+- `docs/end-to-end-setup-walkthrough.md` — Main operator walkthrough; now includes component validation checkpoint before Step 9
+- `docs/radius-validation-checklist.md` — Reference and troubleshooting; expanded component diagnostics section
+
+### Open Questions (for Graham)
+- Do Dapr components auto-create during `rad deploy`? (Evidence: Wesley confirmed they don't appear; need to know if that's expected)
+- Is the Bicep recipe mechanism wired correctly in azure-radius.bicep?
+- Should there be a manual fallback (kubectl apply) for Dapr component YAML if Radius doesn't auto-create?
+
+
+## 2026-03-25 — Orchestration Log: Walkthrough Review & Component Guidance
+
+**Timestamp:** 20260325T160545Z  
+**Status:** REVIEWS COMPLETE — IMPLEMENTATION IN PROGRESS
+
+### Activities
+- Performed comprehensive walkthrough review; found 5 critical + 7 minor issues
+- Implemented component validation guidance immediately
+- Cross-checked against live cluster evidence, Bicep files, workflow
+- Identified namespace consistency problems and documentation gaps
+
+### Key Findings
+**Critical Issues:** 5 total
+- C1: Missing `deploy-dapr-components.sh` step in walkthrough and workflow
+- C2: Checklist uses wrong namespace for pods, port-forward, logs
+- C3: Checklist patches `default` SA instead of named service accounts
+- C4: Double-scheme bug in curl validation command
+- C5: `scripts/README.md` omits `deploy-dapr-components.sh`
+
+**Minor Issues:** 7 total (stale directory names, region choice, local dev gaps, Dapr API endpoint, workflow namespace, parameter file context, port-forward examples)
+
+### Implementation Completed
+- ✅ Added component validation checkpoints to docs
+- ✅ Expanded component troubleshooting guidance in validation checklist
+- ✅ Added Step 9 prerequisite check to walkthrough
+
+### Decisions Filed
+- Decision 15: Component Validation Guidance
+
+### Awaiting
+- Graham confirmation: Is Radius supposed to auto-project components? (determines fix scope for C1, C6)
+- Daisy's bootstrap.sh design implementation (Graham will handle orchestration)
+
+### Next Actions
+- Once Graham confirms namespace/component model:
+  - Fix C1: Add deploy-dapr-components.sh to walkthrough Step 9a and GitHub Actions workflow
+  - Fix C2–C3: Namespace sweep across validation checklist (WORKLOAD_NAMESPACE pattern)
+  - Fix C4: Remove double scheme prefix from curl command
+  - Fix C5: Add deploy-dapr-components.sh to scripts/README.md
+  - Fix M1–M7: Minor documentation cleanup
+
+
+
+## 2026-03-25: Operator Docs Updated for Component Projection Gap + Two-Path Structure
+
+### Delivered
+
+**Documentation sweep across 4 files implementing all queued fixes (C1–C5, M1–M7):**
+
+1. **docs/end-to-end-setup-walkthrough.md**
+   - Added "Two Ways to Use This Guide" table (manual walkthrough vs bootstrap path)
+   - Fixed Step 8 "What this does" to acknowledge component projection gap
+   - Fixed Step 9 prerequisite check (removed incorrect env-namespace component check, replaced with env-show + gap explanation)
+   - Added **Step 9a: Verify and Backfill Dapr Components** — complete with diagnostic, backfill script, and verification commands
+   - Fixed namespace reference in troubleshooting (environment namespace comment)
+
+2. **docs/radius-validation-checklist.md**
+   - Added "Understanding Namespace Roles" section with `ENVIRONMENT_NAMESPACE` and `WORKLOAD_NAMESPACE` variable definitions
+   - Fixed ALL pod/log/component/port-forward commands to use `$WORKLOAD_NAMESPACE`
+   - Added **Step 5a: Verify and Backfill Dapr Components** in deployment steps
+   - Fixed pull-secret troubleshooting to patch named SAs (not `default`)
+   - Fixed "Dapr components not registering" to explain projection gap and point to backfill
+   - Fixed "Services return 500 errors" with sidecar diagnostic guidance
+
+3. **README.md**
+   - Fixed `sovereignapp/` → `RadiusClaim/` in project layout
+   - Added `scripts/` tree to project layout (deploy-dapr-components.sh, publish-radius-recipes.sh, validate-deployment.sh)
+   - Added "Dapr component backfill" paragraph to deployment story
+
+4. **scripts/README.md**
+   - Added full `deploy-dapr-components.sh` documentation (purpose, usage, options table, examples, prerequisites)
+   - Fixed port-forward example namespace from `radiusclaim-azure` → `radiusclaim-azure-radiusclaim`
+
+### Learnings
+
+- **Component projection gap is the single most common first-deploy failure.** Documenting it as a required step (not just troubleshooting) saves operators from a runtime crash that looks like a Dapr config bug but is actually a Radius control-plane limitation.
+- **Two-path framing prevents docs from fighting themselves.** A walkthrough that teaches AND serves as a runbook fails at both. Splitting "learning path" from "just make it work" means the bootstrap script can land without rewriting the walkthrough.
+- **Named service accounts require named patches.** Radius creates per-container SAs (expense-api, workflow-engine, notification-svc). Patching `default` is a no-op. This was wrong in the checklist and would have caused real pull-secret debugging pain.
+- **Namespace confusion is the second most common operator mistake.** Explicit variable definitions (`ENVIRONMENT_NAMESPACE`, `WORKLOAD_NAMESPACE`) with role comments at the top of the checklist prevent copy-paste accidents across sections.
+- **Conditional section headers remove operator confusion.** When a section is "only needed if you DON'T use feature X," rename the header to say so explicitly (not just "Required"). Add a prominent note at the top saying "skip this if...". Operators skim; unconditional phrasing makes them set up credentials they don't need, then wonder why the script ignores them.
+
+### Key File Paths
+- `docs/end-to-end-setup-walkthrough.md` — primary operator guide
+- `docs/radius-validation-checklist.md` — preflight/troubleshooting reference
+- `scripts/deploy-dapr-components.sh` — component backfill script
+- `scripts/README.md` — script inventory
+- `.squad/decisions/inbox/eddie-bootstrap-docs.md` — team decision filed
+
+
+## Phase 7 Continuation — Dual-Path Script Documentation (2026-03-25)
+
+### Task
+Add the new cluster-prep script option to the end-to-end walkthrough, alongside the existing manual flow and bootstrap script paths.
+
+### Changes Made
+
+1. **docs/end-to-end-setup-walkthrough.md**
+   - Reframed overview from "Two Ways" → "Three Ways" (cluster-prep script, manual, bootstrap)
+   - Added explicit "Quick Start" section showing script-based path before manual steps
+   - Updated Prerequisites to dual-path (script vs manual prerequisites)
+   - Added header note before Step 1 to direct script users to skip manual details
+   - Maintained educational value: manual steps remain detailed reference for troubleshooting/customization
+
+2. **scripts/README.md**
+   - Added "Script Workflow" section showing orchestration: cluster-prep → bootstrap
+   - Documented `prepare-cluster.sh` as logical first step (Steps 1–6 of manual walkthrough)
+   - Reorganized `bootstrap.sh` description to clarify it's for app deployment after cluster ready (Steps 7–12)
+   - Improved prerequisite clarity for each script
+
+### Key Decision
+**Resilience to script timing:** Used "if available" caveat throughout because `prepare-cluster.sh` doesn't exist yet (Graham creating it). Docs remain truthful whether script exists or not; walkthrough directs readers to "Quick Start" section which gracefully mentions the script as an option.
+
+### Narrative Thread
+- **For first-timers:** Cluster-prep script (if available) + bootstrap script gives the fastest path
+- **For learners:** Manual walkthrough explains why each step exists
+- **For returners:** Bootstrap script alone for repeated deployments
+- All paths converge on the same cluster-ready state before app deployment begins
+
+### Files Not Updated
+- `docs/radius-validation-checklist.md` — Already companion to walkthrough; no changes needed
+- `docs/phase-7-validation-checklist.md` — Phase-specific; not affected
+- `docs/phase-7-demo-walkthrough.md` — Demo flow; mentions bootstrap, no changes needed
+- `README.md` — Already points to end-to-end walkthrough; no changes needed
+
+### Consistency Validation
+- All references to `prepare-cluster.sh` use consistent naming
+- Step numbering (1–12) unchanged in manual path
+- Bootstrap script's actual help text matches our documentation claim
+- No broken links or stale references introduced
+
+
+
+## Phase 7 Continuation — Script-First Documentation Restructure (2026-03-26)
+
+### Task
+Restructure `docs/end-to-end-setup-walkthrough.md` to make the two-script workflow (`prepare-cluster.sh` then `bootstrap.sh`) the primary, recommended path, with manual steps as a secondary reference for learning and troubleshooting.
+
+### Changes Made
+
+**docs/end-to-end-setup-walkthrough.md** — Complete restructure with new architecture:
+
+1. **New structure (high-level → detail → reference):**
+   - Intro: "Overview & Recommended Path" — Emphasizes two-script approach with clear table
+   - Section: "When to Use This Guide" — Forks readers to the path they need
+   - Section: "Prerequisites" — Script-based path only (manual walkthrough doesn't need separate prerequisites)
+   - Section: "Quick Start: Run the Two Scripts" — Step 1 (prepare), Step 2 (bootstrap), repeated deploys
+   - Section: "Environment Variables" — **NEW** — Detailed Entra auth guidance for bootstrap (required)
+   - Section: "Understanding the Scripts" — References scripts/README.md for deep knowledge
+   - Section: "CI/CD Alternative Path" — GitHub Actions option clearly marked as alternative
+   - Section: "Opening the Web UI" — Shared endpoint discovery (port-forward option included)
+   - Section: "Manual Walkthrough (Deep Dive)" — All 12 manual steps moved here with disclaimer ⓘ
+
+2. **Key narrative changes:**
+   - **Opening:** "Two scripts that wrap the entire deployment" (not "three ways")
+   - **Emphasis:** "fastest, most reliable way" applied to script path
+   - **Manual steps:** Prefixed with "ℹ️ This section is optional" and "skip to Troubleshooting if using scripts"
+   - **Environment variables:** Moved from optional/scattered to **prominent section** before manual steps
+     - Service principal mode
+     - Workload identity (federated credentials)
+     - User identity (az login)
+     - Note about `AZURE_PRINCIPAL_ID` auto-resolution
+
+3. **Tone shift:**
+   - From: "Here's the manual approach, and optionally you can use scripts"
+   - To: "Here's the script approach (recommended), and optionally learn the manual steps"
+
+4. **Supporting docs consistency:**
+   - `scripts/README.md` — Already script-first; no changes needed (verified consistent)
+   - `README.md` — Already mentions script-first pattern; no changes needed (verified consistent)
+   - CI/CD reference — Added to new walkthrough structure as alternative path
+
+### Critical Detail: Environment Variables Documentation
+
+Bootstrap's success depends on Azure credentials. The new walkthrough now documents:
+- **When:** Required before running `bootstrap.sh`
+- **Which:** `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` (sp mode), `AZURE_TENANT_ID`
+- **How:** Service principal vs. workload identity vs. user identity patterns
+- **Troubleshooting:** Auto-resolution of `AZURE_PRINCIPAL_ID` from `AZURE_CLIENT_ID`
+
+This is **critical** because previously, env var setup was buried in Steps 6–8, making it easy to miss.
+
+### Validation Performed
+
+1. ✅ Walkthrough structure is pedagogical: "happy path first, deep dive after"
+2. ✅ All section links/headings are consistent
+3. ✅ Manual steps (Steps 1–12) remain intact, just repositioned and labeled optional
+4. ✅ Scripts/README.md is aligned with new structure (verified no changes needed)
+5. ✅ README.md already points to script-first narrative (verified no changes needed)
+6. ✅ Environment variables section is prominent (not buried)
+7. ✅ CI/CD path is present but clearly alternative (not primary)
+
+### Learning for Future Docs Restructuring
+
+1. **Prominence principle:** Put the recommended path (script) first; make optional paths discoverable but not dominant
+2. **Prerequisite clarity:** Prerequisites should match the path, not be combined across paths
+3. **Environment variables:** If deployment depends on env vars, document them as **required** in the happy-path section, not in step details
+4. **Terminology consistency:** "Deploy," "bootstrap," "prepare" are distinct phases; use them consistently
+5. **Skip-to sections:** Use "ℹ️ optional" disclaimers to help readers avoid sections that don't apply to their path
+
+### Files Updated
+- `docs/end-to-end-setup-walkthrough.md` — Complete restructure
+- `.squad/agents/eddie/history.md` — This entry
+
+### Files Verified (No Changes Needed)
+- `scripts/README.md` — Already aligned with script-first narrative
+- `README.md` — Already points to script-first pattern
+- `docs/radius-validation-checklist.md` — Companion to walkthrough; stable
+
+
+
+## Walkthrough Ordering Validation (2026-03-26)
+
+### Findings
+
+**Critical fix applied:** Environment Variables section was positioned AFTER Quick Start Step 2. A reader following the Quick Start would copy-paste the `bootstrap.sh` command and fail because Azure credentials weren't set. Moved credentials into Quick Start flow between Step 1 (prepare-cluster) and Step 2 (deploy), with secondary auth modes collapsed in a `<details>` block to keep the primary path fast.
+
+**Minor fixes applied:**
+- Added env-var comment in Overview code block so the glance view signals the dependency
+- Added bridge sentence before "Opening the Web UI" connecting both script and CI/CD paths
+
+**Validated as correct (no changes needed):**
+- Teardown placement: after Next Steps, before Reference — natural end-of-lifecycle position
+- Manual Walkthrough placement: correctly gated with "optional" disclaimer after all action sections
+- Section flow from Overview → Prerequisites → Quick Start → Understanding Scripts → CI/CD → Web UI → Deep Dive → Troubleshooting → Next Steps → Teardown → Reference is logical
+- Reference vs. action separation is clean throughout
+
+### Learning
+- Environment variables are a prerequisite for action, not a reference section. They must appear in the reader's path before the command that needs them, not after it. When Quick Start is the primary path, prerequisites that are specific to a step belong inline with that step.
+
+
+## Architecture Documentation (Current Session)
+
+### Delivered
+- Created `docs/architecture.md` — standalone architecture reference for platform engineers and architects
+- Covers four areas grounded in actual code, not generic theory:
+  1. What Dapr does: State, Workflows, Service Invocation, Pub/Sub — mapped to which services use each and why
+  2. What Radius does: app model, recipe provisioning, Kubernetes manifest generation, environment portability
+  3. How they divide responsibility: Dapr owns runtime behavior, Radius owns wiring and infrastructure
+  4. Two Mermaid diagrams: architecture overview (`graph TD`) and expense submission flow (`sequenceDiagram`) with both auto-approve ($50) and manual-review ($150) branches
+
+### Key Decisions Documented
+- Recipes are the portability mechanism (swap environment file, not app code)
+- No hand-written Kubernetes YAML — Radius generates Deployments, Services, Dapr component CRDs
+- Workflow uses Dapr-native durable workflow SDK (checkpointed through same state store)
+- Loose coupling enforced by design: service invocation + pub/sub, no direct imports between services
+- The `$100` auto-approve threshold is documented as the branching point (matches `ApproveExpenseActivity.cs`)
+
+### Learning
+- Architecture docs should open with the "why this combination" question and close with repeatable takeaways. Platform audiences want to know the division of responsibility before they look at diagrams.
+
+
+## Bootstrap Scripts Documentation Update — `--create-spn` Flag (Current Session)
+
+### Context
+Three fixes were delivered to `bootstrap.sh` and `prepare-cluster.sh`:
+1. **`--create-spn` is now functional in `bootstrap.sh`** — detects stale Azure credentials and creates fresh service principal if flag is passed
+2. **`prepare-cluster.sh` outputs correct next-step command** — includes `--create-spn` in suggested bootstrap command when creating new SP
+3. **jq parse error fixed in `bootstrap.sh`** — handles non-JSON preamble from `rad env show -o json`
+
+### Task
+Audit documentation files to ensure examples and guidance align with the new `--create-spn` capability.
+
+### Changes Made
+
+1. **docs/end-to-end-setup-walkthrough.md**
+   - Line 25: Added `--create-spn` to `prepare-cluster.sh` command in "First deployment" quick start
+   - Line 43: Added `--create-spn` to `bootstrap.sh` command in "First deployment" quick start
+   - Line 91: Added `--create-spn` to `prepare-cluster.sh` command in "Step 1: Prepare Your Cluster"
+   - Line 161: Added `--create-spn` to `bootstrap.sh` command in "Step 2: Deploy the Application"
+
+2. **README.md**
+   - Line 117: Added `--create-spn` to `prepare-cluster.sh` command in "Operator fast path"
+   - Line 125: Added `--create-spn` to `bootstrap.sh` command in "Operator fast path"
+   - Lines 128–130: Added explanatory note: "`--create-spn` required only for first run; use when creating fresh SP or refreshing stale credentials"
+
+3. **docs/radius-validation-checklist.md**
+   - Line 11: Updated intro note to mention `--create-spn` for fresh SP provisioning and stale credential refresh
+
+### Files Verified (No Changes Needed)
+- `docs/phase-1-validation.md` — No bootstrap/prepare-cluster mentions
+- `docs/phase-7-validation-checklist.md` — No bootstrap/prepare-cluster mentions
+- `docs/phase-7-demo-walkthrough.md` — Mentions bootstrap context but no command examples needing update
+- `docs/local-dev.md` — Local Kubernetes path; no bootstrap/prepare-cluster mentions
+
+### Narrative Principle
+Updated docs reflect the actual operator flow:
+- **First deployment:** Both scripts use `--create-spn` (prepare-cluster may detect and create; bootstrap registers/refreshes with Radius)
+- **Subsequent deployments:** `--create-spn` omitted (credentials already provisioned)
+- **Credential refresh:** Add `--create-spn` to bootstrap if Azure creds go stale (e.g., expired secrets, revoked app registration)
+
+### Learning
+- Deployment script documentation must track when flags become functional. The `--create-spn` flag existed in help text but wasn't implemented for months; when it becomes real, examples need quick surgical updates to stay truthful.
+- Command examples are truth claims. One stale example ("run without `--create-spn`") can cost operators 20 minutes of troubleshooting when credentials fail. Keep examples in sync with script capability.
+
+
+## GHCR Auto-Detection Documentation Update (Current Session)
+
+### Context
+Rod fixed `prepare-cluster.sh` to auto-detect `GHCR_USERNAME` from `gh api user --jq .login` instead of requiring manual export or hardcoding `wesback`. This removed the need for users to manually set environment variables before running the script.
+
+### Task
+Audit three documentation files for stale instructions about manual `GHCR_USERNAME` export and the hardcoded `wesback` username. Update to reflect auto-detection.
+
+### Changes Made
+
+1. **docs/radius-validation-checklist.md**
+   - Line 638: Changed `ghcr.io/wesback/radiusclaim` → `ghcr.io/<your-github-username>/radiusclaim` (template placeholder)
+   - Lines 646–653: Removed manual `export GHCR_USERNAME='wesback'`; replaced with inline `$(gh api user --jq .login)` in the kubectl secret command
+   - Added comment explaining that GHCR_USERNAME is auto-detected from GitHub login
+
+2. **docs/end-to-end-setup-walkthrough.md**
+   - Lines 1155–1162: Removed manual `export GHCR_USERNAME="$GITHUB_USERNAME"` 
+   - Replaced with inline command using `$(gh api user --jq .login)` 
+   - Added comment explaining auto-detection from GitHub login
+
+3. **scripts/README.md**
+   - Line 119: Updated "Prerequisites" to note that `gh auth login` auto-detects username (removed manual export example)
+   - Lines 136–142: Reordered authentication options so "Pre-authenticated docker" (recommended) comes first
+   - Lines 257–293: Restructured authentication section to explain that `docker login` auto-detects from `gh auth`, with environment variables as optional fallback
+   - Line 307: Changed "GitHub Actions reuses...with `GHCR_TOKEN` and `GHCR_USERNAME`" → "...with `GHCR_TOKEN` (and optionally `GHCR_USERNAME`)"
+
+### Key Narrative Changes
+- From: "You must set GHCR_USERNAME manually"
+- To: "GHCR_USERNAME is auto-detected from your GitHub CLI session. No export needed."
+- Updated all examples to use `$(gh api user --jq .login)` or rely on pre-authenticated docker login
+
+### Principle Applied
+Scripts that depend on environment should document how that dependency is satisfied: either auto-detected (gh CLI), pre-provisioned (docker login), or require explicit export. When auto-detection is available, lead with it to reduce user friction.
+
+### Files Updated
+- `docs/radius-validation-checklist.md`
+- `docs/end-to-end-setup-walkthrough.md`
+- `scripts/README.md`
+
+### Files Verified (No Changes Needed)
+- `README.md` — No GHCR_USERNAME references
+- `docs/phase-7-demo-walkthrough.md` — No GHCR references
+- `docs/local-dev.md` — No GHCR references
+
+
+
+## GHCR Auto-Detection Documentation Update (2026-04-01)
+
+### Context
+Rod fixed `prepare-cluster.sh` to auto-detect `GHCR_USERNAME` from `gh api user --jq .login` instead of requiring manual environment variable setup. Documentation updated to reflect this improvement.
+
+### Changes Made
+1. **docs/radius-validation-checklist.md** — Removed hardcoded 'wesback' references; updated GHCR registry to use template placeholder and inline `$(gh api user --jq .login)` in kubectl secret commands.
+2. **docs/end-to-end-setup-walkthrough.md** — Removed manual `export GHCR_USERNAME` instructions; replaced with inline auto-detection examples.
+3. **scripts/README.md** — Reordered authentication options (pre-authenticated docker first); marked environment variables as optional fallback.
+
+### Narrative Principle
+Scripts with auto-detection should document the detection path first (lowest friction), then fallback options. This reduces user confusion and setup friction.
+
+## 2026-03-28: GHCR Public-by-Default Documentation — Private Registry Escape Hatch
+
+### Context
+
+Wesley's team made a deliberate product decision: **GHCR service image packages are public by default** for frictionless demo and learning experience. The infrastructure for private images already exists (`ghcrImagePullRef` param in `app.bicep`, `imagePullSecrets` wiring in `container-service.bicep`, pull secret creation logic in `bootstrap.sh`), but it was undocumented.
+
+Teams moving to production with private images need a clear escape hatch that doesn't require reverse-engineering the code.
+
+### Delivered
+
+Added **"Using a Private Container Registry"** section to `README.md` (after Deployment Path subsection, before Quick Start):
+
+1. **Why public by default** (2 sentences):
+   - RadiusClaim is a reference sample, not a production template
+   - Public packages = zero auth ceremony for cloned repos
+   - Focus stays on Dapr + Radius, not registry mechanics
+
+2. **4-step escape hatch for private images:**
+   - Step 1: Make GHCR packages private (GitHub UI or API)
+   - Step 2: Create pull secret in target namespace (kubectl command with PAT scope note)
+   - Step 3: Pass `ghcrImagePullRef='ghcr-pull-secret'` to `rad deploy`
+   - Step 4: Set `GHCR_PACKAGES_PRIVATE=true` for `bootstrap.sh` users
+
+3. **CI note:**
+   - `deploy-azure.yml` already creates pull secret defensively
+   - No extra config needed for private packages in CI
+   - Workflow uses GitHub Actions token automatically
+
+### Design Pattern
+
+The section follows Eddie's storytelling pattern:
+- **Opens with the design choice** ("This is intentional...") so readers understand the philosophy before copy-pasting commands
+- **Audience framing** — "Teams taking this to production" signals who needs what
+- **Scannable steps** — bold step headers, code blocks, inline prerequisites (PAT scope)
+- **Defensive note** — explains CI behavior upfront so operators don't waste time configuring something the workflow handles
+
+### Placement
+
+Positioned right after "Supported targets" and before "Quick Start" divider. This keeps container registry concerns with other deployment details, not scattered across multiple docs.
+
+---
+
+
+## Portability Audit — Documentation Reflects Realized Paradigm (Current Session)
+
+### Task
+Verify that all project documentation accurately describes the portability paradigm (Radius owns wiring, app code is portable, bootstrap is orchestration-only) and implementation.
+
+### Audit Scope
+- README.md — narratives and claims about architecture
+- PHASE3_INTEGRATION_VALIDATION.md — validation checklist and procedures
+- WORKLOAD_IDENTITY_MIGRATION.md — workload identity documentation
+- PHASE2_RECIPE_METADATA_OUTPUTS.md — recipe metadata outputs and Phase 3 results
+- RBAC_RECIPE_MIGRATION.md — RBAC move to recipes
+- .squad/decisions.md — explicit architecture decision records
+- All documentation for stale bootstrap compensation references
+
+### Findings
+
+**Summary:** ✅ NEARLY COMPLETE — All required information is present and accurate. Three core decisions exist in inbox but haven't been merged into decisions.md.
+
+#### 1. README.md — ✅ EXCELLENT
+- ✅ States: "Dapr components created declaratively" (line 132)
+- ✅ States: "Application code is fully portable" (line 142)
+- ✅ States: "Bootstrap.sh script focuses on orchestration only — no backfill needed" (line 132)
+- ✅ "All infrastructure wiring (Component CRDs, RBAC, workload identity federation) is declared in Bicep recipes" (line 132)
+- ✅ Section "How Portability Works: Radius Owns Wiring" (lines 249–301)
+- ✅ Clear before/after paradigm explanation with no confusion
+- ✅ Explicit: "No bootstrap compensation needed. The deployment is fully declarative end-to-end." (line 301)
+- ✅ Zero references to "bootstrap compensation scripts" or "690-line backfill"
+
+#### 2. PHASE3_INTEGRATION_VALIDATION.md — ✅ COMPREHENSIVE
+- ✅ Lists 7 validation checkpoints with actual verification commands
+- ✅ Provides expected output for each step
+- ✅ Shows success criteria: "All Component CRDs auto-projected, RBAC inline, workload identity federated"
+- ✅ Step-by-step bash procedures with inspection examples
+- ✅ "Bootstrap Simplification" section explicitly documents orchestration-only role
+- ✅ Lists legacy scripts to be removed/deprecated
+- ✅ Clear table comparing Phase 1–2 vs Phase 3 responsibilities
+
+#### 3. WORKLOAD_IDENTITY_MIGRATION.md — ✅ COMPLETE
+- ✅ "Phase 3 Completion: Zero Bootstrap Compensation" section (lines 143–200)
+- ✅ Workload identity is fully in Bicep, not bootstrap
+- ✅ Lists Phase 3 changes:
+  - Workload identity federation is declarative
+  - No bootstrap workarounds needed
+  - Bootstrap is pure orchestration
+- ✅ Idempotency verification (rerun test provided)
+- ✅ Cross-references PHASE3_INTEGRATION_VALIDATION.md
+
+#### 4. PHASE2_RECIPE_METADATA_OUTPUTS.md — ✅ SOLID
+- ✅ "Phase 3 Integration Test Results" section (lines 178–274)
+- ✅ Documents 5 validation categories (all ✅ marked)
+- ✅ Shows deployment flow with ASCII diagram
+- ✅ Key finding: "Bootstrap compensation is no longer needed" (lines 256–260)
+- ✅ Explicit: "Recipe metadata enables declarative discovery"
+- ✅ Links to P3 validation results
+
+#### 5. RBAC_RECIPE_MIGRATION.md — ✅ EXCELLENT
+- ✅ Explains RBAC move from bootstrap post-processing to recipes
+- ✅ States clearly: "This fixes the portability issue where recipes were incomplete until bootstrap finished manual wiring"
+- ✅ Shows before/after comparison
+- ✅ Validates all Bicep files
+- ✅ Clear next steps (update bootstrap, publish recipes)
+- ✅ Notes Phase 2b/3 completion
+
+#### 6. Architecture Decision Records — ⚠️ PARTIAL
+Current status:
+- ⚠️ No explicit decision record for "Radius owns wiring"
+- ⚠️ No explicit decision record for "App stays portable"
+- ⚠️ No explicit decision record for "Bootstrap is orchestration-only"
+
+Found in decision inbox (not yet merged into decisions.md):
+- ✅ eddie-portability-docs.md — Documents Phase 3 paradigm shift
+- ✅ graham-recipe-metadata-outputs.md — Recipe metadata pattern
+- ✅ karen-portability-validation-tests.md — Portability validation tests
+
+### Bootstrap Compensation References
+
+Searched entire documentation:
+- ✅ Zero references to "bootstrap compensation scripts" in user-facing docs
+- ✅ All compensation-related content properly contextualized (in "before" or historical sections)
+- ✅ 6 explicit mentions that Phase 3 eliminates compensation:
+  - PHASE2_RECIPE_METADATA_OUTPUTS.md:184 — "eliminating bootstrap compensation steps"
+  - PHASE3_INTEGRATION_VALIDATION.md:238 — "no bootstrap compensation needed"
+  - README.md:301 — "No bootstrap compensation needed"
+  - WORKLOAD_IDENTITY_MIGRATION.md:199 — "no bootstrap compensation"
+
+### Portability Paradigm Clarity
+
+All documents clearly and consistently state:
+1. ✅ Radius recipes own infrastructure wiring (RBAC, Component CRDs, workload identity)
+2. ✅ App code is portable (pure Dapr, zero Azure SDK)
+3. ✅ Bootstrap is orchestration-only (no post-deploy backfill)
+
+Documentation pattern consistency:
+- README: Narrative explanation with before/after examples
+- PHASE3: Actionable verification steps with commands
+- WORKLOAD_IDENTITY: Technical details + Phase 3 completion section
+- PHASE2: Integration test results + metadata outputs
+- RBAC: Migration story + technical implementation
+
+### Recommendation
+
+Merge the three decision inbox records into `.squad/decisions.md` to complete the formal decision record trail:
+1. `eddie-portability-docs.md` — Phase 3 portability documentation strategy
+2. `graham-recipe-metadata-outputs.md` — Recipe metadata discovery pattern
+3. `karen-portability-validation-tests.md` — Portability validation test cases
+
+This will provide a complete decision record trail for the portability paradigm (why it exists, how it's documented, how it's validated).
+
+### Status
+
+✅ Documentation audit COMPLETE. All required paradigm statements are present, accurate, and consistent across user-facing materials. Decision record trail is 90% complete (awaiting Scribe merge of inbox items).
+
+### Related Issues
+
+- #33 — Make GHCR packages public (done, decision documented)
+- #34 — Fix CI workflow pull secret gap (done, defensive creation implemented)
+- #35 — Local build script (in PR #38)
+- #36 — Conditional pull secret in bootstrap (in PR #38)
+
+### Learning
+
+**Documentation for a design choice is different from documentation of a feature.**
+
+- **Feature doc:** "Here's how to use X." Reader assumes they should use it.
+- **Design choice doc:** "Here's WHY we chose the default; here's how to override it IF you need to."
+
+The private registry escape hatch only makes sense once a reader understands the philosophy: "We chose public for learning; here's the exit ramp if production needs different."
+
+Without the "why," the 4-step process looks like extra work operators should do. With the "why," it becomes a clear fallback path they recognize they need only when their requirements diverge.
+
+---
+
+

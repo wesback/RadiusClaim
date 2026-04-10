@@ -1,0 +1,136 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.41.2.15936",
+      "templateHash": "899161864801616775"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Azure region for resources"
+      }
+    },
+    "aksOidcIssuer": {
+      "type": "string",
+      "metadata": {
+        "description": "AKS OIDC issuer URL (e.g., https://eastus.oic.prod-aks.azure.com/{tenant}/{guid}/)"
+      }
+    },
+    "kubernetesNamespace": {
+      "type": "string",
+      "defaultValue": "azure-radiusclaim",
+      "metadata": {
+        "description": "Kubernetes namespace where service accounts live"
+      }
+    },
+    "serviceAccounts": {
+      "type": "array",
+      "defaultValue": [
+        "expense-api",
+        "workflow-engine",
+        "notification-svc"
+      ],
+      "metadata": {
+        "description": "Service account names to create federated credentials for"
+      }
+    },
+    "managedIdentityName": {
+      "type": "string",
+      "defaultValue": "radiusclaim-workload-identity",
+      "metadata": {
+        "description": "Name of the managed identity"
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[parameters('managedIdentityName')]",
+      "location": "[parameters('location')]"
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}/{1}', parameters('managedIdentityName'), parameters('serviceAccounts')[0])]",
+      "properties": {
+        "issuer": "[parameters('aksOidcIssuer')]",
+        "subject": "[format('system:serviceaccount:{0}:{1}', parameters('kubernetesNamespace'), parameters('serviceAccounts')[0])]",
+        "audiences": [
+          "api://AzureADTokenExchange"
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}/{1}', parameters('managedIdentityName'), parameters('serviceAccounts')[1])]",
+      "properties": {
+        "issuer": "[parameters('aksOidcIssuer')]",
+        "subject": "[format('system:serviceaccount:{0}:{1}', parameters('kubernetesNamespace'), parameters('serviceAccounts')[1])]",
+        "audiences": [
+          "api://AzureADTokenExchange"
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials', parameters('managedIdentityName'), parameters('serviceAccounts')[0])]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials",
+      "apiVersion": "2023-01-31",
+      "name": "[format('{0}/{1}', parameters('managedIdentityName'), parameters('serviceAccounts')[2])]",
+      "properties": {
+        "issuer": "[parameters('aksOidcIssuer')]",
+        "subject": "[format('system:serviceaccount:{0}:{1}', parameters('kubernetesNamespace'), parameters('serviceAccounts')[2])]",
+        "audiences": [
+          "api://AzureADTokenExchange"
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities/federatedIdentityCredentials', parameters('managedIdentityName'), parameters('serviceAccounts')[1])]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "managedIdentityId": {
+      "type": "string",
+      "metadata": {
+        "description": "Managed identity resource ID"
+      },
+      "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName'))]"
+    },
+    "managedIdentityClientId": {
+      "type": "string",
+      "metadata": {
+        "description": "Managed identity client ID (Azure AD application ID)"
+      },
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName')), '2023-01-31').clientId]"
+    },
+    "managedIdentityPrincipalId": {
+      "type": "string",
+      "metadata": {
+        "description": "Managed identity principal ID (object ID for RBAC assignments)"
+      },
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('managedIdentityName')), '2023-01-31').principalId]"
+    },
+    "managedIdentityName": {
+      "type": "string",
+      "metadata": {
+        "description": "Managed identity name"
+      },
+      "value": "[parameters('managedIdentityName')]"
+    }
+  }
+}
