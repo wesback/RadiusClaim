@@ -12,6 +12,8 @@ using OpenTelemetry;
 using OpenTelemetry.Trace;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 
 const string CorrelationIdContextKey = "CorrelationId";
 const string CorrelationIdHeader = "X-Correlation-ID";
@@ -493,6 +495,43 @@ app.MapGet("/", () => TypedResults.Ok(new ServiceDescriptor(
     "Expense persistence now invokes the workflow engine after successful storage.")));
 
 app.MapGet("/healthz", () => TypedResults.Ok(new { status = "ok" }));
+
+// Development-only: issue mock JWT tokens for local testing of /approve and /reject endpoints.
+// This endpoint is disabled in Production. See docs/API_AUTHENTICATION.md for details.
+if (app.Environment.IsDevelopment())
+{
+    app.MapGet("/test-token", (ILogger<Program> logger) =>
+    {
+        logger.LogWarning("⚠️ Development test token endpoint invoked. This should NOT be used in production.");
+        
+        var issuer = authority ?? "https://login.microsoftonline.com/common";
+        var aud = audience ?? "https://radiusclaim.azurewebsites.net/api";
+        
+        var claims = new[]
+        {
+            new Claim(ClaimTypes.NameIdentifier, "test-user-id"),
+            new Claim(ClaimTypes.Email, "testuser@example.com"),
+            new Claim("oid", "test-object-id"),
+            new Claim("tid", "test-tenant-id"),
+        };
+        
+        var signingKey = new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes("development-only-secret-key-do-not-use-in-production-123456789"));
+        var credentials = new SigningCredentials(signingKey, SecurityAlgorithms.HmacSha256);
+        
+        var token = new JwtSecurityToken(
+            issuer: issuer,
+            audience: aud,
+            claims: claims,
+            expires: DateTime.UtcNow.AddHours(1),
+            signingCredentials: credentials);
+        
+        var tokenString = new JwtSecurityTokenHandler().WriteToken(token);
+        
+        logger.LogInformation("Development test token generated. Token valid for 1 hour.");
+        
+        return Results.Ok(new { token = tokenString, expiresIn = 3600 });
+    });
+}
 
 app.Run();
 
