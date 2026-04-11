@@ -93,3 +93,12 @@
 - Group CSS rules by component (hero, panel, form, badge, timeline) for easier scanning
 - Audit color contrast with Lighthouse/DevTools to ensure WCAG AA minimum
 - Extract state mutations into named functions (e.g., `updateSelectedExpense()`, `clearSelection()`) to prep for testability
+
+## Learnings (Dev Auth Widget — Wesley's request)
+
+- Added a dev auth widget embedded in the existing debug footer (bottom-left = Trace ID, bottom-right = auth widget), keeping the demo surface clean.
+- Token management functions grouped at the bottom of app.js under a clearly marked section header: `getStoredToken`, `clearStoredToken`, `acquireDevToken`, `renderDevAuthWidget`, `initDevAuth`.
+- `tracedFetch()` now injects `Authorization: Bearer {token}` on every request when a valid token exists in localStorage — approve/reject calls gain auth automatically. POST /expenses (no auth required) is unaffected since the header is ignored by that endpoint.
+- Graceful degradation: clicking "Get Token" in production (404 from /test-token) sets the widget to an "unavailable" state with a dim message — no crash, no console noise.
+- Token expiry stored as a Unix timestamp in `radiusclaim_dev_token_expires`; auto-evicted on next read. A 60-second setInterval keeps the countdown display fresh.
+- Chose to co-locate the widget in the debug footer rather than a floating corner widget — dev tooling belongs in the dev chrome, keeping the main glassmorphism panels untouched.
