@@ -175,7 +175,7 @@ get_region_compatible_sku() {
   local region="$1"
   case "$region" in
     germanywestcentral)
-      echo "Standard_D4s_v6"
+      echo "Standard_D4ds_v6"
       ;;
     *)
       echo "Standard_D4s_v5"
