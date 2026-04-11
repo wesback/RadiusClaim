@@ -1975,11 +1975,16 @@ generate_random_name_suffix() {
   printf '%s\n' "$(date +%s | sha256sum | cut -c1-6)"
 }
 
-RANDOM_NAME_SUFFIX=""
+RANDOM_NAME_SUFFIX="${RANDOM_NAME_SUFFIX:-}"
 if [ "$DEPLOYMENT_TARGET" = "radius" ]; then
-  # Apply random naming to Radius deployments to prevent soft-delete/name collisions
-  RANDOM_NAME_SUFFIX="$(generate_random_name_suffix)"
-  log_info "Using random resource naming suffix for dev/demo environment: ${RANDOM_NAME_SUFFIX}"
+  if [ -n "${RANDOM_NAME_SUFFIX}" ]; then
+    # Caller pre-seeded the suffix (e.g. to reuse existing Azure resources on retry).
+    log_info "Reusing caller-provided random resource naming suffix: ${RANDOM_NAME_SUFFIX}"
+  else
+    # Apply random naming to Radius deployments to prevent soft-delete/name collisions
+    RANDOM_NAME_SUFFIX="$(generate_random_name_suffix)"
+    log_info "Using random resource naming suffix for dev/demo environment: ${RANDOM_NAME_SUFFIX}"
+  fi
 fi
 
 section "Deploying Radius environment"
@@ -2042,7 +2047,12 @@ if [ "${POSTGRES_LOCATION}" != "${LOCATION}" ]; then
 fi
 # POSTGRES_NAME_SUFFIX defaults to RANDOM_NAME_SUFFIX; may be overridden if the default
 # name is ARM-registered at a different location (ARM caches location for failed PUTs).
-POSTGRES_NAME_SUFFIX="${RANDOM_NAME_SUFFIX}"
+# Allow caller to pre-seed a different suffix (e.g., on explicit-location retries where
+# ARM has a ghost record from a prior failed PUT at a different location).
+POSTGRES_NAME_SUFFIX="${POSTGRES_NAME_SUFFIX:-${RANDOM_NAME_SUFFIX}}"
+if [ "${POSTGRES_NAME_SUFFIX}" != "${RANDOM_NAME_SUFFIX}" ]; then
+  log_info "Using caller-provided POSTGRES_NAME_SUFFIX override '${POSTGRES_NAME_SUFFIX}' to avoid ARM ghost name conflict."
+fi
 # Only auto-detect location when no explicit POSTGRES_LOCATION override was set.
 if [ "${POSTGRES_LOCATION}" = "${LOCATION}" ] && \
    ! az postgres flexible-server list-skus --location "${LOCATION}" --query "[0].name" -o tsv &>/dev/null; then
