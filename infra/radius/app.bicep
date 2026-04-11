@@ -100,20 +100,60 @@ var wiExtension = enableWorkloadIdentity ? [
   }
 ] : []
 
-// Pod-level runtimes block shared across all container resources.
-// Only includes imagePullSecrets at the pod level when a GHCR pull secret is provided.
-//
-// NOTE on resource limits: runtimes.kubernetes.pod.containers entries are treated as
-// *additional sidecar containers* by Radius — each entry requires its own `image` field.
-// To set CPU/memory limits on the main container, use a named entry matching the Radius
-// resource name (e.g. 'expense-api'), and do so per-container rather than in a shared var.
-// TODO(graham): add per-container resource limits using the correct Radius container name.
-var runtimesSpec = {
+// Per-container runtimes blocks.
+// A containers[] entry whose name matches the Radius resource name patches the *main* container
+// (not a sidecar). This is the correct way to set CPU/memory limits on workload containers.
+// Requests are set at half the limit to allow the Kubernetes scheduler headroom while bounding
+// burst consumption.
+var pullSecrets = !empty(ghcrImagePullRef) ? [{ name: ghcrImagePullRef }] : []
+
+var expenseApiRuntimes = {
   kubernetes: {
     pod: {
-      imagePullSecrets: !empty(ghcrImagePullRef) ? [
-        { name: ghcrImagePullRef }
-      ] : []
+      imagePullSecrets: pullSecrets
+      containers: [
+        {
+          name: 'expense-api'
+          resources: {
+            requests: { cpu: '125m', memory: '256Mi' }
+            limits: { cpu: '250m', memory: '512Mi' }
+          }
+        }
+      ]
+    }
+  }
+}
+
+var workflowEngineRuntimes = {
+  kubernetes: {
+    pod: {
+      imagePullSecrets: pullSecrets
+      containers: [
+        {
+          name: 'workflow-engine'
+          resources: {
+            requests: { cpu: '250m', memory: '512Mi' }
+            limits: { cpu: '500m', memory: '1Gi' }
+          }
+        }
+      ]
+    }
+  }
+}
+
+var notificationSvcRuntimes = {
+  kubernetes: {
+    pod: {
+      imagePullSecrets: pullSecrets
+      containers: [
+        {
+          name: 'notification-svc'
+          resources: {
+            requests: { cpu: '125m', memory: '256Mi' }
+            limits: { cpu: '250m', memory: '512Mi' }
+          }
+        }
+      ]
     }
   }
 }
@@ -244,7 +284,7 @@ resource expenseApi 'Applications.Core/containers@2023-10-01-preview' = {
       ],
       wiExtension
     )
-    runtimes: runtimesSpec
+    runtimes: expenseApiRuntimes
   }
 }
 
@@ -315,7 +355,7 @@ resource workflowEngine 'Applications.Core/containers@2023-10-01-preview' = {
       ],
       wiExtension
     )
-    runtimes: runtimesSpec
+    runtimes: workflowEngineRuntimes
   }
 }
 
@@ -379,6 +419,6 @@ resource notificationSvc 'Applications.Core/containers@2023-10-01-preview' = {
       ],
       wiExtension
     )
-    runtimes: runtimesSpec
+    runtimes: notificationSvcRuntimes
   }
 }
