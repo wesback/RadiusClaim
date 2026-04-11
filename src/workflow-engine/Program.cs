@@ -152,6 +152,18 @@ app.Use(async (context, next) =>
         traceId);
 });
 
+// Read the Dapr App API token used to authenticate service-to-service calls.
+// When APP_API_TOKEN is set, Dapr sidecars automatically inject a matching
+// dapr-api-token header on every forwarded request. The /decide endpoint
+// validates this header; in non-development environments the token is required.
+var appApiToken = app.Configuration["APP_API_TOKEN"] ?? app.Configuration["Dapr:AppApiToken"];
+if (string.IsNullOrEmpty(appApiToken))
+{
+    startupLogger.LogWarning(
+        "⚠ APP_API_TOKEN is not set. The /decide endpoint will reject all requests " +
+        "in non-development environments. Set APP_API_TOKEN to enable service-to-service auth.");
+}
+
 app.MapPost("/workflows/start", async (
     HttpContext context,
     ExpenseSubmission submission,
@@ -252,7 +264,8 @@ app.MapGet("/workflows/{instanceId}", async (
 });
 
 // POST /workflows/{instanceId}/decide — raises the manual-approval event to resume a paused workflow.
-// Called by expense-api approve/reject endpoints via service invocation.
+// Called by expense-api approve/reject endpoints via Dapr service invocation.
+// Requires a valid dapr-api-token header when APP_API_TOKEN is configured.
 app.MapPost("/workflows/{instanceId}/decide", async (
     string instanceId,
     HttpContext context,
@@ -262,6 +275,35 @@ app.MapPost("/workflows/{instanceId}/decide", async (
     CancellationToken cancellationToken) =>
 {
     var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
+
+    // Auth: validate incoming Dapr App API token.
+    // In production (APP_API_TOKEN set), the header must match exactly.
+    // In non-development with no token configured, fail closed.
+    if (!string.IsNullOrEmpty(appApiToken))
+    {
+        var incoming = context.Request.Headers["dapr-api-token"].FirstOrDefault();
+        if (string.IsNullOrEmpty(incoming) || incoming != appApiToken)
+        {
+            logger.LogWarning(
+                "Unauthorized /decide request — invalid or missing dapr-api-token [TraceId: {TraceId}]",
+                traceId);
+            return Results.Unauthorized();
+        }
+    }
+    else if (!app.Environment.IsDevelopment())
+    {
+        logger.LogError(
+            "APP_API_TOKEN not configured — /decide is blocked in non-development environments [TraceId: {TraceId}]",
+            traceId);
+        return Results.Unauthorized();
+    }
+
+    // Validate decision request fields before touching workflow state.
+    var decisionErrors = ValidateDecisionRequest(decisionRequest);
+    if (decisionErrors.Count > 0)
+    {
+        return Results.ValidationProblem(decisionErrors);
+    }
 
     if (string.IsNullOrWhiteSpace(instanceId))
     {
@@ -356,36 +398,52 @@ app.Run();
 
 static Dictionary<string, string[]> ValidateSubmission(ExpenseSubmission submission)
 {
+    const int maxIdLength = 128;
+    const int maxDescriptionLength = 1000;
+    const decimal maxAmountUsd = 1_000_000m;
+
     var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
 
     if (string.IsNullOrWhiteSpace(submission.ExpenseId))
-    {
         errors[nameof(submission.ExpenseId)] = ["ExpenseId is required."];
-    }
+    else if (submission.ExpenseId.Trim().Length > maxIdLength)
+        errors[nameof(submission.ExpenseId)] = [$"ExpenseId must not exceed {maxIdLength} characters."];
 
     if (string.IsNullOrWhiteSpace(submission.CorrelationId))
-    {
         errors[nameof(submission.CorrelationId)] = ["CorrelationId is required."];
-    }
+    else if (submission.CorrelationId.Trim().Length > maxIdLength)
+        errors[nameof(submission.CorrelationId)] = [$"CorrelationId must not exceed {maxIdLength} characters."];
 
     if (string.IsNullOrWhiteSpace(submission.EmployeeId))
-    {
         errors[nameof(submission.EmployeeId)] = ["EmployeeId is required."];
-    }
+    else if (submission.EmployeeId.Trim().Length > maxIdLength)
+        errors[nameof(submission.EmployeeId)] = [$"EmployeeId must not exceed {maxIdLength} characters."];
 
     if (submission.Amount <= 0)
-    {
         errors[nameof(submission.Amount)] = ["Amount must be greater than zero."];
-    }
+    else if (submission.Amount > maxAmountUsd)
+        errors[nameof(submission.Amount)] = [$"Amount must not exceed {maxAmountUsd:F2}."];
 
     if (string.IsNullOrWhiteSpace(submission.Currency))
-    {
         errors[nameof(submission.Currency)] = ["Currency is required."];
-    }
 
     if (string.IsNullOrWhiteSpace(submission.Description))
-    {
         errors[nameof(submission.Description)] = ["Description is required."];
+    else if (submission.Description.Trim().Length > maxDescriptionLength)
+        errors[nameof(submission.Description)] = [$"Description must not exceed {maxDescriptionLength} characters."];
+
+    return errors;
+}
+
+static Dictionary<string, string[]> ValidateDecisionRequest(ManualDecisionRequest request)
+{
+    const int maxReasonLength = 1000;
+
+    var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+
+    if (request.Reason is not null && request.Reason.Length > maxReasonLength)
+    {
+        errors[nameof(request.Reason)] = [$"Reason must not exceed {maxReasonLength} characters."];
     }
 
     return errors;

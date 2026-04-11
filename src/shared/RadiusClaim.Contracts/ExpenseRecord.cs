@@ -10,4 +10,8 @@ public sealed record ExpenseRecord(
     ExpenseStatus Status,
     DateTimeOffset SubmittedAtUtc,
     DateTimeOffset LastUpdatedAtUtc,
-    string? RejectionReason = null);
+    string? RejectionReason = null,
+    /// <summary>Identity of the approver who acted on this expense (JWT sub/oid). Set on approval or rejection.</summary>
+    string? ApprovedBy = null,
+    /// <summary>UTC timestamp when the approval or rejection decision was recorded by the API.</summary>
+    DateTimeOffset? ApprovedAt = null);

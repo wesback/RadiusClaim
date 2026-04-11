@@ -73,7 +73,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-builder.Services.AddAuthorization();
+// ApproverPolicy: requires a bearer token AND the "expense.approver" app role claim.
+// Roles are populated by Entra ID from the app manifest's appRoles definition.
+// Bare .RequireAuthorization() (authenticated-only) is intentionally NOT used on
+// approval/rejection endpoints — scope enforcement is mandatory there.
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("ApproverPolicy", policy =>
+        policy.RequireAuthenticatedUser()
+              .RequireClaim("roles", "expense.approver"));
+});
 
 // OpenTelemetry: configure tracing and logging
 // Traces are exported to Jaeger (see docs/OBSERVABILITY.md for setup)
@@ -369,6 +378,8 @@ expenses.MapGet("/{id}/workflow", async (
 });
 
 // POST /expenses/{id}/approve — signals the paused workflow to approve the expense.
+// Requires ApproverPolicy (authenticated + expense.approver role).
+// Self-approval is blocked inside HandleExpenseApprovalActionAsync.
 expenses.MapPost("/{id}/approve", async (
     string id,
     HttpContext context,
@@ -378,10 +389,13 @@ expenses.MapPost("/{id}/approve", async (
     CancellationToken cancellationToken) =>
 {
     var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
-    return await HandleExpenseApprovalActionAsync(id, approved: true, body?.Reason, daprClient, logger, traceId, cancellationToken);
-}).RequireAuthorization();
+    var approverIdentity = GetApproverIdentity(context.User);
+    return await HandleExpenseApprovalActionAsync(id, approved: true, body?.Reason, approverIdentity, daprClient, logger, traceId, cancellationToken);
+}).RequireAuthorization("ApproverPolicy");
 
 // POST /expenses/{id}/reject — signals the paused workflow to reject the expense.
+// Requires ApproverPolicy (authenticated + expense.approver role).
+// Self-approval is blocked inside HandleExpenseApprovalActionAsync.
 expenses.MapPost("/{id}/reject", async (
     string id,
     HttpContext context,
@@ -391,8 +405,9 @@ expenses.MapPost("/{id}/reject", async (
     CancellationToken cancellationToken) =>
 {
     var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
-    return await HandleExpenseApprovalActionAsync(id, approved: false, body?.Reason, daprClient, logger, traceId, cancellationToken);
-}).RequireAuthorization();
+    var approverIdentity = GetApproverIdentity(context.User);
+    return await HandleExpenseApprovalActionAsync(id, approved: false, body?.Reason, approverIdentity, daprClient, logger, traceId, cancellationToken);
+}).RequireAuthorization("ApproverPolicy");
 
 expenses.MapGet("/{id}", async (string id, HttpContext context, DaprClient daprClient, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
@@ -679,6 +694,35 @@ static string CoalesceOrCreate(string? candidate)
         : candidate.Trim();
 }
 
+/// <summary>
+/// Extracts a stable identity string from the JWT principal.
+/// Prefers the Entra ID object ID (oid), falls back to sub, preferred_username, then UPN.
+/// The returned value is used for self-approval checks and audit trail stamping.
+/// </summary>
+static string GetApproverIdentity(System.Security.Claims.ClaimsPrincipal user)
+{
+    return user.FindFirst("oid")?.Value
+        ?? user.FindFirst("sub")?.Value
+        ?? user.FindFirst("preferred_username")?.Value
+        ?? user.FindFirst(System.Security.Claims.ClaimTypes.Upn)?.Value
+        ?? user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value
+        ?? "unknown";
+}
+
+/// <summary>
+/// Returns true if the approver's identity matches the expense's EmployeeId, which would
+/// indicate a self-approval attempt. Comparison is case-insensitive.
+/// Returns false when the approver identity could not be resolved ("unknown").
+/// </summary>
+static bool IsSameIdentityAsEmployee(string approverIdentity, string employeeId)
+{
+    if (string.IsNullOrWhiteSpace(approverIdentity) || approverIdentity == "unknown")
+        return false;
+
+    return string.Equals(approverIdentity, employeeId, StringComparison.OrdinalIgnoreCase);
+}
+
+
 static ExpenseSubmission ToWorkflowSubmission(ExpenseRecord record)
 {
     return new ExpenseSubmission(
@@ -743,6 +787,7 @@ static async Task<IResult> HandleExpenseApprovalActionAsync(
     string id,
     bool approved,
     string? reason,
+    string approverIdentity,
     DaprClient daprClient,
     ILogger logger,
     string traceId,
@@ -782,6 +827,49 @@ static async Task<IResult> HandleExpenseApprovalActionAsync(
             status = record.Status.ToString()
         });
     }
+
+    // Self-approval prevention: block the original filer from approving their own expense.
+    // EmployeeId in the record is matched against the approver's JWT identity claims
+    // (oid, sub, preferred_username, upn) to cover common Entra ID token shapes.
+    if (IsSameIdentityAsEmployee(approverIdentity, record.EmployeeId))
+    {
+        logger.LogWarning(
+            "Self-approval blocked: approver {ApproverId} attempted to {Action} expense {ExpenseId} filed by {EmployeeId} [TraceId: {TraceId}]",
+            approverIdentity,
+            approved ? "approve" : "reject",
+            normalizedId,
+            record.EmployeeId,
+            traceId);
+
+        return Results.Problem(
+            title: "Self-approval not permitted.",
+            detail: "An employee may not approve or reject their own expense.",
+            statusCode: StatusCodes.Status403Forbidden);
+    }
+
+    // Audit trail: stamp the record with who acted and when, before forwarding to the workflow.
+    // This persists the approver identity to the state store even if the workflow signal fails.
+    var decisionTime = DateTimeOffset.UtcNow;
+    var auditedRecord = record with
+    {
+        ApprovedBy = approverIdentity,
+        ApprovedAt = decisionTime
+    };
+    await daprClient.SaveStateAsync(
+        RadiusClaimDapr.Components.StateStore,
+        RadiusClaimDapr.StateKeys.Expense(normalizedId),
+        auditedRecord,
+        stateOptions: new StateOptions { Consistency = ConsistencyMode.Strong },
+        cancellationToken: cancellationToken);
+
+    logger.LogInformation(
+        "Expense {ExpenseId} {Action} decision recorded: approver={ApproverId} at {DecisionTime} workflow={InstanceId} [TraceId: {TraceId}]",
+        normalizedId,
+        approved ? "approval" : "rejection",
+        approverIdentity,
+        decisionTime,
+        record.CorrelationId,
+        traceId);
 
     try
     {
