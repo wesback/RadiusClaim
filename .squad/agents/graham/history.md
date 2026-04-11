@@ -612,3 +612,41 @@ environment templates to decide whether each environment should explicitly overr
 Don't rely on recipe defaults flowing through to the environment's effective behavior —
 if a parameter isn't in the environment's `parameters:` block, it's invisible to the
 environment author and silently insecure.
+
+---
+
+## Learnings (Security Review — Billy request, 2026-07)
+
+### Infrastructure Security Findings
+
+**Secrets Management**
+- Key Vault provisioned with `enableRbacAuthorization: true` and `enableSoftDelete: true` — good baseline.
+- `networkAcls.defaultAction: 'Allow'` on Key Vault leaves it publicly reachable from any IP — no VNet restriction.
+- `enablePurgeProtection` deliberately omitted; acknowledged risk is permanent vault deletion during 7-day soft-delete window.
+- PostgreSQL `postgresAdminPassword` uses deterministic derivation via `uniqueString()` — stable across re-runs but structurally predictable if context.resource.id is known.
+- `passwordAuth: 'Enabled'` on PostgreSQL maintained for Dapr SCRAM+AD-token path; creates a persistent fallback auth surface even though Entra is the primary path.
+
+**Managed Identity & RBAC**
+- All three services share a single managed identity (`radiusclaim-workload-identity`) — not least-privilege per service.
+- RBAC assignments removed from recipes (Radius 0.56 bicep-de cross-scope bug). Bootstrap.sh carries full responsibility; partial bootstrap run leaves permissions unassigned.
+- `deploy-dapr-components-workload-identity.sh` still assigns `Storage Blob Data Contributor` — stale from pre-PostgreSQL era, grants excess permission.
+- PostgreSQL Dapr identity is the Entra admin, not a least-privilege role.
+- `dev.bicep` does not pass `daprPrincipalId/daprClientId/daprPrincipalName` to recipes — dev environment workload identity wiring may silently misconfigure or default-fail.
+
+**Dapr Component Security**
+- No explicit Dapr `Configuration` CRD deployed — relying on Dapr mTLS defaults; no explicit trust domain or cert rotation policy.
+- `keyPrefix: 'none'` on state store — no per-service key namespace isolation; any service can read/write any other service's state keys.
+- Local Dapr components use Redis with no password; dev-only but no guard against accidental cluster application.
+
+**Network and Access**
+- Private endpoints removed from state-store recipe (Radius 0.56 NPE bug) — all deployments use public-facing firewall path. No code path exists to private endpoint today.
+- `allowAzureServices: true` permits ALL Azure-hosted IPs, not scoped to the AKS cluster.
+- No Kubernetes NetworkPolicy resources in the infra stack.
+- Key Vault has no VNet restriction (`networkAcls.defaultAction: 'Allow'`).
+
+**Audit and Compliance**
+- No `Microsoft.Insights/diagnosticSettings` on any Azure recipe resource (Key Vault, Service Bus, PostgreSQL) — zero log trail for access, messages, or connections.
+- No Log Analytics workspace provisioned anywhere in the infra stack.
+- RBAC assignments are performed by bootstrap.sh, not IaC — no audit trail for role grant operations.
+- Dapr API logging not enabled (`dapr.io/enable-api-logging` annotation absent from all workloads).
+- Production observability (Application Insights) deferred to "Future" in docs.

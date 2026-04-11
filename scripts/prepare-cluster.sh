@@ -47,7 +47,7 @@ Optional:
   --node-count <count>          Initial AKS node count (default: ${AKS_NODE_COUNT})
   --min-count <count>           AKS autoscaler minimum node count (default: ${AKS_MIN_COUNT})
   --max-count <count>           AKS autoscaler maximum node count (default: ${AKS_MAX_COUNT})
-  --node-vm-size <size>         AKS node VM size (default: Azure default)
+  --node-vm-size <size>         AKS node VM size (default: region-compatible SKU)
   --install-dapr                Install Dapr on the cluster when missing
   --install-radius              Install Radius on the cluster when missing
   --workspace-name <name>       Radius workspace name (default: ${WORKSPACE_NAME})
@@ -169,6 +169,18 @@ resource_group_exists() {
 aks_cluster_exists() {
   [ -n "$AKS_CLUSTER_NAME" ] || return 1
   az aks show --resource-group "$RESOURCE_GROUP" --name "$AKS_CLUSTER_NAME" --query name -o tsv >/dev/null 2>&1
+}
+
+get_region_compatible_sku() {
+  local region="$1"
+  case "$region" in
+    germanywestcentral)
+      echo "Standard_D4ds_v6"
+      ;;
+    *)
+      echo "Standard_D4s_v5"
+      ;;
+  esac
 }
 
 ensure_resource_group() {
@@ -395,6 +407,11 @@ prepare_aks_cluster() {
     )
     if [ -n "$AKS_NODE_VM_SIZE" ]; then
       aks_create_args+=(--node-vm-size "$AKS_NODE_VM_SIZE")
+    else
+      local default_sku
+      default_sku="$(get_region_compatible_sku "$LOCATION")"
+      log_info "Using region-compatible SKU for ${LOCATION}: ${default_sku}"
+      aks_create_args+=(--node-vm-size "$default_sku")
     fi
     run_cmd az aks create "${aks_create_args[@]}"
   fi

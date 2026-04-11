@@ -3,489 +3,13 @@
 ## Active Decisions
 
 
-### 2026-03-25T16:29:00Z: User Directive — Azure Policy Blocks Shared Keys
-**By:** Wesley Backelant (via Copilot)
-**Status:** DIRECTIVE
-**What:** Azure Policy blocks shared keys on this tenant (`allowSharedKeyAccess: true` denied).
-**Why:** Tenant constraint that affects state-store auth, bootstrap flow, and deployment guidance.
-
-### 2026-03-25T16:56:12Z: User Directive — Bootstrap Default Azure Location
-**By:** Wesley Backelant (via Copilot)
-**Status:** DIRECTIVE
-**What:** The bootstrap script should default to `belgiumcentral` as the Azure location.
-**Why:** User request — captured for team memory.
-
-### 2026-03-25: Decision — State-Store Auth Pivot to Microsoft Entra
-**By:** Daisy (Lead)
-**Status:** BLOCKING — Phase 7
-**What:** The state-store recipe, bootstrap script, and component backfill script must pivot from shared-key auth to Microsoft Entra (workload identity or service principal) auth.
-**Why:** Current recipe cannot deploy on the tenant due to shared-key policy block.
-
-**Blocked Items:**
-- `infra/radius/recipes/azure/state-store.bicep` — sets `allowSharedKeyAccess: true` (ARM denied)
-- `scripts/bootstrap.sh` — asserts `allowSharedKeyAccess: true` (instant failure)
-- `scripts/deploy-dapr-components.sh` — generates `accountKey`-based component (unusable)
-
-**Work Items (Graham primary):**
-1. Redesign `state-store.bicep`: remove `allowSharedKeyAccess`, remove `listKeys()`, output Entra metadata, assign RBAC
-2. Update `deploy-dapr-components.sh`: replace accountKey guard with Entra auth, remove key fetch
-3. Update `bootstrap.sh`: replace allowSharedKeyAccess assertion with Entra-auth readiness check
-4. Evaluate `pubsub.bicep`: pivot to Entra if tenant policy blocks Service Bus SAS
-5. Republish OCI recipe artifacts
-
-**Work Items (Eddie, after Graham):**
-6. Update `docs/end-to-end-setup-walkthrough.md` and `docs/radius-validation-checklist.md`: remove shared-key recovery; document Entra auth only
-
-**Work Items (Karen, after Graham + Eddie):**
-7. Re-validate fresh deployment end-to-end under the shared-key-blocked policy
-
-**Consequence:** Phase 7 end-to-end validation is blocked until Graham delivers Entra auth pivot.
-
-### 2026-03-26: Decision — Live Statestore Failure Root Cause
-**By:** Graham (Platform Dev)
-**Date:** 2026-03-26
-**Status:** DIAGNOSED
-**What:** The latest Radius deploy failed on `Applications.Dapr/stateStores/statestore` with `RecipeDeploymentFailed`. The Blob account keeps shared keys disabled and the configured Dapr principal is missing `Storage Blob Data Contributor` on the storage account.
-**Why:** Live Radius logs and cluster inspection show this is a Blob data-plane RBAC gap, not a component projection bug. Grant the Blob role to the configured principal, then rerun the Dapr component backfill so statestore can project successfully.
-
-### 2026-03-26: Decision — GHCR Recipe Publish Auth and Validation (consolidated)
-**By:** Graham (Platform Dev), Karen (Tester)
-**Date:** 2026-03-26
-**Status:** IMPLEMENTED — VALIDATED
-**What:** `scripts/publish-radius-recipes.sh` now supports explicit GHCR credentials via `GHCR_TOKEN` and `GHCR_USERNAME`, while still allowing an existing Docker credential store. The GitHub Actions publish step passes the same credentials explicitly, and validation confirmed the workflow path is correct.
-**Why:** Recipe publishing previously depended on ambient Docker auth and could fail with GHCR 403s without clear guidance. Explicit credentials make manual and CI publishing predictable, and the validation confirms the fix is safe to merge.
-
-### 2026-03-25: Decision — Operator Docs Updated for Component Projection Gap
-**By:** Eddie (Docs/Story)
-**Status:** IMPLEMENTED
-**What:** Component projection gap now documented in all operator paths; namespace commands fixed; two-path structure framed; pull-secret patching fixed; README references updated.
-**Why:** Previous docs led operators to check wrong namespace, skip backfill, patch wrong service accounts.
-
-**Key Changes:**
-- Component projection gap → Step 9a (walkthrough) and Step 5a (checklist)
-- All `kubectl` commands use `$WORKLOAD_NAMESPACE` (`radiusclaim-azure-radiusclaim`)
-- Pull-secret patch targets named service accounts (`expense-api`, `workflow-engine`, `notification-svc`), not `default`
-- Manual walkthrough vs. bootstrap script paths framed upfront
-- `scripts/README.md` added for `deploy-dapr-components.sh` documentation
-
-### 2026-03-25: Decision — Bootstrap Script Orchestrates Manual Deployment Path
-**By:** Graham (Platform Dev)
-**Status:** IMPLEMENTED
-**What:** Implement `scripts/bootstrap.sh` as the operator fast path for the repo's manual Kubernetes + Radius + Azure deployment story.
-**Why:** Deployable path spans multiple concerns; bootstrap makes it repeatable without replacing walkthrough docs.
-
-**Implementation:**
-1. Strong pre-flight checks: CLIs, Azure context, K8s reachability, Dapr/Radius health, workspace/group selection, resource state
-2. Reuses existing scripts: `publish-radius-recipes.sh`, `deploy-dapr-components.sh`, `validate-deployment.sh`
-3. Idempotent-safe behavior with stable Radius names and in-place updates
-4. Interactive confirmation (default) or `--yes` for non-interactive mode
-5. Dapr component backfill as first-class recovery step: backfill, restart deployments, verify sidecars
-6. Falls back to `kubectl port-forward` for validation if Radius public gateway not ready
-
-### 2026-03-25: Decision — daprd CrashLoop is Dapr Component Auth Failure
-**By:** Graham (Platform Dev)
-**Status:** DIAGNOSED
-**What:** Current `daprd` `CrashLoopBackOff` is a Dapr component auth/config failure, not app annotation or app env wiring.
-**Evidence:**
-- `kubectl logs <expense-api-pod> -c daprd --previous`: `Failed to init component statestore`, `KeyBasedAuthenticationNotPermitted`
-- Live `statestore` component uses `accountKey` auth
-- Live storage account has `allowSharedKeyAccess: false`
-- Deployment annotations/env are correct
-
-**Operator Rule:**
-1. Do not apply `accountKey`-based Blob statestore unless `allowSharedKeyAccess=true`
-2. Keep Service Bus pub/sub on exactly one auth path
-3. If shared-key auth disallowed, switch to Microsoft Entra auth
-
-### 2026-03-25: Decision — Entra State-Store Redesign Implementation Plan
-**By:** Graham (Platform Dev)
-**Status:** PLANNED
-**What:** Use the same Microsoft Entra principal already registered with Radius for Azure recipe provisioning as the Dapr Blob statestore runtime identity.
-**Why:** Tenant policy blocks shared keys; reuse of existing principal keeps platform story small.
-
-**Implementation Shape:**
-1. `state-store.bicep`: remove `allowSharedKeyAccess`, output Entra metadata, assign RBAC
-2. `azure-radius.bicep`: accept optional Dapr Entra identity parameters, forward into state-store recipe
-3. `bootstrap.sh`: resolve Entra principal object ID upfront, pass identity parameters during environment deployment
-4. `deploy-dapr-components.sh`: backfill `statestore` with Entra metadata, grant Blob RBAC if missing
-
-### 2026-03-25: Decision — Bootstrap Radius Health Checks Target controller-manager
-**By:** Graham (Platform Dev)
-**Status:** IMPLEMENTED
-**What:** Use `app.kubernetes.io/name=radius-controller-manager` as the Radius preflight selector in `scripts/bootstrap.sh`.
-**Why:** Stock `rad install kubernetes` flow; operator docs already treat `radius-controller-manager` as authoritative Runtime signal.
-**Consequence:** Bootstrap now checks same pod operators inspect manually; should align `docs/radius-validation-checklist.md` to same selector.
-
-### 2026-03-25: Decision — Prepare-Cluster RG Verification Deduplicated
-**By:** Graham (Platform Dev)
-**Status:** CLOSED
-**What:** Remove the duplicate `--resource-group` check from the AKS-specific bootstrap path in `scripts/prepare-cluster.sh`.
-**Why:** The top-level flow already handles group verification, reuse, and creation. Removing the second check eliminates redundant "already exists" log messages while keeping `--resource-group` required and validation behavior intact.
-**Validation:** Behavior tested; direct invocation and help path both work; no change to group availability guarantees.
-
-### 2026-03-25: Decision — Bootstrap Default Azure Location Set to belgiumcentral
-**By:** Graham (Platform Dev)
-**Status:** CLOSED
-**What:** Change `scripts/bootstrap.sh` to default `--location` to `belgiumcentral` instead of `eastus`.
-**Why:** The operator-facing walkthrough already standardizes on Belgium Central; the "easy path" default should agree with the taught path.
-**Affected Files:** `scripts/bootstrap.sh`, `docs/radius-validation-checklist.md` (both updated).
-**Consequence:** Bootstrap now matches operator guidance without broader walkthrough rewrites.
-
-### 2026-03-25: Decision — Cluster Prep Separated from App Deployment
-**By:** Graham (Platform Dev)
-**Status:** CLOSED
-**What:** Treat Kubernetes cluster preparation as a separate operator phase (via `scripts/prepare-cluster.sh`) from repeatable app deployment (via `scripts/bootstrap.sh`).
-**Why:** Cluster lifecycle and app deployment have different cadence. Separation makes platform story clearer and prevents silent AKS creation during repeatable deploy.
-**Operator Rule:**
-- Run `prepare-cluster.sh` once per cluster (or when re-validating cluster-level prerequisites)
-- Run `bootstrap.sh` for each deploy/redeploy once cluster is ready
-- No silent cluster creation/replacement during repeatable deployment without explicit operator opt-in
-**Consequence:** Clear separation of phases; operator controls cluster decisions explicitly.
-
-### 2026-03-25: Decision — Prepare-Cluster Control-Plane Gates Stay Explicit
-**By:** Graham (Platform Dev)
-**Status:** PROPOSED
-**What:** Keep `scripts/prepare-cluster.sh` in verify-by-default mode for Dapr and Radius, but document more explicitly that first-time prep on a fresh cluster must include `--install-dapr --install-radius`.
-**Why:** The explicit gates are deliberate safety rails for cluster-level mutations, but the operator story only stays teachable if the first-time path says that plainly instead of letting the readiness stop feel accidental.
-
-**Operator Rule:**
-- Fresh cluster or newly created AKS: run `prepare-cluster.sh` with both install flags
-- Reused cluster with Dapr/Radius already present: install flags may be omitted for verification-only preflight
-
-**Affected Files:**
-- `scripts/prepare-cluster.sh`
-- `scripts/README.md`
-- `docs/end-to-end-setup-walkthrough.md`
-- `docs/radius-validation-checklist.md`
-
-### 2026-03-25: Decision — Prepare-Cluster kubectl Context Must Stay Stdout-Clean
-**By:** Graham (Platform Dev)
-**Status:** PROPOSED
-**What:** Split the `prepare-cluster.sh` kubectl-context step into:
-1. `select_kubectl_context` for the optional `kubectl config use-context` side effect
-2. `resolve_kubectl_context` for the pure "what context is active and is it reachable?" lookup
-
-**Why:** The old shape mixed side effects and value capture inside `KUBECTL_CONTEXT="$(resolve_kubectl_context)"`. That makes the control-flow fragile because any human-facing stdout from a context-switch command can leak into the captured value or the surrounding runtime path.
-
-**Consequence:**
-- Cluster-prep logging remains operator-friendly
-- The captured `KUBECTL_CONTEXT` value stays a clean context name
-- Future platform helpers should keep command-substitution functions stdout-clean
-
-### 2026-03-25T18:21:03Z: Decision — Prepare-Cluster Must Use Dapr CLI Wait Semantics
-**By:** Graham (Platform Dev)
-**Status:** COMPLETED
-**What:** Update `scripts/prepare-cluster.sh` to install Dapr with `dapr init -k --wait` instead of `dapr init -k`.
-**Why:** `dapr init -k` returns success once the install request is accepted, not when the Dapr control plane is actually healthy. The script immediately runs its readiness check after install, so the current behavior can fail on a fresh cluster even though Dapr is still converging normally.
-
-Using the CLI's built-in wait semantics is the smallest correct repair:
-1. It matches Dapr's documented contract for Kubernetes installs.
-2. It avoids teaching arbitrary sleeps into platform automation.
-3. It preserves the script's existing `verify_dapr_ready` check as the final guard.
-
-**Consequence:**
-- Fresh-cluster prep becomes deterministic for the Dapr install step.
-- The control-plane boundary stays explicit: install when asked, then verify readiness before proceeding.
-
-### 2026-03-26: Decision — Bootstrap Preflights Soft-Deleted Azure Secret Stores
-**By:** Graham (Platform Dev)
-**Status:** IMPLEMENTED
-**What:** `scripts/bootstrap.sh` now resolves the deterministic Azure Key Vault name behind the `platform-secrets` store before app deployment. If that vault is soft-deleted, it restores the vault when Azure can recover it back into the current subscription, resource group, and location; otherwise, it fails early with actionable guidance instead of letting `rad deploy infra/radius/app.bicep` fail unclearly on `Applications.Dapr/secretStores`.
-**Why:** The failure is a repeatable deployment concern, not an application-model design bug. Key Vault soft-delete blocks name reuse, so the scripted operator path should tell the truth before app deployment rather than surfacing an opaque Radius recipe failure later.
-**Affected Files:**
-- `scripts/bootstrap.sh` — Key Vault soft-delete preflight and recovery logic
-- `scripts/README.md` — Behavior documentation
-- `docs/end-to-end-setup-walkthrough.md` — Integration into walkthrough
-- `docs/radius-validation-checklist.md` — Soft-delete validation steps
-
-**Supporting Pattern:**
-- `.squad/skills/azure-keyvault-soft-delete-preflight/SKILL.md` — Reusable detection and recovery pattern for future platforms
-
-### 2026-03-26: Decision — Script-First Documentation Restructure
-**By:** Eddie (Docs/Story)
-**Date:** 2026-03-26  
-**Status:** COMPLETED
-**Scope:** `docs/end-to-end-setup-walkthrough.md`
-
-**What:** Restructured the walkthrough to make scripts the primary narrative, not an optional alternative. Manual steps (1–12) moved to optional deep-dive section.
-
-**Why:** Original structure had manual steps dominating; operators cloning the repo would see detailed `az` and `rad` commands before learning the script-based path was faster and more reliable.
-
-**Key Changes:**
-1. Opening emphasizes two-script approach
-2. New "Environment Variables" section upfront (Entra auth guidance)
-3. "Quick Start: Run the Two Scripts" (Steps 1–2, then subsequent deployments)
-4. Manual walkthrough (all 12 steps) moved to "Deep Dive" section with "optional" disclaimer
-5. CI/CD path clearly marked as alternative
-
-**Impact:**
-- Scripts presented as primary, recommended path (not optional)
-- Manual steps remain discoverable for learning/customization
-- Consistent with existing README and scripts/README messaging
-- No breaking changes to deployment logic or scripts
-
-### 2026-03-26: Decision — ArgoCD Fit for RadiusClaim
-**By:** Daisy (Lead)
-**Date:** 2026-03-26
-**Status:** REJECTED
-**Requested by:** Wesley Backelant
-
-**Recommendation:** No. ArgoCD does not belong in RadiusClaim.
-
-**Why:**
-1. **No deploy gap:** Current two-phase deployment (prepare-cluster.sh + bootstrap.sh) is complete. ArgoCD would add a fourth control plane to a sample teaching Dapr + Radius.
-2. **Conflicts with Radius model:** Radius generates Kubernetes resources dynamically via recipes; ArgoCD expects static manifests in Git. This creates ownership ambiguity (who manages Deployments — ArgoCD or Radius?).
-3. **Dynamic component impedance mismatch:** Dapr component backfill queries Radius outputs and generates CRDs dynamically; ArgoCD can't sync components that don't exist until recipes execute.
-4. **Teaching cost exceeds value:** Adding ArgoCD adds a fourth control plane, complicates the "who deploys what" story, and dilutes the focus on Dapr + Radius boundary.
-5. **Audience fit:** Target audience (platform teams) will understand ArgoCD after learning Dapr + Radius; retrofitting it in the sample conflates delivery with architecture.
-
-**What to tell teams who ask:**
-> "RadiusClaim doesn't include ArgoCD because Radius already provides the declarative application model. ArgoCD is a delivery mechanism — you can layer it on top of Radius in production. This sample focuses on the Dapr + Radius boundary so you can evaluate those two together without delivery-pipeline opinions getting in the way."
-
-### 2026-03-26: Decision — Bootstrap Principal ID Resolution Improved
-**By:** Graham (Platform Dev)
-**Date:** 2026-03-26T09:15:32Z  
-**Status:** IMPLEMENTED
-
-**What:** Improved `resolve_azure_principal_id()` in `scripts/bootstrap.sh` to handle multiple Azure authentication modes with actionable diagnostics when auto-resolution fails.
-
-**Why:** Original implementation only handled service principal lookups via `az ad sp show --id "$AZURE_CLIENT_ID"`. This failed silently when operators used user identity (interactive `az login`), managed identity, or workload identity federation without traditional service principals.
-
-**Implementation:**
-1. Function improvements:
-   - Kept existing happy paths
-   - Added stderr diagnostics when resolution fails
-   - Provided context-specific guidance for different auth modes
-   - Maintained stdout cleanliness for command substitution
-2. Documentation updates:
-   - `scripts/README.md`: Added "About AZURE_PRINCIPAL_ID" and "Principal ID Resolution" sections
-   - `docs/end-to-end-setup-walkthrough.md`: Added inline comments explaining auto-resolution and alternatives
-
-**Supported Auth Modes:**
-- ✅ Service principal (client ID + secret) — auto-resolves principal ID
-- ✅ Workload identity (federated credential without secret) — auto-resolves principal ID
-- ✅ User identity (interactive `az login`) — requires manual `AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)`
-- ✅ Managed identity — requires manual `AZURE_PRINCIPAL_ID=<managed-identity-object-id>`
-
-**Operator Rule:** When auto-resolution fails, stderr diagnostics explain exactly what to do next.
-
-**Validation:**
-- ✅ Syntax validated with `bash -n`
-- ✅ Function preserves stdout cleanliness
-- ✅ Diagnostics go to stderr only
-- ✅ Existing happy paths unchanged
-
-### 2026-03-26: Decision — Radius existing-install readiness must honor current controller naming
-**By:** Graham (Platform Dev)
-**Date:** 2026-03-26
-**Status:** PROPOSED
-
-**What:** `scripts/prepare-cluster.sh` and `scripts/bootstrap.sh` should treat the stock Radius controller as `deployment/controller` with pod label `app.kubernetes.io/name=controller`, while still tolerating legacy `radius-controller-manager` naming for older clusters.
-
-**Why:** Current Radius install docs and Helm chart use `controller`; the repo had drifted to `radius-controller-manager`, making healthy existing installs look broken and causing misleading post-install failures.
-
-**Operator Impact:** If `rad install kubernetes` reports an existing installation and the control plane is still not ready after checking both naming shapes, the script should say plainly it did not auto-repair and point to `kubectl get deployments,pods -n radius-system` plus the reinstall command.
-
-### 2026-03-26: Decision — Prepare-Cluster Must Wait for Radius Controller Rollout
-**By:** Graham (Platform Dev)
-**Date:** 2026-03-26
-**Status:** PROPOSED
-
-**What:** Treat `rad install kubernetes` as an install submission step, not a readiness guarantee. Gate the script on:
-```bash
-kubectl rollout status deployment/radius-controller-manager -n radius-system --timeout=5m
-```
-
-**Why:** `rad install kubernetes` has no native `--wait` flag. The script immediately checks Radius readiness after install, so it can reject a normal fresh install while the controller is still converging.
-
-**Consequence:** Fresh-cluster prep becomes deterministic for the Radius install step, and the readiness contract stays teachable: install when asked, wait on canonical controller rollout, then verify.
-
-### 2026-03-26: Decision — Dapr Component Projection Gap Root Cause
-**By:** Graham (Platform Dev)  
-**Date:** 2026-03-26  
-**Status:** DIAGNOSED
-
-**What:** Radius successfully deployed containers with Dapr sidecars and provisioned Azure backing resources via recipes, but the Dapr Component CRDs were never created in the Kubernetes namespace.
-
-**Why:** After successful Radius deployment, cluster inspection showed:
-- ✅ Sidecars present (2/2 containers on all pods)
-- ✅ Dapr control plane healthy
-- ✅ Annotations correct
-- ✅ Azure resources provisioned (Storage, Service Bus, Key Vault)
-- ❌ Component CRDs missing (`kubectl get components -n azure-radiusclaim` returns empty)
-
-**Consequence:** Sidecars running but unconfigured; no component metadata, no auth credentials. App non-functional until `scripts/deploy-dapr-components.sh` backfills components.
-
-**Solution:** Run `deploy-dapr-components.sh` to:
-1. Query Radius recipe outputs
-2. Create Kubernetes secrets with auth metadata
-3. Generate Dapr Component CRDs
-4. Apply to namespace
-5. Restart deployments
-
-**Auth Requirement:** Service principal (via `AZURE_CLIENT_ID` + `AZURE_CLIENT_SECRET`) or workload identity federation.
-
-### 2026-03-26: Decision — Dapr Component Backfill Blocker (SP Auth)
-**By:** Graham (Platform Dev)  
-**Date:** 2026-03-26  
-**Status:** BLOCKED — Requires AZURE_CLIENT_SECRET
-
-**What:** Attempted to run `deploy-dapr-components.sh` with service principal credentials but encountered missing client secret.
-
-**Details:**
-- Service principal available: `890caf69-5a38-4bf9-950d-0430352e7396`
-- Script ran successfully; created all 3 Component CRDs
-- Components configured for workload identity mode (detected missing secret)
-- Pods failed: `failed to get JWT SVID: no JWT SVID available`
-- Workload identity federation not configured; cluster not ready
-
-**Blocker:** `AZURE_CLIENT_SECRET` not available in environment. Secret must be retrieved from secure storage and explicitly exported.
-
-**Rollback:** Cleanly deleted components; pods returned to stable 2/2 Running state.
-
-**Path Forward:** Either provide client secret (2-minute fix) or implement workload identity federation (longer setup).
-
-### 2026-03-26: Decision — Azure Workload Identity for Dapr Components (Long-Term)
-**By:** Graham (Platform Dev)  
-**Date:** 2026-03-26  
-**Status:** IMPLEMENTED
-
-**What:** Replaced service-principal-with-client-secret auth in Dapr component deployment with Azure Workload Identity — a clean, long-term solution that requires zero secrets in the cluster.
-
-**Implementation:**
-1. Enabled OIDC issuer + workload identity addon on AKS cluster
-2. Created managed identity `radiusclaim-workload-identity` (Client ID: 061dd532-71c6-40ac-9a90-750a1a868001)
-3. Created 3 federated credentials (one per service account: expense-api, workflow-engine, notification-svc)
-4. Granted RBAC roles:
-   - Storage Blob Data Contributor (on statestore storage account)
-   - Key Vault Secrets User (on platform-secrets Key Vault)
-5. Configured Dapr components with `azureClientId` only (no `azureClientSecret`)
-6. Updated deployments + service accounts with workload identity labels/annotations
-7. AKS webhook automatically injects federated token volume; Dapr sidecar exchanges token for Azure AD access token
-
-**Technical Flow:**
-```
-Kubernetes SA Token → Azure AD Token Exchange (via federated credential) → Azure Resource Access (via RBAC)
-```
-
-**Benefits:**
-- ✅ Zero secrets in cluster
-- ✅ No credential rotation required
-- ✅ Pod-level identity (least privilege)
-- ✅ Audit trail (Azure AD logs all token exchanges)
-- ✅ Simplifies developer onboarding (no env vars required)
-- ✅ Aligns with "no shared keys" tenant policy
-
-**Verification:**
-```
-All pods 2/2 Running
-All components loaded:
-  - platform-secrets (secretstores.azure.keyvault/v1)
-  - statestore (state.azure.blobstorage/v2)
-  - pubsub (pubsub.azure.servicebus.topics/v1)
-```
-
-**New Artifacts:**
-- `scripts/deploy-dapr-components-workload-identity.sh` — Automated setup with SP fallback
-- `WORKLOAD_IDENTITY_SUMMARY.md` — Technical reference
-- `IMPLEMENTATION_REPORT.md` — Impact analysis
-
-**Trade-offs:**
-- Cluster dependency: AKS-specific (not portable to Kind/minikube)
-- Setup overhead: Cluster update ~5-7 minutes
-- Fallback available: SP mode still supported
-
-**Future Work:**
-- Migrate Service Bus pub/sub from SAS to workload identity
-- Integrate setup into `bootstrap.sh`
-- Update walkthrough docs
-
-### 2026-03-26: Decision — Bootstrap Fixes Portability Audit (No Regressions)
-**By:** Daisy (Researcher)  
-**Date:** 2026-03-26  
-**Status:** COMPLETE
-
-**What:** Audit of 6 bootstrap fixes applied in live debugging session to verify Dapr/Radius portability impact.
-
-**Scope:** 6 fixes examined:
-1. SP credential handling (auto-detect + re-registration)
-2. Bootstrap preflight checks
-3. RBAC role scope
-4. Radius API version (`Applications.*@2023-10-01-preview`)
-5. Pull secret timing
-6. Container registry (GHCR → ACR switch)
-
-**Findings:**
-- ✅ 3 items are **Clean** (no portability concerns)
-- ⚠️ 3 items are **Minor** (pre-existing gaps, not regressions)
-- ✅ **No cloud lock-in** introduced into application model
-
-**Clean Items:**
-1. Dapr component abstraction (resource-based)
-2. App/environment decoupling (Radius pattern)
-3. Radius API version (current canonical)
-4. SP credential auto-detect (well-scoped)
-5. SP secret re-registration (safe, idempotent)
-6. Registry parameterization (GHCR default, ACR via override)
-
-**Minor Concerns (Pre-Existing, Not Regressions):**
-1. **GHCR pull secret dead code for ACR path** — Make conditional on registry type
-   - If `CONTAINER_REGISTRY` starts with `ghcr.io`: create secret + pass ref
-   - If ACR or native auth: skip secret + pass empty ref
-   - Rename from `ghcrImagePullRef` to `imagePullSecretRef`
-
-2. **SPN Contributor role scoped to subscription** — Narrow to resource group
-   - Change `prepare-cluster.sh` scope from `/subscriptions/$ID` to `/subscriptions/$ID/resourceGroups/$RG`
-   - Requires RG to exist first (already ensured)
-
-3. **Local dev recipes missing** — Create `infra/radius/recipes/local/`
-   - Would complete "swap recipes" portability promise
-   - Would enable true local dev without Azure dependencies
-   - Not a regression; new work item
-
-**Bottom Line:**
-- App code remains cloud-agnostic
-- Dapr/Radius abstraction is structurally sound
-- Scripts appropriately Azure-specific for Azure deployment path
-- No portability regressions from the 6 fixes
-
-**Highest-Priority Fix:** Make pull secret conditional on registry type (resolves confusing noise for ACR users).
-
-**Highest-Value New Work:** Create local dev recipes (would complete architecture docs promise).
-
-
-
-## Decision 17 — Scripts fully remediated (Pete audit)
-
-All 8 findings from Pete's infrastructure scripts audit applied: WI Dapr path wired in bootstrap, managed identity lifecycle managed in teardown, GHCR derivation made forkable, deploy-dapr-components.sh marked deprecated, DRY_RUN standardised, platform-common.sh sourced consistently. 
-
-**Details:**
-- Fix 1: bootstrap calls deploy-dapr-components-workload-identity.sh with --cluster-name flag
-- Fix 2: teardown deletes managed identity with --include-managed-identity flag (auto with --include-resource-group)
-- Fix 3: teardown --workspace-name primary, --workspace deprecated, --group-name added
-- Fix 4: deploy-dapr-components.sh marked DEPRECATED in header and README
-- Fix 5: teardown derives GHCR owner/repo from git remote (forkable), with --ghcr-owner/--ghcr-repo overrides
-- Fix 6: both deploy-dapr scripts source lib/platform-common.sh for consistent logging
-- Fix 7: publish-radius-recipes.sh GHCR auth detection uses docker-credential-<store> list | grep ghcr.io
-- Fix 8: bootstrap standardised all DRY_RUN checks to [ "$DRY_RUN" = true ]
-
-**Commit:** 0fe8322
-
-**Date:** 2026-06-05
-
-**Status:** ✅ All scripts pass `bash -n` syntax check. Bootstrap automation ready.
-
-## Decision 18 — GHCR Package API URL Encoding (Pete)
-
-**Date:** 2026-06-05  
-**Author:** Pete (Infrastructure Automation Specialist)  
-**Status:** Implemented  
-
 ### Context
+
 
 The `scripts/teardown.sh` script includes a `delete_ghcr_packages()` function to clean up container images from GitHub Container Registry (GHCR) during teardown. This function was consistently failing with 404 errors for all packages.
 
 ### Problem
+
 
 Package deletion was attempting to call:
 ```bash
@@ -501,6 +25,7 @@ This resulted in 404 errors because there is no package named simply "radiusclai
 
 ### Root Cause
 
+
 GitHub Container Registry uses the full image path as the package name. For images pushed as:
 ```
 ghcr.io/wesback/radiusclaim/expense-api:latest
@@ -512,9 +37,11 @@ However, forward slashes in URL paths have special meaning and must be URL-encod
 
 ### Decision
 
+
 **All forward slashes in GHCR package names MUST be URL-encoded as `%2F` when used in GitHub API paths.**
 
 ### Implementation
+
 
 Changed the encoding in `scripts/teardown.sh` line 493:
 
@@ -534,6 +61,7 @@ This properly encodes package names like:
 - `radiusclaim/recipes/state-store` → `radiusclaim%2Frecipes%2Fstate-store`
 
 ### Package Naming Convention
+
 
 **Standard GHCR package structure:**
 ```
@@ -557,6 +85,7 @@ Where `<package-name>` can contain slashes and becomes the package identifier in
 
 ### Consequences
 
+
 **Positive:**
 - GHCR package deletion will now work correctly
 - Script properly handles multi-level package names (e.g., `recipes/state-store`)
@@ -570,6 +99,7 @@ Where `<package-name>` can contain slashes and becomes the package identifier in
 - None. This is a bug fix that aligns with GitHub API requirements.
 
 ### References
+
 
 - GitHub REST API: [Packages - Delete a package for the authenticated user](https://docs.github.com/en/rest/packages/packages#delete-a-package-for-the-authenticated-user)
 - URL encoding spec: RFC 3986 (forward slash = `%2F`)
@@ -659,6 +189,7 @@ All 8 audit findings identified in the 2026-06-05 full scripts audit were fixed.
 
 ### Fix 1 ✅ — bootstrap.sh calls wrong Dapr script (CRITICAL)
 
+
 **Files:** `scripts/bootstrap.sh`  
 **Change:** Added `AKS_CLUSTER_NAME="${AKS_CLUSTER_NAME:-radiusclaim-aks}"` default variable and `--cluster-name` argument parser. Changed `actionable_file` check and `run_cmd` call from `deploy-dapr-components.sh` to `deploy-dapr-components-workload-identity.sh`, passing `--cluster-name "$AKS_CLUSTER_NAME"`.  
 **Design decision:** bootstrap.sh had no AKS_CLUSTER_NAME variable. Added it with the same default used by the WI script (`radiusclaim-aks`). The `--cluster-name` flag makes it overridable at runtime.
@@ -666,6 +197,7 @@ All 8 audit findings identified in the 2026-06-05 full scripts audit were fixed.
 ---
 
 ### Fix 2 ✅ — teardown.sh never deletes managed identity (CRITICAL)
+
 
 **Files:** `scripts/teardown.sh`  
 **Change:** Added `MI_NAME="radiusclaim-workload-identity"` and `INCLUDE_MANAGED_IDENTITY=false` to defaults. Added `delete_managed_identity()` function with explicit check, federated-credential count reporting, and deletion. Added `--include-managed-identity` flag.  
@@ -675,12 +207,14 @@ All 8 audit findings identified in the 2026-06-05 full scripts audit were fixed.
 
 ### Fix 3 ✅ — Flag name inconsistency `--workspace` vs `--workspace-name`
 
+
 **Files:** `scripts/teardown.sh`  
 **Change:** Added `--workspace-name` as primary flag. Kept `--workspace` as deprecated alias that emits `log_warning "--workspace is deprecated, use --workspace-name"`. Added `--group-name` flag (GROUP_NAME was previously hardcoded with no override path).
 
 ---
 
 ### Fix 4 ✅ — Mark deploy-dapr-components.sh as deprecated
+
 
 **Files:** `scripts/deploy-dapr-components.sh`, `scripts/README.md`  
 **Change:** Added DEPRECATED comment block and `log_warning` call at the top of the script (after sourcing platform-common.sh, so `log_warning` is available). Added `> ⚠️ **Deprecated:**` blockquote notice to the README section for this script.
@@ -689,12 +223,14 @@ All 8 audit findings identified in the 2026-06-05 full scripts audit were fixed.
 
 ### Fix 5 ✅ — GHCR owner/repo hardcoded in teardown.sh
 
+
 **Files:** `scripts/teardown.sh`  
 **Change:** Rewrote `delete_ghcr_artifacts()` to derive owner/repo from `git remote.origin.url` using the same regex as `derive_default_container_registry()` in bootstrap.sh. Falls back to hardcoded values with `log_warning` if git remote parsing fails. Added `--ghcr-owner` and `--ghcr-repo` override flags (stored as `GHCR_OWNER_OVERRIDE`/`GHCR_REPO_OVERRIDE` — initialised to `""` at defaults block to be safe under `set -u`).
 
 ---
 
 ### Fix 6 ✅ — Source lib/platform-common.sh in deploy-dapr scripts
+
 
 **Files:** `scripts/deploy-dapr-components.sh`, `scripts/deploy-dapr-components-workload-identity.sh`  
 **Change:** Added `SCRIPT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` and `source "${SCRIPT_DIR}/lib/platform-common.sh"` after shebang/set in both scripts. Replaced the most egregious `echo "Error: ..."` + raw exit patterns with `log_error` calls. Fixed WI script header comment to name correct filename.  
@@ -704,12 +240,14 @@ All 8 audit findings identified in the 2026-06-05 full scripts audit were fixed.
 
 ### Fix 7 ✅ — Dead GHCR auth detection in publish-radius-recipes.sh
 
+
 **Files:** `scripts/publish-radius-recipes.sh`  
 **Change:** Replaced the double-broken auth check (command substitution in function call position + `docker info | grep ghcr.io` fallback that never matches) with a clean two-step approach: get credential store name from `docker info`, then call `docker-credential-<store> list | grep ghcr.io`. Warning is now shown only when authentication is actually absent, not on every run.
 
 ---
 
 ### Fix 8 ✅ — Standardise DRY_RUN evaluation in bootstrap.sh
+
 
 **Files:** `scripts/bootstrap.sh`  
 **Change:** Used `sed` to replace all 11 instances of `if "$DRY_RUN"; then` → `if [ "$DRY_RUN" = true ]; then` and `if ! "$DRY_RUN"; then` → `if [ "$DRY_RUN" != true ]; then`. The old pattern ran `true` or `false` as shell commands — technically works but non-idiomatic and inconsistent with all other scripts. No other scripts had this pattern.
@@ -728,226 +266,8 @@ bash -n scripts/publish-radius-recipes.sh              → OK
 
 ---
 
-### 2026-03-27T09:38:00Z: Decision — Azure Credential Isolation Pattern
-**By:** Pete (Infrastructure Automation Specialist)
-**Date:** 2026-03-27
-**Status:** IMPLEMENTED
-**What:** When running Azure CLI commands that require privileged operations (role assignments, resource group creation) while SPN environment variables (`AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`) are set, temporarily unset those env vars before the privileged operation, then restore them afterward.
-**Why:** Azure CLI uses SPN credentials for **all** commands when those env vars are set, but service principals typically lack `Microsoft.Authorization/roleAssignments/write` permission needed for role assignment. This creates a catch-22: we need to assign Contributor to the SPN before it can do anything else, but we can't assign the role as the SPN itself. The user's Azure identity (from `az login`) has the necessary permissions for privileged operations.
-
-**Pattern:**
-```bash
-# Save SPN env vars
-local saved_client_id="${AZURE_CLIENT_ID:-}"
-local saved_client_secret="${AZURE_CLIENT_SECRET:-}"
-local saved_tenant_id="${AZURE_TENANT_ID:-}"
-
-# Unset so az uses user's own login
-unset AZURE_CLIENT_ID AZURE_CLIENT_SECRET AZURE_TENANT_ID
-
-# Run privileged operation as user
-az role assignment create --assignee "$app_id" --role Contributor --scope "/subscriptions/$sub_id"
-
-# Restore SPN env vars for subsequent SPN-scoped operations
-export AZURE_CLIENT_ID="$saved_client_id"
-export AZURE_CLIENT_SECRET="$saved_client_secret"
-export AZURE_TENANT_ID="$saved_tenant_id"
-```
-
-**Implementation:**
-- Applied in `scripts/prepare-cluster.sh` lines 172–184 (resource group creation)
-- Applied in `scripts/prepare-cluster.sh` lines 388–420 (role assignment for new SPN)
-- Ensures subsequent SPN-scoped operations (like `rad credential register azure sp`) continue to work correctly
-
-**Affected Operations:**
-- `az role assignment create` when assigning roles to a service principal
-- `az group create` when creating resource groups (if SPN doesn't have Contributor yet)
-- Any other `az` command requiring elevated permissions the SPN doesn't have
-
-### 2026-03-27: Decision — PRD Created for RadiusClaim
-**By:** Graham (Platform Dev)
-**Date:** 2026-03-27
-**Status:** COMPLETED
-**What:** Created a comprehensive Product Requirements Document at `docs/PRD.md`, derived from full codebase analysis and team decision history.
-**Why:** Wesley requested a PRD that captures what's built, what's partially complete, and what remains for a production-ready reference app. The PRD consolidates findings from source code review (3 services, shared contracts), infrastructure analysis (Radius app model, recipes, environments, scripts), CI/CD pipeline review, and all architectural decisions to date.
-
-**Key Findings:**
-- Core application flow (submit → approve → reimburse → notify) is fully functional
-- Infrastructure story (Radius + Dapr + workload identity) is complete at the deployment level
-- Highest-priority gaps: manual approval step for escalated expenses, automated test suite, Dapr CRD auto-projection, pubsub recipe workload identity migration, Phase 7 validation sign-off
-
-**Deliverable:** `docs/PRD.md`
-
-### 2026-03-28T09:39:21Z: Decision — GHCR Auth Strategy — Public Packages for Public Repo
-**By:** Daisy (Lead)
-**Date:** 2026-03-28
-**Status:** Accepted
-**Scope:** Container image pull authentication for all deployment targets
-
-#### Context
-
-All three RadiusClaim service images (`expense-api`, `workflow-engine`, `notification-svc`) are private on GHCR despite the repository being public. This causes `ImagePullBackOff` / `401 Unauthorized` on every deployment target — local Radius, CI-to-AKS, and fresh clusters.
-
-The infrastructure plumbing for `imagePullSecrets` already exists (`app.bicep` → `container-service.bicep`), and `bootstrap.sh` already creates a `ghcr-pull-secret`. But this is ceremony that shouldn't be required for a public reference sample.
-
-#### Decision
-
-**Make all GHCR service image packages public.** This is the correct default for a public reference architecture.
-
-##### Rationale
-
-1. **Teachability:** A developer cloning this repo should be able to `rad deploy` without configuring GHCR credentials. Every extra auth step is a stumbling block in a 10-minute demo.
-
-2. **Consistency:** Recipe packages (`recipes/state-store`, `recipes/pubsub`, `recipes/secrets`) are already public. Service images should match.
-
-3. **Simplicity:** Pull secret wiring adds complexity to `bootstrap.sh`, `deploy-azure.yml`, and `app.bicep` parameters. Public packages eliminate all of it.
-
-4. **No security loss:** The source code is already public. Container images built from public source reveal nothing additional.
-
-##### Fallback
-
-The `imagePullSecrets` infrastructure remains in place for private forks or enterprise deployments. The `ghcrImagePullRef` param in `app.bicep` still works — just pass a non-empty value and pre-create the secret.
-
-#### Consequences
-
-- `bootstrap.sh` pull secret logic becomes optional (cleanup in #36)
-- `deploy-azure.yml` does not need a pull secret step (only needs it if packages ever go private again)
-- Local `rad deploy` works with no auth ceremony
-- ARM Mac developers still need `--platform linux/amd64` for AKS targets
-
-#### Related Issues
-
-- #33 — Make GHCR packages public (P0, immediate fix)
-- #34 — Fix CI workflow pull secret gap (P1, defensive)
-- #35 — Local dev build-and-push script (P1, developer experience)
-- #36 — Conditional pull secret logic in bootstrap.sh (P2, cleanup)
-
-# Decision — ApproveExpenseActivity should treat workflow input as the approval source of truth
-
-**Date:** 2026-04-01  
-**Author:** Billy  
-**Scope:** Expense auto-approval path / workflow-engine
-
-## What
-
-`ApproveExpenseActivity` now computes the approval decision from the `ExpenseSubmission` workflow input first and only uses the persisted `ExpenseRecord` to apply a state transition when the record is visible. If the state read returns null, the activity returns the decision without throwing.
-
-## Why
-
-The expense-api persists the record and then immediately invokes workflow-engine. In live Dapr runs, the workflow activity can start before the state store read is visible through the workflow-engine sidecar, so treating the state read as mandatory creates a cross-sidecar consistency race on the happy path.
-
-## Consequences
-
-1. Auto-approval/manual-review routing now depends on the explicit workflow contract (`ExpenseSubmission.Amount`), not immediate state-store read visibility.
-2. The activity still validates correlation and legal transitions whenever the record is present, so we keep the persisted record as the enforcement point when available.
-3. This keeps the endpoint + workflow contract explicit and avoids adding retry logic for a data point already carried in the workflow input.
-
-### 2026-04-01T14:03:07Z: User directive
-**By:** Wesley Backelant (via Copilot)
-**What:** Rod should always use claude-sonnet-4.6 instead of claude-sonnet-4.5
-**Why:** User request — captured for team memory
-
-# Decision: Fix `rad resource delete` Argument Syntax
-
-**By:** Graham (Platform Dev)
-**Date:** 2026-03-28
-**Status:** IMPLEMENTED
-
-## Context
-
-The "Attempted to deploy existing resource 'radiusclaim' which has a different application and/or environment" error persisted through THREE consecutive bootstrap runs despite two previous fix attempts that added detection guards and recovery logic.
-
-## Root Cause
-
-`rad resource delete` requires TWO positional arguments — the resource type and the resource name — but all three call sites in `bootstrap.sh` passed them combined as a single slash-delimited path:
-
-```bash
-# WRONG: 1 argument → "accepts 2 arg(s), received 1" (exit 1, swallowed by || true)
-rad resource delete "Applications.Core/applications/radiusclaim" -g group --yes
-
-# CORRECT: 2 arguments → actually deletes
-rad resource delete Applications.Core/applications radiusclaim -g group --yes
-```
-
-The error was silently swallowed by `2>/dev/null || true` in all three locations, making the guard and recovery appear to succeed while the stale resource remained.
-
-## Decision
-
-1. **Fix argument splitting** in all three `rad resource delete` call sites (`cleanup_stuck_radius_resources`, `rad_deploy_with_recovery`, and pre-deploy stale-app guard)
-2. **Add `rad app delete` as first attempt** in the application delete paths (belt-and-suspenders — cascading delete covers cases where child resources block resource-level delete)
-3. **Document that `rad app delete` is unreliable** for programmatic use — it may exit 0 without actually deleting
-4. **Keep `rad resource delete` as the authoritative delete** — fast, deterministic, works on the resource plane directly
-
-## Radius CLI Behavior Reference
-
-| Command | Use Case | Reliable? |
-|---|---|---|
-| `rad resource list Applications.Core/applications -o json` | Query resource plane | ✅ |
-| `rad resource delete Applications.Core/applications <name>` | Direct delete (TWO args) | ✅ |
-| `rad app delete <name> --yes` | Cascading delete | ❌ Unreliable |
-| `rad app list -o json` | List apps | ❌ Misses broken/orphaned |
-
-## Impact
-
-- `scripts/bootstrap.sh`: 3 lines fixed + 3 lines added (belt-and-suspenders `rad app delete`)
-- `.squad/skills/radius-idempotent-deployment/SKILL.md`: Updated pattern and key differences section
-- No API or schema changes
-
-## Namespace Migration (Deferred)
-
-The `Applications.Core/*@2023-10-01-preview` → `Radius.Core/*` migration was investigated. The new namespace types are NOT yet available in the Radius v0.55 Bicep extension. Deferred until the Radius project ships the new types with documented API versions.
-
----
-author: graham
-date: 2026-XX-XX
-status: inbox
----
-
-# Decision: Radius namespace-collision cleanup is a required bootstrap step
-
-## Context
-
-`scripts/bootstrap.sh` failed on re-runs when a stale Radius environment from a prior naming convention occupied the same Kubernetes namespace as the canonical environment. Radius enforces namespace uniqueness across environments and returns HTTP 409 Conflict.
-
-## Decision
-
-Before every `rad deploy` that targets an `Applications.Core/environments` Bicep, the bootstrap (and any future CI workflow) MUST perform a namespace-collision pre-flight:
-
-1. List all Radius environments (`rad env list -o json`).
-2. Delete any environment whose `properties.compute.namespace` matches the target namespace but whose name differs from the canonical environment name.
-
-This ensures `rad deploy` can create or update the canonical environment without namespace conflicts from prior naming conventions.
-
-## Rationale
-
-- Radius namespace ownership is a hard invariant — two environments cannot share a Kubernetes namespace.
-- Environment renames (or parameter-default changes) leave behind stale resources that silently block future deploys.
-- Proactive cleanup is more debuggable than error-recovery after a Conflict.
-
-## Scope
-
-Affects: `scripts/bootstrap.sh`, `.github/workflows/deploy-azure.yml` (if it ever gains a standalone env-deploy step), and any future deployment automation.
-
-## Related Skill
-
-`.squad/skills/radius-idempotent-deployment/SKILL.md` — updated with namespace-collision section.
-
-# ADR: Fix Stale Application Guard in Bootstrap
-
-**Date:** 2026-01-XX  
-**Author:** Graham (Platform Dev)  
-**Status:** Proposed  
-**Context:** Bootstrap script idempotency — stale application detection and cleanup
-
-## Problem
-
-The bootstrap script was failing with HTTP 400 BadRequest on re-runs:
-
-> "Attempted to deploy existing resource 'radiusclaim' which has a different application and/or environment."
-
-A previous fix added a guard using `rad app list` to detect and delete stale applications before deploying. However, this guard was not working — it never detected the stale application resource bound to a different environment.
-
 ### Root Cause
+
 
 `rad app list` does not reliably surface applications in orphaned or broken states (e.g., bound to a non-existent or renamed environment). When querying `rad app list -o json`, the stale app never appeared in the results, so the jq filter had nothing to match.
 
@@ -956,6 +276,7 @@ A previous fix added a guard using `rad app list` to detect and delete stale app
 Implement a **two-pronged approach** to fix the stale application detection and cleanup:
 
 ### Prong 1: Replace the Broken Pre-Deploy Guard
+
 
 Replace the `rad app list` query with `rad resource list Applications.Core/applications` — the same pattern used by `cleanup_stuck_radius_resources` for containers.
 
@@ -969,6 +290,7 @@ Replace the `rad app list` query with `rad resource list Applications.Core/appli
 - Delete via `rad resource delete "Applications.Core/applications/${APP_NAME}"` (not `rad app delete`)
 
 ### Prong 2: Add Recovery to `rad_deploy_with_recovery`
+
 
 Extend the `rad_deploy_with_recovery` function to also detect and recover from the "different application and/or environment" BadRequest error.
 
@@ -986,16 +308,19 @@ Extend the `rad_deploy_with_recovery` function to also detect and recover from t
 ## Consequences
 
 ### Positive
+
 - Bootstrap script is now idempotent even when applications are bound to different environments
 - Two layers of defense (pre-deploy guard + deploy recovery) make the script robust against edge cases
 - Uses the reliable `rad resource list` command for resource plane queries
 - Happy path (no stale app) adds only a single `rad resource list` call with zero deletions
 
 ### Negative
+
 - Slightly more complex recovery logic in `rad_deploy_with_recovery`
 - Adds another error case to monitor and maintain
 
 ### Neutral
+
 - Case-insensitive comparison required for Radius resource IDs (mixed-case paths in the wild)
 - Idempotent deletions (`|| true`) mean failed deletions are suppressed — acceptable for this use case
 
@@ -1074,11 +399,13 @@ During bootstrap, we encountered HTTP 400 BadRequest errors when deploying Dapr 
 
 ### Resource Types Affected
 
+
 - `Applications.Dapr/secretStores`
 - `Applications.Dapr/stateStores`
 - `Applications.Dapr/pubSubBrokers`
 
 ### Implementation
+
 
 1. **Pre-deploy detection:** Before `rad deploy app.bicep`, list all Dapr component resources and check their `.properties.environment` field against the target environment ID.
 
@@ -1092,6 +419,7 @@ During bootstrap, we encountered HTTP 400 BadRequest errors when deploying Dapr 
 4. **Recovery handler:** Update `rad_deploy_with_recovery()` to extract the failed resource name from error messages and attempt deletion across all resource types (application + 3 Dapr component types).
 
 ### Code Location
+
 
 - Pre-deploy guards: `scripts/bootstrap.sh` lines ~1530-1605
 - Recovery handler: `scripts/bootstrap.sh` lines ~840-885
@@ -1107,11 +435,13 @@ The stale application guard pattern was already proven to work for application r
 
 ### Positive
 
+
 - Bootstrap is now idempotent for Dapr component resources
 - Environment renames/recreation won't leave stale Dapr components behind
 - Error recovery is automatic — no manual intervention required
 
 ### Negative
+
 
 - `rad resource delete` may hang on resources in "Updating" or "Failed" state (Radius control plane issue)
 - Adds ~75 lines to bootstrap.sh (but follows established pattern)
@@ -1204,6 +534,7 @@ Direct `kubectl delete` only clears tier 1, leaving tier 2 with orphaned referen
 
 ### Control-Plane Restart (PARTIAL SUCCESS)
 
+
 After restarting `applications-rp` and `ucp` deployments:
 
 1. ✅ `platform-secrets` and `statestore` changed from "Failed" to "Updating"
@@ -1241,6 +572,7 @@ Retry deletion of three stale Dapr components (`platform-secrets`, `statestore`,
 
 ### What Worked
 
+
 1. ✅ **Kubernetes-level deletion succeeded:**
    ```bash
    kubectl delete component platform-secrets -n radiusclaim-azure-radiusclaim
@@ -1257,6 +589,7 @@ Retry deletion of three stale Dapr components (`platform-secrets`, `statestore`,
    After restart, `platform-secrets` and `statestore` changed from "Failed" to "Updating" state, indicating the control plane detected the missing Kubernetes resources and is attempting reconciliation.
 
 ### What Didn't Work
+
 
 1. ❌ **`rad resource delete` hung indefinitely:**
    - `rad resource delete Applications.Dapr/secretStores platform-secrets` — no response after 60+ seconds
@@ -1284,6 +617,7 @@ Direct `kubectl delete` only clears Tier 1. Tier 2 retains orphaned references t
 
 ### For Wesley
 
+
 **SHORT-TERM (dev environment):** Consider full Radius reinstall to clear corrupted state:
 ```bash
 rad uninstall kubernetes
@@ -1297,6 +631,7 @@ rad install kubernetes
 - Better handling of resources stuck in "Updating" state
 
 ### For Squad
+
 
 1. Update bootstrap script to document this known limitation
 2. DO NOT use direct `kubectl delete` as a fallback in automation
@@ -1320,9 +655,11 @@ rad install kubernetes
 
 ### Summary
 
+
 Removed sensitive data and build artifacts from git tracking in response to security review findings. Three critical/high-priority fixes were applied to prepare the repository for potential open-source publication.
 
 ### Changes Applied
+
 
 #### 1. Removed dapr-components-generated.yaml (CRITICAL)
 
@@ -1389,6 +726,7 @@ Replaced placeholder with proper .NET workflow:
 
 ### Impact
 
+
 **Security:**
 - ✅ No more Azure tenant IDs, client IDs, or subscription IDs in git history (future commits)
 - ✅ Repository is now safe to open-source or share externally
@@ -1405,6 +743,7 @@ Replaced placeholder with proper .NET workflow:
 
 ### Recommendations
 
+
 1. **Pre-commit hooks:** Consider adding a pre-commit hook to prevent accidental commits of `*-generated.*` files
 2. **Secret scanning:** Enable GitHub secret scanning if repository will be public
 3. **History rewrite:** If publishing to public GitHub, consider creating a clean fork without the old credential-containing commits
@@ -1420,15 +759,18 @@ Replaced placeholder with proper .NET workflow:
 
 ### What
 
+
 All service Dockerfiles now run as non-root user (`app`, UID 1654) instead of root.
 
 ### Why
+
 
 - **Security:** Reduces blast radius if container is compromised
 - **Best Practice:** Running as root violates container security standards
 - **Blog Readiness:** Daisy's review flagged this as a blocking issue for public showcase
 
 ### Implementation
+
 
 Added `USER app` directive to:
 - `src/expense-api/Dockerfile`
@@ -1438,6 +780,7 @@ Added `USER app` directive to:
 **Key Discovery:** Microsoft's `mcr.microsoft.com/dotnet/aspnet:10.0` base image already includes an `app` user (UID 1654). No need to create it — just switch to it.
 
 ### Pattern for Future Dockerfiles
+
 
 ```dockerfile
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
@@ -1452,17 +795,20 @@ ENTRYPOINT ["dotnet", "YourApp.dll"]
 
 ### Verification
 
+
 - All three images build successfully
 - Runtime verification: `uid=1654(app) gid=1654(app)` ✅
 - No application code changes required
 
 ### Impact
 
+
 - **Security posture:** Improved — containers no longer run as root
 - **Build compatibility:** No breaking changes
 - **Runtime behavior:** No changes (ASP.NET Core works fine as non-root)
 
 ### Team Convention
+
 
 This pattern should be the default for all future .NET container workloads in this repo.
 
@@ -1478,6 +824,7 @@ This pattern should be the default for all future .NET container workloads in th
 ---
 
 ### Decision: Portability Audit — Recipes Own All Azure Wiring
+
 
 **By:** Rod (Dapr/Radius Platform Expert)  
 **Date:** 2026-04-03  
@@ -1509,6 +856,7 @@ This pattern should be the default for all future .NET container workloads in th
 ---
 
 ### Decision: Portability Audit — RadiusClaim App Code ZERO Azure SDK Coupling
+
 
 **By:** Graham (API/Backend Platform Expert)  
 **Date:** 2026-04-03  
@@ -1545,6 +893,7 @@ This pattern should be the default for all future .NET container workloads in th
 ---
 
 ### Decision: Bootstrap Portability Audit — Pure Orchestration Confirmed
+
 
 **By:** Pete (Infrastructure Engineer)  
 **Date:** 2026-04-03  
@@ -1584,6 +933,7 @@ This pattern should be the default for all future .NET container workloads in th
 ---
 
 ### Decision: Portability Audit — Documentation Reflects Realized Paradigm
+
 
 **By:** Eddie (DevRel / Technical Writer)  
 **Date:** 2026-04-03  
@@ -1651,11 +1001,13 @@ This violated the architectural principle of **zero infrastructure dependencies 
 
 ### What Was Moved
 
+
 - **Source:** `src/shared/RadiusClaim.Contracts/RadiusClaimDapr.cs`
 - **Destination:** `src/shared/RadiusClaim.Dapr/RadiusClaimDapr.cs`
 - **Namespace change:** `RadiusClaim.Contracts` → `RadiusClaim.Dapr`
 
 ### What's in RadiusClaim.Dapr
+
 
 The `RadiusClaimDapr` static class contains all Dapr-specific configuration constants:
 - `AppIds` — Dapr app IDs for service-to-service invocation (expense-api, workflow-engine, notification-svc)
@@ -1667,6 +1019,7 @@ The `RadiusClaimDapr` static class contains all Dapr-specific configuration cons
 
 ### Why This Separation Matters
 
+
 1. **Clean architectural boundaries:** Domain contracts remain pure and reusable across any infrastructure (HTTP, gRPC, message queues, etc.), not just Dapr.
 2. **Testability:** Domain types can be tested without any Dapr dependencies or mocks.
 3. **Reduced coupling:** Changes to Dapr configuration (renaming components, changing state keys) don't force recompilation of domain contracts.
@@ -1677,6 +1030,7 @@ The `RadiusClaimDapr` static class contains all Dapr-specific configuration cons
 
 ### Positive
 
+
 - **Contracts assembly is now dependency-free:** Zero NuGet packages, zero infrastructure coupling
 - **Dapr constants are centralized:** All Dapr-specific configuration lives in a single, well-named project
 - **Better onboarding:** New developers can understand the domain layer without learning Dapr first
@@ -1684,10 +1038,12 @@ The `RadiusClaimDapr` static class contains all Dapr-specific configuration cons
 
 ### Neutral
 
+
 - **More projects to manage:** Added one more shared project to the solution
 - **More using statements:** Files that use both contracts and Dapr constants need two using statements instead of one
 
 ### Negative
+
 
 - None identified
 
@@ -1722,21 +1078,25 @@ Implemented distributed tracing infrastructure that enables operators to trace i
 ## Design Decisions
 
 ### Naming and Constants
+
 - Used `X-Correlation-ID` HTTP header (standard tracing convention)
 - Stored trace-id in `HttpContext.Items["CorrelationId"]` for middleware and handler access
 - Defined constants at module scope (`CorrelationIdContextKey`, `CorrelationIdHeader`) to avoid magic strings
 
 ### Trace-ID Generation
+
 - Frontend generates UUID v4 at page load using `crypto.randomUUID()` with fallback to manual UUID v4-like string
 - Backend generates UUID if frontend doesn't send one (handles direct API calls, webhooks, other clients)
 - Both use the same format (UUID string) for consistency
 
 ### Propagation Through Dapr Service Invocation
+
 - When expense-api calls workflow-engine, adds `X-Correlation-ID` header to the `DaprClient.CreateInvokeHttpClient()` request
 - When expense-api calls workflow-engine for approval decisions, same header propagation
 - Workflow-engine receives the header and includes it in all response and logging
 
 ### Logging Strategy
+
 - Each request logged at start (`LogInformation`) and completion (`LogInformation`) with trace-id
 - Errors and warnings include trace-id for correlation with request flow
 - Log template parameter names (e.g., `{TraceId}`) match the header for clarity
@@ -1797,6 +1157,7 @@ Implemented automatic trace-ID (correlation ID) generation and header propagatio
 ## What Was Added
 
 ### 1. **Correlation ID Generation** (`app.js`)
+
 - Added `generateUUID()` function that uses native `crypto.randomUUID()` when available, with a fallback to a client-side UUID v4 implementation
 - Added `initCorrelationId()` function that:
   - Generates a UUID on page load
@@ -1805,6 +1166,7 @@ Implemented automatic trace-ID (correlation ID) generation and header propagatio
   - Displays it in the debug footer for visual reference
 
 ### 2. **Header Propagation** (`app.js`)
+
 - Added `tracedFetch()` wrapper function that:
   - Accepts a URL and standard fetch options
   - Automatically injects the `X-Correlation-ID` header with the frontend's correlation ID
@@ -1812,6 +1174,7 @@ Implemented automatic trace-ID (correlation ID) generation and header propagatio
   - All 4 API calls (POST /expenses, GET /expenses, GET /expenses/{id}/workflow, POST /expenses/{id}/{approve|reject}) now use `tracedFetch()`
 
 ### 3. **Debug Footer UI** (`index.html` & `styles.css`)
+
 - Added a fixed footer at the bottom of the page displaying the trace ID
 - Footer is unobtrusive (dark background, small font) and doesn't interfere with page layout
 - Serves as a visual confirmation that tracing is active
@@ -1890,6 +1253,7 @@ Everything else ranges from "polish before publish" to "note for readers." The c
 ## 2. Strengths
 
 ### Architecture & Design
+
 - **Right-sized sample.** Three services + one workflow + shared contracts = the minimum surface that demonstrates service invocation, state, pub/sub, workflows, and Radius environment wiring. Nothing extra.
 - **Clean boundary.** App code imports `Dapr.Client` and `Dapr.Workflow` — never `Azure.Storage`, `Azure.Messaging`, or any cloud SDK. The portability claim is real.
 - **Shared contracts library** (`RadiusClaim.Contracts`) has zero external dependencies. Pure data shapes. This is exactly right for a distributed system sample.
@@ -1898,12 +1262,14 @@ Everything else ranges from "polish before publish" to "note for readers." The c
 - **Idempotent patterns everywhere.** Expense creation, index updates, workflow activities — all handle retries correctly with optimistic concurrency.
 
 ### Code Quality
+
 - **Immutable records** throughout. All DTOs are `sealed record` types. No mutation bugs possible.
 - **Well-structured workflow.** `ExpenseApprovalWorkflow` shows both the fast path (auto-approve) and the human-in-the-loop path (manual review with timeout). Good use of `WaitForExternalEventAsync` + timer race.
 - **Test coverage is real.** 11 test files across 4 projects. Unit tests for activities, pagination, validation. Integration tests for activity chains and contract compatibility. Uses xUnit, Moq, WebApplicationFactory — standard .NET patterns.
 - **Structured logging** with correlation IDs throughout. Proper `ILogger<T>` injection.
 
 ### Infrastructure
+
 - **Environment separation** (`dev.bicep`, `azure-radius.bicep`) with parameterized recipe selection. The `daprBackings` object pattern in `app.bicep` is clean — swap providers without renaming components.
 - **Container module** (`container-service.bicep`) handles Dapr sidecar, health probes, workload identity labels, and pull secrets. Reusable and well-parameterized.
 - **Scripts are thorough.** `bootstrap.sh`, `prepare-cluster.sh`, `validate-deployment.sh` form a complete operator flow.
@@ -1913,6 +1279,7 @@ Everything else ranges from "polish before publish" to "note for readers." The c
 ## 3. Issues
 
 ### 🔴 Critical (Must fix before publishing)
+
 
 #### C1: `dapr-components-generated.yaml` committed with Azure identifiers
 
@@ -1937,6 +1304,7 @@ Everything else ranges from "polish before publish" to "note for readers." The c
 ---
 
 ### 🟠 High (Should fix for blog quality)
+
 
 #### H1: CI workflow doesn't run tests
 
@@ -1973,6 +1341,7 @@ Everything else ranges from "polish before publish" to "note for readers." The c
 ---
 
 ### 🟡 Medium (Polish items)
+
 
 #### M1: Fire-and-forget workflow scheduling in workflow-engine
 
@@ -2012,6 +1381,7 @@ Everything else ranges from "polish before publish" to "note for readers." The c
 ---
 
 ### 🔵 Low (Nice-to-have)
+
 
 #### L1: `.dockerignore` could exclude docs and markdown
 
@@ -2119,6 +1489,7 @@ The bootstrap script successfully deploys infrastructure and demonstrates **Radi
 
 ### What the Blog Promises
 
+
 From `README.md` — **Portability Scope**:
 1. ✓ Application code is fully portable — uses Dapr abstractions (state, pub/sub, service invocation, workflows)
 2. ✓ Deployment model is portable — Radius app model and environment patterns are cloud-agnostic  
@@ -2131,6 +1502,7 @@ The blog explicitly documents **three environments**:
 - `local.bicep` — Local development, in-cluster services (no Azure) ✓
 
 ### What Bootstrap Actually Does
+
 
 **Current experience:**
 1. ✓ Publishes Azure recipes
@@ -2148,6 +1520,7 @@ The blog explicitly documents **three environments**:
 
 ### Current State
 
+
 From `docs/end-to-end-setup-walkthrough.md` line 43:
 ```
 > **Workload Identity Note:** When you provide `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` 
@@ -2163,6 +1536,7 @@ From `scripts/bootstrap.sh`:
 
 ### Assessment
 
+
 **Correct behavior:** Auto-detection works; the flag is redundant for happy-path users.  
 **UX problem:** Users see `--setup-workload-identity` in help text but are told in docs not to use it. This creates **cognitive load** — operators wonder if they're doing it wrong.
 
@@ -2176,11 +1550,13 @@ From `scripts/bootstrap.sh`:
 
 ### Current State
 
+
 The blog promises a **local-only bootstrap path**:
 - `docs/local-dev.md` exists and documents manual setup with kind/k3d, Redis, RabbitMQ
 - No bootstrap variant documented or implemented
 
 ### Assessment
+
 
 **Intentional design choice:** Bootstrap focuses on **AKS + Azure path** (the primary learning story). Local development is documented separately for operators who want **air-gapped or in-cluster-only deployment**.
 
@@ -2195,6 +1571,7 @@ The blog promises a **local-only bootstrap path**:
 ## 4. Troubleshooting: Credential Auth Mode Selection 🔴
 
 ### Current State
+
 
 From `scripts/bootstrap.sh` preamble (lines 7–32):
 ```
@@ -2213,6 +1590,7 @@ if [ -z "$SETUP_WORKLOAD_IDENTITY" ] && [ "$AZURE_AUTH_MODE_RESOLVED" = "wi" ]; 
 ```
 
 ### Assessment
+
 
 **Current problem:** Users don't know **why bootstrap chose workload identity vs. service principal**. The auto-detection is silent.
 
@@ -2237,6 +1615,7 @@ And add a **troubleshooting section** in the walkthrough:
 
 ```markdown
 ### Auth Mode Troubleshooting
+
 
 If bootstrap fails on credential registration:
 
@@ -2298,6 +1677,7 @@ The three container terminations are **not** image pull failures or cluster cred
 ## Evidence
 
 ### Container Crash Pattern
+
 All three services show identical Dapr shutdown:
 - **expense-api:** daprd crashes in CrashLoopBackOff (1/2 containers only)
 - **workflow-engine:** daprd crashes in CrashLoopBackOff (1/2 containers only)
@@ -2306,6 +1686,7 @@ All three services show identical Dapr shutdown:
 The app containers pull and start successfully. The Dapr sidecar starts and then **crashes 1-2 seconds later**.
 
 ### Dapr Error Logs (Actual)
+
 Both workflow-engine and notification-svc daprd logs show:
 ```
 time="2026-04-03T15:11:23.813007949Z" level=error msg="Failed to init component statestore 
@@ -2318,6 +1699,7 @@ ERROR CODE: AuthorizationFailure
 ```
 
 ### Dapr Component Configuration (Actual)
+
 ```yaml
 apiVersion: dapr.io/v1alpha1
 kind: Component
@@ -2339,6 +1721,7 @@ spec:
 **Missing:** No auth method metadata (e.g., `useAAD: true`, `clientId`, etc.)
 
 ### Managed Identity Authorization (Actual)
+
 ```bash
 $ az role assignment list --scope /subscriptions/.../storageAccounts/statercdfgrvmc2tvmlc \
     --query "[?principalName=='radiusclaim-workload-identity']"
@@ -2350,6 +1733,7 @@ The `radiusclaim-workload-identity` managed identity has **no role assignments**
 The only role assignment on the storage account is `401d2477-06de-45b0-bd7a-d377e36b78b0` (a different service principal).
 
 ### Service Account Workload Identity (Actual)
+
 ```bash
 $ kubectl get serviceaccount workflow-engine -n azure-radiusclaim -o yaml
 # Returns: NO workload identity annotations (no azure.workload.identity/client-id)
@@ -2384,6 +1768,7 @@ The two **successfully running** pods (workflow-engine-c7f886b76, notification-s
 
 ### Option A: Assign Storage Blob Data Contributor Role to Workload Identity (RECOMMENDED)
 
+
 ```bash
 IDENTITY_ID=$(az identity show -g radiusclaim-rg -n radiusclaim-workload-identity --query 'id' -o tsv)
 STORAGE_ACCOUNT_ID=$(az storage account show -n statercdfgrvmc2tvmlc -g radiusclaim-rg --query 'id' -o tsv)
@@ -2400,6 +1785,7 @@ rad deploy infra/radius/app.bicep
 ```
 
 ### Option B: Add Workload Identity Annotations to Service Accounts
+
 
 If workload identity wasn't set up during bootstrap, add annotations manually:
 ```bash
@@ -2463,6 +1849,7 @@ That said, several opportunities exist to improve maintainability without violat
 
 ### 1. Architecture & Structure ✅ Good
 
+
 **What works:**
 - Frontend is cleanly decoupled from backend concerns — all data flows through REST API calls (`/expenses`, `/expenses/{id}/workflow`)
 - Static HTML/JS/CSS served from `wwwroot/app/` with no build step required
@@ -2475,6 +1862,7 @@ That said, several opportunities exist to improve maintainability without violat
 
 ### 2. State Management ✅ Good (Simple Approach)
 
+
 **What works:**
 - Centralized `state` object at module scope (lines 1-8)
 - Clear separation: `state.expenses` (list), `state.selectedExpense` (detail), `state.selectedWorkflow` (workflow telemetry)
@@ -2485,6 +1873,7 @@ That said, several opportunities exist to improve maintainability without violat
 - **(Future)** If adding more screens, consider a lightweight state machine library
 
 ### 3. Styling & Design System ⚠️ Opportunity
+
 
 **What works:**
 - CSS custom properties (`--bg`, `--primary`, `--success`, etc.) provide design tokens
@@ -2504,6 +1893,7 @@ That said, several opportunities exist to improve maintainability without violat
 
 ### 4. Testing ❌ Gap
 
+
 **What exists:**
 - **Backend:** Unit tests (`ExpenseApiValidationTests.cs`), contract tests (`NotificationContractTests.cs`)
 - **Frontend:** Zero JavaScript tests
@@ -2515,6 +1905,7 @@ That said, several opportunities exist to improve maintainability without violat
 - **(Future)** If adding complex logic, add Jest tests for pure functions (escapeHtml, formatCurrency, buildTimeline)
 
 ### 5. Performance ✅ Good (for scale)
+
 
 **What works:**
 - No framework overhead — vanilla JS loads instantly
@@ -2531,6 +1922,7 @@ That said, several opportunities exist to improve maintainability without violat
 - **(Future)** Consider debouncing rapid "Refresh" button clicks
 
 ### 6. Accessibility ✅ Good Foundation
+
 
 **What works:**
 - Skip link to main content (`.skip-link`)
@@ -2554,6 +1946,7 @@ That said, several opportunities exist to improve maintainability without violat
 
 ### 7. Documentation ⚠️ Opportunity
 
+
 **What exists:**
 - PRD documents the UI at `/app` and its capabilities
 - Code is readable but sparsely commented
@@ -2570,6 +1963,7 @@ That said, several opportunities exist to improve maintainability without violat
 
 ### Must-Fix (Before Next Demo)
 
+
 | # | Item | Owner | Rationale |
 |---|------|-------|-----------|
 | 1 | Document design tokens at top of `styles.css` | Camila | Makes color/spacing choices explicit for maintainers |
@@ -2577,6 +1971,7 @@ That said, several opportunities exist to improve maintainability without violat
 | 3 | Add header comment to `app.js` explaining architecture | Camila | Helps new contributors understand the data flow |
 
 ### Nice-to-Have (Technical Debt)
+
 
 | # | Item | Owner | Rationale |
 |---|------|-------|-----------|
@@ -2586,6 +1981,7 @@ That said, several opportunities exist to improve maintainability without violat
 | 7 | Extract state mutations into named functions | Camila | Prep for future testability |
 
 ### Future (If UI Grows)
+
 
 | # | Item | Owner | Rationale |
 |---|------|-------|-----------|
@@ -2624,6 +2020,7 @@ All three issues originate from E2E testing and documentation validation. They f
 
 ### Issue #40: GHCR auth required for recipe publishing
 
+
 **Assigned to:** Pete (Infrastructure Automation Specialist)
 
 **Why Pete:**
@@ -2647,6 +2044,7 @@ All three issues originate from E2E testing and documentation validation. They f
 
 ### Issue #41: Bootstrap should detect missing GHCR auth before cluster changes
 
+
 **Assigned to:** Pete (Infrastructure Automation Specialist)
 
 **Why Pete:**
@@ -2668,6 +2066,7 @@ All three issues originate from E2E testing and documentation validation. They f
 ---
 
 ### Issue #42: Log explicit auth mode choice and reasoning in bootstrap output
+
 
 **Assigned to:**
 - **Primary:** Pete (Infrastructure Automation Specialist)
@@ -2822,6 +2221,7 @@ Graham's Entra pivot work is **well-scoped and clean**. The app code is already 
 
 ### Current State (From Code Review)
 
+
 **Already Done:**
 - ✅ `state-store.bicep` — Recipe already has `allowSharedKeyAccess: false`, outputs `accountName` + `containerName` only (no keys/secrets)
 - ✅ `pubsub.bicep` — Outputs `endpoint` for workload identity path, keeps `secrets.connectionString` as SAS fallback only
@@ -2839,6 +2239,7 @@ Per Decision 2026-03-25 "Entra State-Store Redesign Implementation Plan":
 4. **Recipe artifacts** — Republish OCI recipe artifacts after any Bicep changes
 
 ### Code Review Checklist for Graham's PR
+
 
 When Graham opens the Entra pivot PR, verify:
 
@@ -2874,6 +2275,7 @@ When Graham opens the Entra pivot PR, verify:
 
 ### App Code (Billy's responsibility)
 
+
 **Risk:** ⚠️ NONE
 
 **Why:** The app uses Dapr client abstractions (`DaprClient`, `PublishEventAsync`) that are authentication-agnostic. The state-store component name (`statestore`) and pub/sub name (`pubsub`) are constants in `RadiusClaimDapr.cs`, not hardcoded credentials or auth metadata. The Dapr sidecar handles all auth (workload identity OIDC token exchange) — the app never sees credentials.
@@ -2883,6 +2285,7 @@ When Graham opens the Entra pivot PR, verify:
 ---
 
 ### Bootstrap Flow (Graham's domain)
+
 
 **Risk:** 🟡 MODERATE — Entra pivot adds a new early preflight step
 
@@ -2907,6 +2310,7 @@ When Graham opens the Entra pivot PR, verify:
 
 ### Dapr Component Deployment (Graham's domain)
 
+
 **Risk:** 🟢 LOW — Already designed for Entra workload identity
 
 **Current state:**
@@ -2924,6 +2328,7 @@ When Graham opens the Entra pivot PR, verify:
 ---
 
 ### Kubernetes & Azure Networking (Karen's validation)
+
 
 **Risk:** 🟢 LOW — Auth mechanism is transparent to workload/networking
 
@@ -2958,6 +2363,7 @@ When Graham opens the Entra pivot PR, verify:
 
 ### Documentation (Eddie's responsibility, but Graham should validate)
 
+
 **Risk:** 🟡 MODERATE — Docs are already mostly correct; edge cases may exist
 
 **Current docs state:**
@@ -2978,11 +2384,13 @@ When Graham opens the Entra pivot PR, verify:
 
 ### What Must Happen Before Phase 7 Ends
 
+
 1. ✅ **Graham's Entra pivot PR merged** — Unblocks component backfill + environment deployment
 2. ✅ **Eddie validates docs** — Confirms bootstrap + backfill flow is accurately documented
 3. ✅ **Karen runs end-to-end validation** — Fresh cluster + reused cluster paths, all Entra auth flows, RBAC gap detection + repair
 
 ### What Cannot Proceed Without Graham's PR
+
 
 - Karen cannot validate Phase 7 end-to-end (validation is blocked on Dapr component deployment)
 - Demo walkthrough cannot be final (bootstrap behavior undefined until Entra pivot is merged)
@@ -3069,6 +2477,7 @@ Daisy (Lead) — Reference Architecture & Review Gates
 
 ### 1. Remove dapr-components-generated.yaml
 
+
 - **Assigned to:** Graham (Platform Dev)
 - **Why:** Platform dev owns Dapr component wiring and .gitignore patterns. This is a git hygiene + security task requiring careful git history cleanup.
 - **Files:** 
@@ -3085,6 +2494,7 @@ Daisy (Lead) — Reference Architecture & Review Gates
 ---
 
 ### 2. Remove compiled Bicep JSON files
+
 
 - **Assigned to:** Graham (Platform Dev)
 - **Why:** Platform dev owns IaC file structure and build artifact conventions. Knows which JSONs are build artifacts vs. required configs (like `bicepconfig.json`).
@@ -3105,6 +2515,7 @@ Daisy (Lead) — Reference Architecture & Review Gates
 
 ### 3. Wire CI pipeline to run tests
 
+
 - **Assigned to:** Graham (Platform Dev)
 - **Why:** Platform dev owns CI/CD workflows and build orchestration. Knows dotnet test conventions and slnx structure.
 - **Files:** 
@@ -3119,6 +2530,7 @@ Daisy (Lead) — Reference Architecture & Review Gates
 ---
 
 ### 4. Fill "Quick Start (Local Dev)" documentation
+
 
 - **Assigned to:** Eddie (Docs/Story)
 - **Why:** Eddie owns documentation structure and narrative flow. Knows how to translate technical infra (local Dapr/Docker configs in `infra/dapr/local/`) into concise quick-start instructions.
@@ -3135,6 +2547,7 @@ Daisy (Lead) — Reference Architecture & Review Gates
 ---
 
 ### 5. Move RadiusClaimDapr.cs out of Contracts assembly
+
 
 - **Assigned to:** Billy (Backend Dev)
 - **Why:** Billy owns backend service structure and assembly boundaries. Understands the "contracts should be pure DTOs" architecture claim and can refactor without breaking service references.
@@ -3181,16 +2594,19 @@ Spawn all 5 agents simultaneously:
 ## Sequencing & Merge Strategy
 
 ### Phase 1: BLOCKER Fixes (Must complete first)
+
 1. ✅ Graham completes BLOCKER #1 + #2
 2. ✅ Verify no Azure identifiers or compiled artifacts in git
 3. ✅ Mark blog-ready for publication
 
 ### Phase 2: High-Priority Polish (Parallel to blog draft)
+
 1. 🔄 Graham completes NICE #3 (CI tests)
 2. 🔄 Eddie completes NICE #4 (local dev quick-start)
 3. 🔄 All merged before blog goes live
 
 ### Phase 3: Architecture Cleanup (Post-publication acceptable)
+
 1. 🔄 Billy completes NICE #5 (RadiusClaimDapr.cs refactor)
 2. Can ship as follow-up if blog timeline is tight
 
@@ -3271,6 +2687,7 @@ Replaced "Coming in Phase 2" placeholder in README.md with a complete Quick Star
 ## What Was Added
 
 ### Structure (6 steps)
+
 1. Clone and install dependencies
 2. Start Redis and RabbitMQ (Docker)
 3. Run bootstrap script (`--local-dev` flag)
@@ -3279,6 +2696,7 @@ Replaced "Coming in Phase 2" placeholder in README.md with a complete Quick Star
 6. Validate with $50 auto-approve smoke test
 
 ### Tone
+
 - Friendly and directive
 - Assumes basic platform knowledge (Docker, terminal, ports)
 - Minimal jargon — just enough to get running
@@ -3295,11 +2713,13 @@ Current `bootstrap.sh` only supports Azure/Kubernetes deployment. Documented `--
 ## Learnings
 
 ### Doc Gaps
+
 1. No local-mode component generator (bootstrap script assumes K8s)
 2. RabbitMQ Docker setup not documented elsewhere (local-dev.md uses Helm)
 3. Multi-app Dapr run (`dapr run -f`) could simplify terminal count (1 vs 3) — worth documenting as alternative
 
 ### Target Audience Assumptions
+
 - Comfortable with terminal and Docker
 - Doesn't need to understand Dapr/Radius internals to get started
 - Learns by doing first, reads architecture docs after first success
@@ -3328,6 +2748,7 @@ Phase 3 marks the completion of the portability paradigm: Radius recipes now own
 
 ### Paradigm Shift: Recipes Own Wiring
 
+
 **Before (Phase 1–2):**
 - Recipes provisioned Azure resources
 - Bootstrap scripts had to manually create Dapr Component CRDs
@@ -3355,6 +2776,7 @@ Phase 3 marks the completion of the portability paradigm: Radius recipes now own
 
 ### 1. README.md: Narrative-First Explanation
 
+
 Added new section **"How Portability Works: Radius Owns Wiring"** that:
 
 - **Starts with the problem:** Before Phase 3, bootstrap scripts had to "know" what recipes did, coupling portability to orchestration
@@ -3365,6 +2787,7 @@ Added new section **"How Portability Works: Radius Owns Wiring"** that:
 **Pattern:** Lead with "why" (coupling problem) → show "what" (recipes own it) → explain "how" (declarative Bicep) → state the "benefit" (true portability)
 
 ### 2. PHASE3_INTEGRATION_VALIDATION.md: Comprehensive Checklist
+
 
 Created new validation guide covering:
 
@@ -3388,6 +2811,7 @@ Created new validation guide covering:
 
 ### 3. WORKLOAD_IDENTITY_MIGRATION.md: Phase 3 Completion
 
+
 Added section **"Phase 3 Completion: Zero Bootstrap Compensation"** that:
 
 - Clarifies workload identity is now fully in Bicep
@@ -3396,6 +2820,7 @@ Added section **"Phase 3 Completion: Zero Bootstrap Compensation"** that:
 - References PHASE3_INTEGRATION_VALIDATION.md for detailed steps
 
 ### 4. PHASE2_RECIPE_METADATA_OUTPUTS.md: Integration Test Results
+
 
 Added section **"Phase 3 Integration Test Results"** that:
 
@@ -3414,6 +2839,7 @@ Added section **"Phase 3 Integration Test Results"** that:
 
 ### 1. Lead with Paradigm, Not Implementation
 
+
 **Decision:** Explain the portability shift first, then show the implementation.
 
 **Rationale:** Operators need to understand *why* recipes own wiring (true portability) before diving into *how* (Bicep code). Without the "why," the Component CRD Bicep looks like boilerplate.
@@ -3421,6 +2847,7 @@ Added section **"Phase 3 Integration Test Results"** that:
 **Example:** README explains "Recipes own wiring → app doesn't need bootstrap compensation → portability is real" before showing the Bicep syntax.
 
 ### 2. Validation Checklist as Specification
+
 
 **Decision:** Make the validation checklist executable; every checkpoint should have an actual command and expected output.
 
@@ -3430,6 +2857,7 @@ Added section **"Phase 3 Integration Test Results"** that:
 
 ### 3. Separate Concerns: Paradigm vs. Procedures
 
+
 **Decision:** README explains the paradigm shift; PHASE3_INTEGRATION_VALIDATION.md provides step-by-step procedures.
 
 **Rationale:** Architects read README for paradigm; operators read PHASE3 for verification steps. Mixing them confuses both audiences.
@@ -3437,6 +2865,7 @@ Added section **"Phase 3 Integration Test Results"** that:
 **Example:** README says "Recipes create Component CRDs"; PHASE3 says "Run this command to verify: kubectl get component statestore -n azure-radiusclaim -o yaml".
 
 ### 4. Cross-Document Linking
+
 
 **Decision:** Documents reference each other for completeness:
 - README → "See PHASE3_INTEGRATION_VALIDATION.md for verification steps"
@@ -3465,17 +2894,20 @@ Added section **"Phase 3 Integration Test Results"** that:
 
 ### For Operators
 
+
 - **Clear deployment path:** Follow PHASE3 validation checklist step-by-step
 - **Confidence:** Actual commands with expected output remove ambiguity
 - **Troubleshooting:** Component inspection examples help diagnose failures
 
 ### For Architects
 
+
 - **Paradigm clarity:** README explains why this architecture matters (portability)
 - **Design documentation:** PHASE3 shows what success looks like
 - **Coupling elimination:** Clear explanation of how Phase 3 removes script ↔️ recipe coupling
 
 ### For Engineers
+
 
 - **Specification:** PHASE3 checklist is a testable spec for Phase 3 completion
 - **Verification:** Inspection commands show exactly what to check
@@ -3546,6 +2978,7 @@ Bootstrap consumes these outputs via `rad resource show` instead of querying Azu
 
 ### Recipe Changes
 
+
 Each recipe now emits:
 
 ```bicep
@@ -3564,6 +2997,7 @@ output resourceMetadata object = {
 - `infra/radius/recipes/azure/secrets.bicep`
 
 ### Bootstrap Changes
+
 
 New approach:
 
@@ -3601,12 +3035,14 @@ az role assignment create \
 ## Consequences
 
 ### Positive
+
 - Bootstrap is resilient to recipe refactoring
 - Easier to add new recipes (just emit resourceMetadata)
 - Reduces Azure API calls (one Radius query vs. three Azure queries)
 - Clear separation: Radius owns resource creation, bootstrap owns RBAC
 
 ### Negative
+
 - Requires `rad` CLI to be present and configured
 - Metadata must be manually maintained in each recipe
 - If recipe doesn't emit metadata, fallback to Azure query would be needed (currently fails with warning)
@@ -3614,12 +3050,15 @@ az role assignment create \
 ## Alternatives Considered
 
 ### 1. Keep Azure name pattern queries
+
 **Rejected:** Too fragile, couples bootstrap to recipe internals
 
 ### 2. Pass resource names as Bicep parameters to app.bicep
+
 **Rejected:** Creates circular dependency (app needs to know resource names before recipe runs)
 
 ### 3. Write outputs to a file during rad deploy
+
 **Rejected:** Stateful file management, race conditions, cleanup complexity
 
 ## Verification
@@ -3684,6 +3123,7 @@ Dapr sidecars were crashing in CrashLoopBackOff with three distinct failure mode
 ## Root Causes
 
 ### 1. Service Account Configuration Gap
+
 Service accounts had the pod label (`azure.workload.identity/use: "true"`) but were **missing the required annotation**:
 ```yaml
 annotations:
@@ -3693,6 +3133,7 @@ annotations:
 Both label AND annotation are required for the AKS workload identity webhook to inject the token volume.
 
 ### 2. Stale Federated Identity Credentials
+
 The cluster's OIDC issuer URL changed (likely from cluster recreation or update):
 - **Old issuer:** `https://belgiumcentral.oic.prod-aks.azure.com/c0148af6-f284-4093-bebe-56f42cfc014b/a962c4fd-ea7d-4b8b-93f7-42c31f22dfff/`
 - **Current issuer:** `https://belgiumcentral.oic.prod-aks.azure.com/c0148af6-f284-4093-bebe-56f42cfc014b/5e271c2e-6d3f-4d84-b4e4-2029eb5d36c5/`
@@ -3700,6 +3141,7 @@ The cluster's OIDC issuer URL changed (likely from cluster recreation or update)
 Federated credentials with the old issuer URL failed authentication.
 
 ### 3. Missing RBAC Permissions
+
 The managed identity `radiusclaim-workload-identity` (principal ID `7125166d-aa6c-4c66-8b3b-374b25ab5522`) was created but never granted:
 - **Storage Blob Data Contributor** on `statercdfgrvmc2tvmlc`
 - **Azure Service Bus Data Owner** on `pubsubrcqb2krik26ywwc`
@@ -3717,6 +3159,7 @@ Fix all three configuration gaps to restore Dapr component connectivity:
 ## Implementation
 
 ### 1. Service Account Annotations
+
 ```bash
 kubectl annotate serviceaccount expense-api -n azure-radiusclaim \
   azure.workload.identity/client-id=401d2477-06de-45b0-bd7a-d377e36b78b0 --overwrite
@@ -3735,6 +3178,7 @@ kubectl label serviceaccount {name} -n azure-radiusclaim \
 ```
 
 ### 2. Federated Identity Credentials
+
 Created new credentials with current issuer URL:
 ```bash
 ISSUER_URL="https://belgiumcentral.oic.prod-aks.azure.com/c0148af6-f284-4093-bebe-56f42cfc014b/5e271c2e-6d3f-4d84-b4e4-2029eb5d36c5/"
@@ -3760,6 +3204,7 @@ az identity federated-credential delete \
 ```
 
 ### 3. RBAC Role Assignments
+
 Granted permissions to managed identity (principal ID `7125166d-aa6c-4c66-8b3b-374b25ab5522`):
 
 **Storage (statestore component):**
@@ -3787,6 +3232,7 @@ az role assignment create \
 ```
 
 ### 4. Pod Restart
+
 After configuration changes:
 ```bash
 kubectl delete pods --all -n azure-radiusclaim
@@ -3892,6 +3338,7 @@ This fix should be incorporated into the bootstrap script to prevent recurrence:
 
 ### Step 1: Pre-flight & Cluster ✅
 
+
 - AKS cluster `radiusclaim-aks` exists and is healthy (2 nodes, Running)
 - Kubernetes 1.34.4, azure network plugin
 - **Workload identity enabled**: `oidcIssuerProfile.enabled: true` ✅
@@ -3900,6 +3347,7 @@ This fix should be incorporated into the bootstrap script to prevent recurrence:
 - All required CLIs available (`az`, `rad`, `kubectl`, `gh`)
 
 ### Step 2: Bootstrap Script Execution ⚠️
+
 
 **What succeeded:**
 - Radius workspace `radiusclaim-workspace` created and set as default
@@ -3918,6 +3366,7 @@ This fix should be incorporated into the bootstrap script to prevent recurrence:
 - Bootstrap script warned about this upfront but proceeded anyway
 
 ### Step 3: Recipe Publishing ❌
+
 
 **Error Details:**
 ```
@@ -3941,6 +3390,7 @@ GET "https://ghcr.io/token?scope=repository%3Awesback%2Fradiusclaim%2Frecipes%2F
 - Result: Application resource created (status: Succeeded), but Dapr components failed with "RecipeNotFoundFailure"
 
 ### Step 4: Dapr Components Deployment ❌
+
 
 **Expected Components:** 3 required
 - `platform-secrets` (Applications.Dapr/secretStores) → azure-keyvault-secrets recipe
@@ -3966,6 +3416,7 @@ RecipeNotFoundFailure: could not find recipe "azure-servicebus-pubsub" in enviro
 
 ### Step 5: Workload Pod Deployment ❌
 
+
 **Kubernetes Namespaces Created:**
 - ✅ `azure` (environment namespace, created)
 - ✅ `azure-radiusclaim` (workload namespace, created)
@@ -3989,6 +3440,7 @@ kubectl get pods -n azure-radiusclaim → No resources found
 
 ### Step 6: Service-to-Service Invocation ❌
 
+
 **Cannot test because:**
 - No running workload pods to exec into
 - Dapr sidecars not injected (no components configured)
@@ -3999,17 +3451,20 @@ kubectl get pods -n azure-radiusclaim → No resources found
 ## Key Issues Found
 
 ### **BLOCKER: GHCR Authentication Missing**
+
 - **Severity**: Critical
 - **Impact**: Prevents recipe publishing, which blocks entire Dapr component setup
 - **Fix Required**: Set `GHCR_TOKEN` (GitHub PAT with `write:packages` scope) before running bootstrap
 - **Workaround**: Use a public image registry or pre-authenticate to GHCR
 
 ### **BLOCKING: No Container Images Published**
+
 - **Severity**: High
 - **Impact**: Workloads cannot start even if components were deployed
 - **Fix Required**: Build and push container images to registry (or use pre-existing images)
 
 ### **No Recipe Registry Pre-seeding**
+
 - **Severity**: High (for testing)
 - **Impact**: Environment expects recipes from GHCR but they don't exist there
 - **Observation**: Recipe publishing is critical path; no fallback to local/embedded recipes
@@ -4058,11 +3513,13 @@ kubectl get pods -n azure-radiusclaim → No resources found
 ## Logs & Evidence
 
 ### Bootstrap Script Exit Code
+
 ```
 exit code 1 (failure)
 ```
 
 ### Kubernetes Resources Created
+
 ```
 kubectl get ns:
   ✓ dapr-system (Dapr control plane)
@@ -4082,6 +3539,7 @@ rad workspace list:
 ```
 
 ### GHCR Error
+
 ```
 Forbidden: You don't have permission to push to "ghcr.io"
 GET "https://ghcr.io/token?scope=repository%3Awesback%2Fradiusclaim%2Frecipes%2Fstate-store%3Apull%2Cpush": 
@@ -4095,6 +3553,7 @@ GET "https://ghcr.io/token?scope=repository%3Awesback%2Fradiusclaim%2Frecipes%2F
 **⚠️ NOT SAFE TO MERGE** — The critical blocker is GHCR authentication, which prevents the recipe publishing step. This is a **prerequisite issue** for the automated bootstrap to succeed end-to-end.
 
 ### Required Actions Before Merge:
+
 
 1. **Provide GHCR credentials in CI/CD**
    - Set `GHCR_TOKEN` and `GHCR_USERNAME` environment variables before running bootstrap
@@ -4110,12 +3569,14 @@ GET "https://ghcr.io/token?scope=repository%3Awesback%2Fradiusclaim%2Frecipes%2F
 
 ### Partial Success Indicators:
 
+
 ✓ Infrastructure setup (workload identity, namespaces, roles) works correctly  
 ✓ Radius environment and application resources created without error  
 ✓ Control plane installation (Dapr, Radius) succeeds  
 ✓ Bootstrap script structure is sound and well-instrumented
 
 ### Next Steps for Testing:
+
 
 Once GHCR is authenticated, re-run bootstrap and verify:
 1. Recipes publish successfully (expect "Published: 3 recipes" or equivalent)
@@ -4149,6 +3610,7 @@ I've designed the complete Phase 7 validation matrix covering happy paths, edge 
 
 ### Happy Paths (4 scenarios, required for Phase 7)
 
+
 1. **Auto-Approve Flow ($50)** — Submit → approve → reimburse end-to-end
 2. **Manual-Review Flow ($150)** — Submit → hold for review (no auto-rejection)
 3. **Boundary Case ($100.00)** — Exactly at threshold must enter manual review
@@ -4162,6 +3624,7 @@ Each scenario includes:
 
 ### Edge Cases & Failure Paths (6 scenarios, designed for Phase 8+)
 
+
 1. Concurrent submissions from same user
 2. Approval race condition (approval arrives before workflow processes submit)
 3. Denied expense flow (currently out of scope; requires future workflow changes)
@@ -4173,6 +3636,7 @@ All designed with explicit test steps and failure modes, ready for future execut
 
 ### Regression Gates (5 gates, required for Phase 7)
 
+
 1. Dapr SDK integration still works (no crashes, sidecars initialize)
 2. Service invocation (expense-api → workflow-engine)
 3. Pub/Sub contract (workflow → notification-svc)
@@ -4183,6 +3647,7 @@ Each gate verifies Phases 1–6 didn't break with Phase 7 changes.
 
 ### Live Radius Validation Checklist
 
+
 Step-by-step guide covering:
 - **Pre-Flight:** Azure context, Kubernetes, Dapr, Radius, namespace, registry, Azure resources
 - **Deployment:** Radius app, workload pods, Dapr sidecars, component projections, public gateway
@@ -4192,9 +3657,11 @@ Step-by-step guide covering:
 ## Risks Spotted
 
 ### ✅ Entra Auth (Resolved)
+
 Dapr components now use Microsoft Entra auth (shared-key blocked by policy). Graham completed the pivot. All scenarios can proceed.
 
 ### ⚠️ Boundary Case Criticality
+
 The $100.00 threshold is **release-blocking**:
 - `< $100` → auto-approve
 - `>= $100` → manual review
@@ -4202,12 +3669,15 @@ The $100.00 threshold is **release-blocking**:
 Scenario 3 explicitly tests $100.00 exactly (must NOT auto-approve). This is code-verified in `ApproveExpenseActivity.cs` and is critical for demo credibility.
 
 ### ⚠️ State Store Race Conditions
+
 Scenario 6 probes a potential issue: what if approval arrives before the workflow engine processes the initial submit? This depends on Dapr Workflows durability and checkpointing. Must verify in live test.
 
 ### ⚠️ Pub/Sub Idempotency (Pod Crash)
+
 Scenario 10 tests workflow durability after a crash. If the crash causes the workflow to restart and publish a duplicate `ExpenseApproved` event, this is a critical rejection. Dapr Workflows should prevent this; verify in live test.
 
 ### ✅ Notification Timing (Acceptable)
+
 Logs may take 10–20 seconds to appear. This is normal for async pub/sub. The validation checklist builds in adequate waits.
 
 ## Phase 7 Approval Minimum
@@ -4345,6 +3815,7 @@ The three-phase migration successfully achieves the portability goal:
 
 ### ✅ V1: Component CRD Auto-Projection
 
+
 **Status:** PASS  
 **Evidence:**
 
@@ -4370,6 +3841,7 @@ All three recipes create `dapr.io/Component@v1alpha1` CRDs with correct metadata
 ---
 
 ### ✅ V2: RBAC Assignments Created Inline
+
 
 **Status:** PASS  
 **Evidence:**
@@ -4402,6 +3874,7 @@ All three recipes contain inline RBAC role assignments:
 
 ### ⏸️ V3: Workload Identity Federated Credentials
 
+
 **Status:** NEEDS DEPLOYMENT  
 **Deferred Reason:** Cannot verify without live Azure resources
 
@@ -4423,6 +3896,7 @@ az identity federated-credential list \
 ---
 
 ### ⏸️ V4: Dapr Sidecars Discover Components
+
 
 **Status:** NEEDS DEPLOYMENT  
 **Deferred Reason:** No app workloads currently deployed
@@ -4447,6 +3921,7 @@ az identity federated-credential list \
 ---
 
 ### ✅ V5: Bootstrap Output is Clean
+
 
 **Status:** PASS  
 **Evidence:**
@@ -4475,6 +3950,7 @@ az identity federated-credential list \
 ---
 
 ### ⏸️ V6: End-to-End Demo Workflow
+
 
 **Status:** NEEDS DEPLOYMENT  
 **Deferred Reason:** Requires running application workloads
@@ -4509,6 +3985,7 @@ All Phase implementations (P1, P2a, P2b) are correctly realized:
 
 ### 1. Complete Deployment Validation (High Priority)
 
+
 Execute fresh deployment with clean state:
 
 ```bash
@@ -4536,6 +4013,7 @@ rad app deploy infra/radius/app.bicep -e azure-radius
 
 ### 2. Document Recipe Contract (Medium Priority)
 
+
 Create `docs/recipe-contract.md` documenting:
 - Required parameters: `daprPrincipalId`, `daprClientId`, `daprTenantId`, `kubernetesNamespace`
 - Expected outputs: `resourceMetadata` object with Azure resource IDs
@@ -4544,6 +4022,7 @@ Create `docs/recipe-contract.md` documenting:
 - Dependency ordering rules
 
 ### 3. Add Recipe Validation Tests (Low Priority)
+
 
 Create `tests/recipes/validate-component-crds.sh` to verify:
 - All recipes emit `dapr.io/Component` CRDs
@@ -4613,6 +4092,7 @@ Bootstrap was failing with "WorkloadIdentityCredential authentication unavailabl
 The Radius Azure credential was registered as **WorkloadIdentity** kind (client ID + tenant ID only), but **Radius cannot use workload identity to authenticate to Azure during recipe execution**.
 
 ### How It Happened
+
 
 1. A previous bootstrap run registered the Radius credential as WorkloadIdentity
 2. Re-running bootstrap with `--create-spn` auto-detected the existing SP client ID from the stored Radius credential
@@ -4769,16 +4249,19 @@ This created an incomplete resource lifecycle where recipes were not self-contai
 **Bootstrap owns orchestration only. Recipes own the complete lifecycle of resources they provision.**
 
 ### What moved to recipes (now complete):
+
 1. **RBAC role assignments** — Each recipe assigns required roles inline using `Microsoft.Authorization/roleAssignments` resources
 2. **Component CRD generation** — Each recipe creates its Dapr Component CRD using `dapr.io/Component@v1alpha1` resources
 3. **Resource metadata outputs** — Each recipe outputs `resourceMetadata` (IDs, names, endpoints) for declarative discovery
 
 ### What moved to workload-identity.bicep:
+
 1. **Managed identity creation** — User-assigned managed identity for Dapr workload
 2. **Federated identity credentials** — Per-service-account credentials for workload identity federation
 3. **OIDC issuer URL parameter** — Fetched by bootstrap, passed to Bicep
 
 ### What remains in bootstrap (orchestration only):
+
 1. **Infrastructure sequencing** — AKS → OIDC/WI → workload-identity.bicep → rad deploy
 2. **GHCR pull secret wiring** — Kubernetes secret + service account patching (runtime config)
 3. **Service account annotation** — `azure.workload.identity/client-id` annotation (delegated to annotate-service-accounts.sh)
@@ -4787,16 +4270,19 @@ This created an incomplete resource lifecycle where recipes were not self-contai
 ## Rationale
 
 ### Why RBAC in recipes?
+
 - **Portability:** Recipe outputs a fully-functional resource. No post-processing needed.
 - **Idempotency:** Bicep's `guid()` generates deterministic role assignment names. Re-runs are safe.
 - **Lifecycle coupling:** RBAC is part of making a resource usable. It belongs with the resource provisioning.
 
 ### Why Component CRDs in recipes?
+
 - **Declarative:** Radius already supports Kubernetes resource projection. Use it.
 - **Atomic:** Component CRD created alongside Azure resource in same deployment.
 - **Eliminates bash assembly:** No more error-prone bash heredoc generation of YAML manifests.
 
 ### Why metadata outputs?
+
 - **No name-pattern coupling:** Previously, bootstrap queried Azure for resources matching `radiusclaim-*` patterns. This broke if naming conventions changed.
 - **Declarative discovery:** Recipes emit structured metadata (IDs, names, endpoints). Bootstrap consumes outputs without querying Azure.
 - **Future-proof:** If resources move to different RGs or change names, metadata outputs adapt automatically.
@@ -4804,6 +4290,7 @@ This created an incomplete resource lifecycle where recipes were not self-contai
 ## Consequences
 
 ### Positive
+
 ✅ Recipes are now portable, self-contained units  
 ✅ Bootstrap is simpler (2212 lines vs 2423, -211 lines)  
 ✅ No Azure queries by name pattern (brittle coupling eliminated)  
@@ -4811,10 +4298,12 @@ This created an incomplete resource lifecycle where recipes were not self-contai
 ✅ Component CRDs created atomically with Azure resources (no race conditions)
 
 ### Negative
+
 ⚠️ Service account annotation still in bash (Bicep can't project K8s service account annotations yet)  
 ⚠️ Requires Radius recipes to be published to OCI registry (was always true, but more critical now)
 
 ### Migration Impact
+
 🔄 **Non-breaking:** Bootstrap contract unchanged. Existing deployments continue to work.  
 🔄 **Recipe versioning:** Old recipes (without RBAC/CRDs) won't work with new bootstrap. Use recipe versioning in OCI tags.
 
@@ -4935,6 +4424,7 @@ This creates a strict serial ordering: each FIC waits for the previous one befor
 ## Alternatives Considered
 
 ### Option A: Split into Sequential Bootstrap Steps
+
 Create one FIC per `az deployment group create` call in `bootstrap.sh`.
 
 **Rejected because:**
@@ -4943,6 +4433,7 @@ Create one FIC per `az deployment group create` call in `bootstrap.sh`.
 - Makes the IaC less portable (tighter coupling to script logic)
 
 ### Option B: Use Bicep Modules
+
 Split FIC creation into separate child modules and call them sequentially.
 
 **Rejected because:**
@@ -5044,11 +4535,13 @@ Also produced the compiled `infra/radius/app.json` artifact via `az bicep build`
 ## Key Design Decisions
 
 ### Environment injection
+
 `environment` is a required `string` parameter with no default. `rad deploy` injects it
 automatically from the active workspace. The bootstrap does NOT pass `--parameters environment=...`
 explicitly — this is correct.
 
 ### Recipe names must match azure-radius.bicep registrations
+
 The three recipe names in `daprBackings.defaultValue` must match the recipe names registered in
 `infra/radius/environments/azure-radius.bicep`. When that file is authored, it must register:
 - `azure-blob-statestore` for `Applications.Dapr/stateStores`
@@ -5056,11 +4549,13 @@ The three recipe names in `daprBackings.defaultValue` must match the recipe name
 - `azure-keyvault-secrets` for `Applications.Dapr/secretStores`
 
 ### No type/version/metadata on Dapr resources
+
 Following the `kubernetes-first-radius-azure` skill: Dapr resources use `recipe:` only.
 Setting `type`, `version`, or `metadata` alongside `recipe:` causes Radius to reject the
 deployment with a mixed-provisioning error.
 
 ### Bootstrap preflight integration
+
 `bootstrap.sh::current_secret_store_recipe_name()` reads
 `infra/radius/app.json` → `.parameters.daprBackings.defaultValue.secretStore.recipeName`.
 The compiled ARM artifact is checked in so bootstrap can compute the deterministic Key Vault
@@ -5069,16 +4564,19 @@ Verified: `jq -r '.parameters.daprBackings.defaultValue.secretStore.recipeName'`
 `azure-keyvault-secrets`.
 
 ### Workload identity
+
 When `useWorkloadIdentity=true` (default), a `kubernetesMetadata` extension adds the
 `azure.workload.identity/use: "true"` label to all three workload pods.
 `deploy-dapr-components-workload-identity.sh` also patches this label post-deploy — the two
 are additive, not conflicting.
 
 ### imagePullSecrets
+
 `ghcrImagePullRef` defaults to `''`. When non-empty, a `runtimes.kubernetes.pod.imagePullSecrets`
 block is injected. When empty (public images, the default), no pull secret block is added.
 
 ### BCP081 warnings
+
 `az bicep build` produces `BCP081` warnings for all `Applications.*` types. This is expected and
 documented in the `kubernetes-first-radius-azure` skill. These warnings do not block deployment.
 
@@ -5099,6 +4597,7 @@ documented in the `kubernetes-first-radius-azure` skill. These warnings do not b
 ## Test Results
 
 ### Documentation Search
+
 
 **Radius Official Documentation:**
 - Radius recipes can define Applications.Dapr/stateStores resources
@@ -5134,6 +4633,7 @@ output result object = {
 
 ### Schema Testing
 
+
 **Not attempted** — Evidence from official recipes is conclusive.
 
 The Radius recipe execution model is:
@@ -5143,6 +4643,7 @@ The Radius recipe execution model is:
 4. Radius does NOT auto-generate Component CRDs from recipe outputs
 
 ### RadiusClaim Current State
+
 
 **Current recipe outputs (state-store.bicep, lines 122-130):**
 ```bicep
@@ -5175,12 +4676,14 @@ The gap is not missing support for a `component` output type—it's that RadiusC
 **Phase 1 is NOT the only path.** The correct path is:
 
 ### Option A: Fix the Recipes (Recommended)
+
 - Update `infra/radius/recipes/azure/state-store.bicep` to create a `dapr.io/Component` resource (like the official recipes do)
 - Update `infra/radius/recipes/azure/pubsub.bicep` similarly
 - Update `infra/radius/recipes/azure/secret-store.bicep` similarly
 - This is the **architecturally correct** solution and aligns with how Radius recipes are designed to work
 
 ### Option B: Keep Phase 1 Workaround
+
 - Retain the 690-line backfill script as permanent infrastructure
 - Accept that RadiusClaim diverges from standard Radius recipe patterns
 - Document why automatic projection isn't happening (recipes incomplete, not Radius limitation)
@@ -5214,6 +4717,7 @@ azure-radius (production Azure), local (in-cluster only), and dev (dev cluster +
 
 ### 1. All recipes registered under `default` name
 
+
 Each Dapr building block type (`stateStores`, `pubSubBrokers`, `secretStores`) uses `default`
 as the recipe name in every environment. This means `app.bicep` never specifies a recipe name —
 Radius auto-selects the environment's default recipe for each type.
@@ -5224,6 +4728,7 @@ story the blog emphasizes.
 
 ### 2. Parameterized OCI registry and tag
 
+
 `recipeRegistry` and `recipeTag` are parameters with sensible defaults. This allows:
 - Pinning to a specific SHA for reproducible deploys
 - Overriding the registry for air-gapped or mirrored environments
@@ -5231,17 +4736,20 @@ story the blog emphasizes.
 
 ### 3. Azure provider only on azure-radius and dev environments
 
+
 `local.bicep` deliberately omits the Azure provider block. Recipes in that environment must
 deploy entirely in-cluster (Redis, RabbitMQ, Kubernetes secrets). This enforces the constraint
 at the Radius level — a recipe that tries to provision Azure resources will fail cleanly.
 
 ### 4. Separate Kubernetes namespaces per environment
 
+
 Each environment gets its own namespace (`radiusclaim-azure`, `radiusclaim-local`, `radiusclaim-dev`).
 This allows multiple environments to coexist on the same cluster during development and testing
 without resource collisions.
 
 ### 5. dev.bicep is structurally identical to azure-radius.bicep
+
 
 The dev environment uses the same Azure-backed recipes as production. The only differences are
 the environment name and namespace. This ensures developers iterate against production-equivalent
@@ -5279,6 +4787,7 @@ Specifically:
 Align Service Bus pubsub recipe with the workload identity model used by state-store and secrets recipes.
 
 ### Changes Made
+
 
 1. **pubsub.bicep:**
    - Set `disableLocalAuth: true` (Service Bus equivalent of `allowSharedKeyAccess: false`)
@@ -5361,6 +4870,7 @@ Updated `rad_deploy_with_recovery()` in `scripts/bootstrap.sh` to:
 4. **Preserve existing recovery logic:** Keeps handling for stuck-state and stale-application errors
 
 ### Code Changes
+
 
 **File:** `scripts/bootstrap.sh` lines 976–1090
 
@@ -5445,6 +4955,7 @@ The most likely failure mode was:
 
 ### 1) The app deploy owns these Dapr resources
 
+
 `infra/radius/app.bicep` defines:
 
 - `Applications.Dapr/stateStores` named `statestore`
@@ -5457,6 +4968,7 @@ Both are explicitly bound to the injected Radius **environment ID**:
 So these are not independent Kubernetes-only artifacts; they are Radius tracked resources attached to a specific environment object.
 
 ### 2) The environment naming changed / can mismatch
+
 
 Current defaults are:
 
@@ -5473,6 +4985,7 @@ That is strong evidence this exact mismatch already happened in this project.
 
 ### 3) Bootstrap explicitly anticipates interrupted `rad deploy`
 
+
 `bootstrap.sh` already documents this for container resources:
 
 > When a previous `rad deploy` times out or is interrupted, Radius may leave container resources in "Updating" (or other in-progress) provisioning states.
@@ -5480,6 +4993,7 @@ That is strong evidence this exact mismatch already happened in this project.
 That same failure class explains the Dapr resource symptom too: if the original deploy never completed, the tracked resource can remain in a non-terminal state.
 
 ### 4) Prior diagnosis matches this control-plane pattern
+
 
 From `rod-ucp-deletion-diagnosis.md`:
 
@@ -5565,6 +5079,7 @@ That is why delete retried and eventually hit the max retry count.
 
 ### Most likely cause
 
+
 **A naming transition from old env `radiusclaim-azure` to canonical env `azure`, combined with an incomplete earlier deploy.**
 
 This is more likely than “Wesley intentionally passed a different `--env-name` on the second run,” because:
@@ -5575,9 +5090,11 @@ This is more likely than “Wesley intentionally passed a different `--env-name`
 
 ### Could a failed mid-run also contribute?
 
+
 Yes. A failed or interrupted earlier run is probably what left the resource half-provisioned **under the old environment binding**.
 
 ### Fresh cluster after teardown?
+
 
 Possible, but less likely as the primary cause here. If this had been only a fresh cluster plus leftover cloud resources, you would expect Azure-side collisions (like soft-deleted Key Vault issues). Instead, the diagnosis showed stale **Radius control-plane** resources still present and referencing the old environment.
 
@@ -5646,6 +5163,7 @@ In short:
 
 ### Why yes
 
+
 Right now the script only traps `EXIT` to stop port-forwarding. If the user presses Ctrl+C during `rad deploy`, bootstrap provides no warning, no post-interrupt diagnosis, and no reminder that Radius may still be reconciling resources.
 
 A SIGINT/SIGTERM trap would help by:
@@ -5656,6 +5174,7 @@ A SIGINT/SIGTERM trap would help by:
 - reducing the chance that the operator immediately re-runs bootstrap into half-finished state
 
 ### Why not as a “cleanup rollback” mechanism
+
 
 A trap cannot reliably undo a partially accepted `rad deploy`.
 
@@ -5671,6 +5190,7 @@ So the trap should be:
 - not an automatic “delete everything on Ctrl+C” rollback
 
 ### Best recommendation
+
 
 Add a SIGINT/SIGTERM trap that:
 
@@ -5842,6 +5362,7 @@ fi
 ---
 
 ### 2026-04-04: Decision — Subscription ID Injection Strategy
+
 **By:** Daisy (Lead)  
 **Status:** DECISION — Ready for Pete (Infrastructure) implementation  
 
@@ -5862,6 +5383,7 @@ fi
 ---
 
 ### 2026-04-04: Decision — API Authentication Strategy
+
 **By:** Daisy (Lead)  
 **Status:** DECISION — Ready for Billy (Backend) implementation  
 
@@ -5895,6 +5417,7 @@ fi
 ---
 
 ### 2026-04-04: Best Practice — HttpClient Factory Pattern
+
 **By:** Billy (Backend Dev)  
 **Status:** DIRECTIVE  
 
@@ -5916,6 +5439,7 @@ fi
 ---
 
 ### 2026-04-04: Decision — Scaling Documentation Strategy
+
 **By:** Eddie (Docs/Story)  
 **Status:** IMPLEMENTED  
 **Issue:** #50 — Document expense-index scaling boundary
@@ -5959,6 +5483,7 @@ Docker build fails during the `dotnet restore` phase for **three services**:
 
 ### Error Details
 
+
 **Issue 1: Version Constraint Unsatisfiable**
 ```
 error NU1102: Unable to find package OpenTelemetry.Exporter.Jaeger with version (>= 1.11.0)
@@ -5988,6 +5513,7 @@ One or more transitive dependencies pull in `OpenTelemetry.Api` 1.11.1, which is
 
 ### Version Constraint Mismatch
 
+
 The **OpenTelemetry ecosystem has different release cadences** across packages:
 
 | Package | Status | Latest Stable |
@@ -6001,11 +5527,13 @@ The Jaeger exporter **has not reached 1.11.0 parity** with the main OpenTelemetr
 
 ### Why Was 1.11.0 Specified?
 
+
 Two hypotheses:
 1. **Copy-paste error**: All packages were set to 1.11.0 without checking Jaeger exporter availability
 2. **Future planning**: Intended to upgrade later, but version was committed before availability
 
 ### Current Usage
+
 
 All three services **actively use** the Jaeger exporter:
 - **expense-api/Program.cs** (lines 62–82): Reads `JAEGER_AGENT_HOST` and `JAEGER_AGENT_PORT`, calls `.AddJaegerExporter()`
@@ -6020,6 +5548,7 @@ Removing Jaeger would break observability, so this is not an option without upda
 
 ### 1. Backward Compatibility & API Stability
 
+
 OpenTelemetry 1.6.0-rc.1 → 1.11.0 (future) will likely be a **breaking change** in the exporter API. Pre-release status means:
 - No stability guarantee
 - Method signatures may change
@@ -6029,12 +5558,14 @@ OpenTelemetry 1.6.0-rc.1 → 1.11.0 (future) will likely be a **breaking change*
 
 ### 2. Security & Patch Management
 
+
 `OpenTelemetry.Api` 1.11.1 has a **moderate CVE**. We need to:
 - Identify which package transitively requires it
 - Check if 1.11.1+ has a patch
 - Plan upgrade path
 
 ### 3. Observability Requirements
+
 
 From `docs/OBSERVABILITY.md`:
 - **Jaeger is the production observability backend** for local development
@@ -6044,6 +5575,7 @@ From `docs/OBSERVABILITY.md`:
 **Implication:** We cannot remove Jaeger. We must find a compatible version.
 
 ### 4. Service Scope
+
 
 All **three core services** are affected:
 - expense-api (critical path)
@@ -6057,6 +5589,7 @@ All **three core services** are affected:
 ## Solution Options
 
 ### Option A: Downgrade to Stable 1.5.1 (Recommended)
+
 
 **Action:**
 ```xml
@@ -6081,6 +5614,7 @@ All **three core services** are affected:
 
 ### Option B: Use 1.6.0-rc.1 Explicitly
 
+
 **Action:**
 ```xml
 <PackageReference Include="OpenTelemetry.Exporter.Jaeger" Version="1.6.0-rc.1" />
@@ -6102,6 +5636,7 @@ All **three core services** are affected:
 
 ### Option C: Wait for 1.11.0-rc.x and Document Blocker
 
+
 **Action:**
 Document this as a blocker and commit to upgrade when NuGet releases `OpenTelemetry.Exporter.Jaeger` 1.11.0-rc.*.
 
@@ -6118,6 +5653,7 @@ Document this as a blocker and commit to upgrade when NuGet releases `OpenTeleme
 ---
 
 ### Option D: Switch to Application Insights (Future-Proof)
+
 
 **Action:**
 Replace Jaeger with Azure Application Insights exporter for production, keep Jaeger for local dev (conditional).
@@ -6141,12 +5677,14 @@ Replace Jaeger with Azure Application Insights exporter for production, keep Jae
 
 ### Rationale
 
+
 1. **Unblocks immediately**: Stable version eliminates NuGet resolution errors
 2. **Minimal code changes**: No API changes to Program.cs files
 3. **Risk-minimized**: Proven version, not pre-release
 4. **Team clarity**: Document why 1.11.0 was aspirational but 1.5.1 is the stable ceiling
 
 ### Action Items
+
 
 1. **Update all three `.csproj` files:**
    - `src/expense-api/ExpenseApi.csproj`
@@ -6232,12 +5770,14 @@ Docker builds failed because all three services (expense-api, workflow-engine, n
 
 ### Rationale
 
+
 1. **API Compatibility:** All three services use the standard `.AddJaegerExporter(Action<JaegerExporterOptions>)` pattern. Version 1.5.1 fully supports this API.
 2. **Stability:** 1.5.1 is proven and stable; pre-release 1.6.0-rc.1 adds no value and introduces deployment risk.
 3. **Zero Code Impact:** No changes required to application code in any service.
 4. **Immediate Unblock:** Restores Docker image builds and dependency resolution.
 
 ### Files Changed
+
 
 - `src/expense-api/ExpenseApi.csproj` — 1.11.0 → 1.5.1
 - `src/workflow-engine/WorkflowEngine.csproj` — 1.11.0 → 1.5.1
@@ -6404,6 +5944,7 @@ Next deployment cycle will exercise the new RBAC module paths end-to-end.
 Updated four documentation files to reflect the verified end-to-end deployment cycle that Rod successfully ran (teardown → prepare-cluster → bootstrap → validate).
 
 ### README.md
+
 - Added "Verified Deployment Cycle" section with the exact tested command sequence
 - Added success criteria table (pod READY counts, Dapr component names, smoke test pass)
 - Added "Known Platform Behaviours" block documenting the component projection gap, recipe output opacity, gateway readiness lag, and CI vs local auth mode differences
@@ -6413,16 +5954,19 @@ Updated four documentation files to reflect the verified end-to-end deployment c
 - Updated project status footer to "End-to-end deployment validated ✅"
 
 ### docs/end-to-end-setup-walkthrough.md
+
 - Retitled Step 9a from "Verify and Backfill Dapr Components" to "Verify Dapr Components (bootstrap) / Apply Components (manual path)"
 - Added routing note at top: bootstrap path is automatic; step only required for manual `rad deploy` path or bootstrap failure recovery
 - Replaced deprecated `deploy-dapr-components-workload-identity.sh` with `apply-dapr-components-from-recipes.sh` and updated parameter signatures
 
 ### docs/radius-validation-checklist.md
+
 - Fixed "zero-secrets model" CI claim: CI workflow actually uses `AZURE_CLIENT_SECRET` for SP registration
 - Updated Step 5a to use `apply-dapr-components-from-recipes.sh` with correct parameters
 - Fixed three troubleshooting references to old script
 
 ### PHASE3_INTEGRATION_VALIDATION.md
+
 - Added historical note banner explaining where the Phase 3 design diverged from actual implementation (Radius does not project Dapr CRDs from recipes; `apply-dapr-components-from-recipes.sh` is the real mechanism)
 
 ## Why These Changes
@@ -6585,4 +6129,906 @@ Pete's implementation correctly addresses the missing Dapr components issue that
 **Final Verdict: ✅ APPROVED** — Pete's implementation is correct, well-documented, and production-ready.
 
 ---
+
+### expense-api
+
+
+**✅ SECURE — JWT Bearer scaffolding**  
+`AddAuthentication(JwtBearerDefaults.AuthenticationScheme)` + `AddJwtBearer` with `ValidateAudience: true`, `ValidateIssuer: true`, `ValidateLifetime: true`. Entra ID authority. Production startup guard throws `InvalidOperationException` if `AzureAd:Authority` or `AzureAd:Audience` are empty in non-Development environments — intentional and correct.
+
+**✅ SECURE — Approve/reject endpoints gated**  
+`POST /expenses/{id}/approve` and `POST /expenses/{id}/reject` are decorated with `.RequireAuthorization()`. Both return 401 without a valid bearer token.
+
+**⚠️ REVIEW — Public endpoints return full expense records**  
+`GET /expenses`, `GET /expenses/{id}`, `GET /expenses/{id}/workflow` are unauthenticated by design (documented in `docs/API_AUTHENTICATION.md`). This exposes `EmployeeId`, `Amount`, `Description`, and workflow state to unauthenticated callers. Intentional for this reference sample; flag for real deployments.
+
+**❌ RISK — No role/scope/claim enforcement on approve and reject**  
+`.RequireAuthorization()` authenticates the caller but enforces no policy, role, or scope claims. Any user with a valid Entra ID token for this audience can approve or reject any expense. No check against an "approver" role, a specific scope, or even that the approver is not the original submitter.
+
+**❌ RISK — No self-approval prevention**  
+The approve endpoint does not compare the caller's identity claim against `expense.EmployeeId`. An employee can submit and immediately approve their own expense if they have a valid token.
+
+---
+
+## 2. Input Validation & Injection
+
+**✅ SECURE — No SQL injection surface**  
+All state access goes through the Dapr `.NET SDK` state store API (`GetStateAsync`, `SaveStateAsync`). There are no raw queries, no ORM, no string-concatenated queries. Injection is not applicable.
+
+**✅ SECURE — Required field validation present**  
+`EmployeeId`, `Amount > 0`, `Currency`, `Description` are all validated in `ValidateSubmission()`. Server returns `ValidationProblem` (400) for violations.
+
+**⚠️ REVIEW — Currency field accepts arbitrary strings**  
+The currency field is `.Trim().ToUpperInvariant()` but not validated against an allowed list (e.g., ISO 4217). A caller can submit `"AAAA"` or a 100-character string as currency.
+
+**❌ RISK — No upper bound on `Amount`**  
+`Amount > 0` is the only constraint. A $999,999,999,999 expense is accepted, stored, and passed through the workflow and notification system.
+
+**❌ RISK — No length limits on `Description`, `EmployeeId`, or `Reason`**  
+`Description`, `EmployeeId`, and the rejection `Reason` field have no maximum length enforced. A caller can submit a multi-MB description that is stored in Dapr state and forwarded as workflow input and pub/sub payload.
+
+---
+
+## 3. State Management Security
+
+**✅ SECURE — Strong consistency mode used throughout**  
+All `GetStateAsync` and `SaveStateAsync` calls use `ConsistencyMode.Strong`. Index mutations use `ConcurrencyMode.FirstWrite` with ETag-based optimistic locking and retry. No eventual-consistency state leakage.
+
+**✅ SECURE — State keys namespaced**  
+All expense records are stored under the `expense:` prefix (`RadiusClaimDapr.StateKeys.Expense(id)`). The index key is `expense-index`. No overlapping key spaces.
+
+**⚠️ REVIEW — CorrelationId is client-controlled and used as the Dapr workflow instanceId**  
+The workflow's `instanceId` is set to `submission.CorrelationId`, which the client provides (or has generated by the server if absent). A caller who submits with a crafted correlationId can target a predictable workflow instance. A caller who knows another expense's correlationId can query `GET /workflows/{instanceId}` on workflow-engine directly.
+
+**❌ RISK — Global expense index is unscoped**  
+`expense-index` is a single flat list of all expense IDs across all employees. `GET /expenses` returns all expenses to any unauthenticated caller with no per-user filtering. Intentional for the sample, but this means full cross-user expense enumeration is trivially possible.
+
+---
+
+## 4. Workflow & Compensation
+
+**✅ SECURE — Explicit state machine with guarded transitions**  
+`ApproveExpenseActivity`, `RecordApprovalActivity`, `RejectExpenseActivity`, and `ProcessReimbursementActivity` all enforce expected prior-state before transitioning. A `Submitted` → `Reimbursed` skip is rejected with `InvalidOperationException`. `RecordApprovalActivity` and `RejectExpenseActivity` are idempotent on already-terminal states.
+
+**✅ SECURE — Compensation path is explicit**  
+Timeout auto-rejection is handled via `Task.WhenAny(decisionTask, timeoutTask)` in the workflow. When timeout wins, `RejectExpenseActivity` runs with a clear reason string. No silent state drift.
+
+**❌ RISK — No approver identity attached to the decision event**  
+`ManualDecisionEvent` carries only `(bool Approved, string? Reason)`. There is no `ApproverId` claim propagated from the HTTP context through expense-api to the workflow. The workflow has no way to verify who raised the decision, check ownership, or log the approver's identity for audit.
+
+**❌ RISK — workflow-engine `POST /workflows/{instanceId}/decide` is completely unauthenticated**  
+There is no `UseAuthentication()`, `UseAuthorization()`, or `.RequireAuthorization()` anywhere in `workflow-engine/Program.cs`. Any caller who can reach this service on the Dapr-internal network can raise an approval or rejection decision for any workflow instance without credentials. The only protection is network-level Dapr mesh isolation.
+
+**⚠️ REVIEW — No replay protection on the decision event**  
+The `/decide` endpoint checks that the workflow is still running before raising the event, but there is no idempotency key or nonce to prevent duplicate decision signals from being delivered if the endpoint is called twice before the workflow processes the first signal.
+
+---
+
+## 5. Secrets & Config
+
+**✅ SECURE — No hardcoded secrets**  
+Searched `src/` for common secret patterns (api_key, password, connectionstring, token) in `.cs` and `.json` files. No hardcoded credentials found. Dapr components are referenced by logical name only.
+
+**✅ SECURE — Production config requires explicit injection**  
+`appsettings.json` (production base) intentionally has empty `Authority` and `Audience`. The startup guard enforces injection via environment variables (`AzureAd__Authority`, `AzureAd__Audience`) before the service accepts traffic.
+
+**⚠️ REVIEW — `appsettings.Development.json` commits Entra tenant-relative URIs**  
+`appsettings.Development.json` in expense-api contains `https://login.microsoftonline.com/common` and `https://radiusclaim.azurewebsites.net/api`. These are non-sensitive dev defaults, but in a real project these could be tenant-specific URIs — committing them to source needs care.
+
+---
+
+## 6. Error Handling & Logging
+
+**✅ SECURE — No exception messages in API responses**  
+All `Results.Problem()` calls use controlled `title` and `detail` strings authored by the developer — no `ex.Message`, `ex.StackTrace`, or raw exception data is forwarded to callers.
+
+**✅ SECURE — Structured logging without PII/sensitive data interpolation**  
+Log statements use structured logging message templates (not string interpolation) and log only `ExpenseId`, `CorrelationId`, `InstanceId`, and status values — not `Amount`, `Description`, `EmployeeId`, or any auth material.
+
+**⚠️ REVIEW — `WorkflowStatusResponse.FailureDetails` forwards Dapr's internal failure string**  
+`workflowState.FailureDetails?.ToString()` is included in `WorkflowStatusResponse.FailureDetails` and returned on `GET /workflows/{instanceId}` (workflow-engine) and surfaced via `GET /expenses/{id}/workflow` (expense-api). This field may contain internal exception messages or stack traces from Dapr workflow activities. The frontend correctly escapes it (no XSS), but the content itself can leak internal implementation details to any unauthenticated caller who knows an expense's correlationId.
+
+---
+
+## Summary Table
+
+| Category | Finding | Rating |
+|---|---|---|
+| Auth — JWT scaffolding | Entra ID, ValidateAudience/Issuer/Lifetime, startup guard | ✅ |
+| Auth — Protected endpoints | approve/reject require `.RequireAuthorization()` | ✅ |
+| Auth — Public endpoints expose full expense data | Intentional design, real-deployment concern | ⚠️ |
+| Auth — No role/scope policy on approve/reject | Any valid token approves any expense | ❌ |
+| Auth — Self-approval not prevented | Submitter can approve own expense | ❌ |
+| Validation — Required fields | EmployeeId, Amount>0, Currency, Description checked | ✅ |
+| Validation — No SQL injection surface | Dapr state SDK only | ✅ |
+| Validation — Amount has no upper bound | Arbitrarily large amounts accepted | ❌ |
+| Validation — No length limits on string fields | Multi-MB Description/EmployeeId/Reason accepted | ❌ |
+| Validation — Currency not validated against allowed list | Arbitrary string accepted | ⚠️ |
+| State — Strong consistency + ETag concurrency | Throughout all state read/write | ✅ |
+| State — State keys namespaced | `expense:` prefix | ✅ |
+| State — Global index unscoped | All expenses visible to all callers | ❌ |
+| State — CorrelationId is client-controlled workflow instanceId | Predictable; probe risk | ⚠️ |
+| Workflow — Explicit state machine transitions | All activities enforce prior-state checks | ✅ |
+| Workflow — Compensation explicit | Timeout → auto-reject, idempotent activities | ✅ |
+| Workflow — No approver identity in decision event | No audit trail, no ownership check | ❌ |
+| Workflow — workflow-engine fully unauthenticated | Zero auth on all endpoints incl. /decide | ❌ |
+| Workflow — No replay protection on /decide | Duplicate signals possible | ⚠️ |
+| Secrets — No hardcoded credentials | Clean throughout | ✅ |
+| Secrets — Production config requires injection | Startup guard enforces it | ✅ |
+| Secrets — Dev appsettings commits tenant URIs | Non-sensitive but worth noting | ⚠️ |
+| Errors — No exception leakage in responses | Controlled title/detail only | ✅ |
+| Errors — Structured logging without sensitive data | No Amount/Description in logs | ✅ |
+| Errors — `FailureDetails` forwards Dapr internals | May expose exception messages | ⚠️ |
+
+### Why Strong Consistency
+
+
+1. **Reference Consistency**: expense-api sets the pattern; activities should follow.
+2. **State Transitions Are Sequential**: Workflow state moves through well-defined transitions (Submitted → ManualReviewRequested/Approved → Reimbursed/Rejected). Strong consistency ensures visibility across replicas.
+3. **Teaching Clarity**: Readers learn one consistent Dapr state pattern, not multiple strategies.
+4. **Cross-Service Visibility**: When expense-api and workflow-engine read the same expense state, Strong ensures both see the same version.
+
+
+### Implementation
+
+
+Updated state operations in:
+- `ApproveExpenseActivity`: GetStateAsync, SaveStateAsync
+- `ProcessReimbursementActivity`: GetStateAsync, SaveStateAsync
+- `RecordApprovalActivity`: GetStateAsync, SaveStateAsync
+- `RejectExpenseActivity`: GetStateAsync, SaveStateAsync
+
+Each now specifies `consistencyMode: ConsistencyMode.Strong` or passes `StateOptions { Consistency = ConsistencyMode.Strong }`.
+
+
+### Trade-off
+
+
+**Latency:** Strong consistency requires quorum reads/writes in distributed stores (e.g., Cosmos DB, Redis). This is negligible for a reference sample with typical expense workflows (minutes to hours per record).
+
+**Production Note:** Readers should evaluate their own latency/throughput requirements and consider eventual consistency for high-volume scenarios.
+
+## Alternatives Considered
+
+1. **Keep Eventual + Document**: Add inline comments explaining why eventual is correct for workflow-internal state. Rejected: Inconsistent patterns confuse readers.
+2. **Hybrid Strategy**: Strong in expense-api, Eventual in activities. Rejected: Violates "reference sample teaches one clear pattern" goal.
+
+## Approval
+
+Ready for Scribe merge into decisions.md after code review sign-off.
+
+### D1 — Remove dead contract types before publishing
+
+
+`ExpenseApproved.cs` and `ExpenseRejected.cs` in `RadiusClaim.Contracts` are never referenced anywhere in the codebase. The notification path uses `NotificationRequest` + `NotificationEventType` exclusively. These two types, and the three unused enum values (`ExpenseSubmitted`, `ApprovalTimeout`, `ExpenseRejectedTimeout`), should be deleted before the blog post ships.
+
+
+### D2 — Strip internal phase labels from all public surfaces
+
+
+The `GET /` service descriptor endpoints on all three services return `"phase-3"` or `"phase-5"` strings in their JSON payloads. These are internal build-phase identifiers that have no meaning to blog readers. They should be replaced with a `"version"` or `"description"` field appropriate for a published reference sample.
+
+
+### D3 — README architecture diagram must match actual code
+
+
+The README mermaid diagram lists a `ValidateExpense` activity. This activity does not exist. The real activities are: `ApproveExpense`, `ProcessReimbursement`, `PublishNotification`, `RecordApproval`, `RejectExpense`. The diagram must be corrected.
+
+
+### D4 — Silent exception swallow in TryCreateExpenseRecordAsync must log
+
+
+The catch-all `catch when (!cancellationToken.IsCancellationRequested) {}` in `expense-api/Program.cs` is intentional for ETag-conflict retry logic, but the swallowed exception is never logged. A reference sample should demonstrate defensive logging. The catch block should log at `Warning` level with the exception and context before silently retrying.
+
+
+### D5 — ConsistencyMode must be consistent and intentional
+
+
+`expense-api` uses `ConsistencyMode.Strong` on all state operations. Workflow activities (`ApproveExpenseActivity`, `ProcessReimbursementActivity`, etc.) use the default (`Eventual`). For a reference sample teaching Dapr state, the choice must be deliberate and documented. Recommendation: align to `Strong` in activities and add a code comment explaining the tradeoff.
+
+
+### D6 — Development docs must not be in the published docs/ tree
+
+
+`docs/phase-7-validation-checklist.md`, `docs/phase7-validation-scenarios.md`, and related files expose the development timeline to external readers. These should be removed from the repository before publishing. If they have ongoing operational value, they belong in an internal wiki, not the sample repo.
+
+## Non-Blocking Improvements (nice-to-have)
+
+- Remove the `StateStore`/`PersistentStore` duplicate alias in `RadiusClaimDapr.Components`.
+- Replace `app.Logger` in middleware lambdas with an injected `ILogger<Program>`.
+- Add `resources.requests`/`resources.limits` to container specs in `infra/radius/app.bicep`.
+- Remove redundant `ASPNETCORE_URLS` env var from Dockerfiles (`.NET 8+` only needs `ASPNETCORE_HTTP_PORTS`).
+- `GET /expenses` approval endpoint does not validate that `reason` is non-empty on a `Rejected` action — document or enforce.
+
+## Exemplary Patterns (highlight in the blog post)
+
+These sections are blog-worthy as-is:
+
+- **`ExpenseApprovalWorkflow.cs` lines 62–128**: `WhenAny` race between `WaitForExternalEventAsync` and `CreateTimer` — textbook Dapr human-in-the-loop pattern.
+- **`RadiusClaimDapr` constants class**: centralises all Dapr component names, app IDs, state keys, and topic names — prevents component-name drift.
+- **`ApproveExpenseActivity`**: bootstrapped record write before awaiting cross-service invocation — correct pattern for at-least-once durable activity semantics.
+- **`RecordApprovalActivity` + `RejectExpenseActivity`**: explicit idempotency guards with `ActivityStatus.Completed` checks.
+- **`IntegrationTests` in-memory Dapr fake**: `WebApplicationFactory<Program>` with custom service replacements, no sidecar required.
+- **`infra/radius/app.bicep` + recipe separation**: application topology entirely decoupled from cloud resource implementation.
+
+### #54: Entra Admin Resource Wiring Incomplete 🔴
+
+- **Problem**: Hardcoded principal name instead of using parameter values
+- **Impact**: Azure RBAC auth fails; Entra auth broken
+- **Fix**: Use `daprPrincipalName` and `daprPrincipalId` parameters in Entra admin resource
+- **Blocks**: #55, #56 (part of same auth story)
+
+
+### #55: Missing Role Creation for dapr_app User 🔴
+
+- **Problem**: Connection string outputs `user=dapr_app` but role is never created
+- **Impact**: All state store operations fail at runtime with "role does not exist"
+- **Fix**: Implement role creation (init container, SQL deployment, or switch to Entra managed identity)
+- **Precondition**: #54 must be fixed first (needs working Entra auth setup)
+- **Blocks**: Deployment readiness
+
+
+### #56: Password Auth Enabled but Docs Claim Entra-Only 🔴
+
+- **Problem**: Code enables `passwordAuth: 'Enabled'` while comments claim "Entra-only"
+- **Impact**: False security confidence; reference sample teaches incorrect posture
+- **Fix**: Disable passwordAuth entirely OR update comments to match implementation
+- **Coordinate with**: #54, #55 (coordinated auth story)
+- **Blocks**: Documentation integrity
+
+---
+
+## Supporting Issues (MEDIUM PRIORITY)
+
+Fix after critical path is clear. These improve security, portability, and clarity:
+
+
+### #57: Blob Fallback Advertises Unsupported Actor State 🟡
+
+- **Problem**: Recipe suggests actor state via Blob Storage, but Blob doesn't support TransactionalStore
+- **Fix**: Remove fallback OR explicitly document limitations
+- **Impact**: Prevents misleading documentation
+
+
+### #58: Firewall Rule Too Broad (All Azure Services) 🟡
+
+- **Problem**: `allowAzureServiceAccess: true` opens to ANY Azure service (not just AKS)
+- **Fix**: Scoped firewall rule OR private endpoint
+- **Impact**: Security best-practice
+
+
+### #59: Comments Contradict Implementation 🟡
+
+- **Problem**: Comments claim "Entra-only" but code enables password auth
+- **Note**: Auto-resolved by #56 fix (disable passwordAuth, update comments)
+- **Impact**: Documentation/maintenance clarity
+
+
+### #60: Hardcoded Azure Public Cloud DNS 🟡
+
+- **Problem**: Uses `.postgres.database.azure.com` (breaks Government/China clouds)
+- **Fix**: Parametrize `azureEnvironment` with cloud-specific DNS suffixes
+- **Impact**: Cloud-agnostic reference sample
+
+
+### #61: No Private Endpoint Option Documented 🟡
+
+- **Problem**: Recipe only documents public endpoint + firewall
+- **Fix**: Add optional `usePrivateEndpoint` parameter with Private Endpoint + Private DNS Zone
+- **Impact**: Security/network isolation for enterprise deployments
+
+
+### #62: Default Tag is 'latest' (Non-Reproducible) 🟡
+
+- **Problem**: Using `latest` makes deployments non-deterministic
+- **Fix**: Pin to specific version (e.g., `15-latest`) with parametrized `postgresqlVersion`
+- **Impact**: Reproducibility best-practice
+
+---
+
+## Recommended Sequence for Rod
+
+1. **Phase 1 (CRITICAL)**: Fix #54 → #55 → #56 in order
+   - Ensures Entra auth and role creation work end-to-end
+   - Unblocks redeployment
+
+2. **Phase 2 (MEDIUM)**: Fix #57, #58, #59, #60, #61, #62 in any order
+   - Improves security, portability, and documentation
+   - Can be batched or parallelized
+
+---
+
+## Success Criteria
+
+- All 9 issues are labeled `squad:rod` ✓
+- All issues have triage comments posted ✓
+- Issues #54, #55, #56 are marked as dependencies (blocked/blocks relations can be added by Rod as needed)
+- Rod can proceed immediately without further handoff
+
+---
+
+## Notes for Rod
+
+- The critical 3 form a tightly-coupled auth story. Consider fixing them in a single PR or series of linked PRs for clarity.
+- Medium-priority issues can be addressed separately or combined with the critical fix, depending on complexity.
+- This is a reference sample — favor clarity and teaching value over clever configurations.
+
+### 1. Architecture & Threat Model
+
+
+**Trust zones:**  
+- Public zone: browser client → `expense-api` (HTTP, Kubernetes ingress via Radius public gateway)  
+- Internal zone: `expense-api` ↔ `workflow-engine` via Dapr service invocation (mTLS by Dapr)  
+- Internal zone: `workflow-engine` → `notification-svc` via Dapr pub/sub (mTLS by Dapr)  
+- Platform zone: all services → PostgreSQL / Service Bus / Key Vault via Entra workload identity  
+
+**Cross-service contract assumptions:**  
+- `expense-api` invokes `workflow-engine` directly via `DaprClient.CreateInvokeHttpClient` — this is service invocation (mTLS), not raw HTTP. Correct.  
+- Dapr handles inter-sidecar mTLS. No application-level transport security is needed. Correct for a demo.  
+
+**Gap — No network policies:**  
+Nothing prevents pod-to-pod direct HTTP outside of Dapr. In a real deployment this matters; for a demo it is a teaching gap worth a comment. **Owner: Graham (infra)**.
+
+---
+
+
+### 2. Secrets & Configuration
+
+
+**What's good:**  
+- No hardcoded credentials anywhere in app code or Bicep.  
+- `AzureAd:Authority` and `AzureAd:Audience` are externalized; non-Development environments fail fast if unset.  
+- Kubernetes secrets (`azure-entra-auth`, `pubsub-secrets`) are referenced by Dapr component `secretKeyRef` — not embedded in YAML.  
+- Key Vault recipe uses RBAC-only authorization (no legacy access policies).  
+- Service Bus recipe disables local auth entirely (`disableLocalAuth: true`).
+
+**Gap — Deterministic PostgreSQL admin password:**  
+`state-store.bicep` derives the local admin password via `uniqueString(context.resource.id, serverName)`. This is ARM-visible and reproducible by anyone with ARM read access to the resource group. The password is only used for bootstrap configuration (Dapr runtime uses Entra token auth), but the existence of a derivable password on a public-firewall-accessible server is a security smell. **Owner: Graham.**
+
+**Gap — `dapr-components-generated.yaml` written to CWD:**  
+`deploy-dapr-components-workload-identity.sh` writes a manifest to disk in the working directory during script execution. In SP mode this file references an `azureClientSecret` via Kubernetes `secretKeyRef` (not inline), so the secret itself is not exposed. But the generated file persists unless explicitly cleaned up. Low severity; worth a post-apply `rm`. **Owner: Graham.**
+
+---
+
+
+### 3. Authentication & Authorization
+
+
+**What's good:**  
+- `POST /expenses` (submit) is intentionally anonymous. Documented and tested. ✅  
+- `POST /expenses/{id}/approve` and `POST /expenses/{id}/reject` both require authorization (Entra JWT). ✅  
+- Production environments fail fast on missing auth config. ✅  
+
+**Gap — GET /expenses and GET /expenses/{id} are unauthenticated:**  
+Any unauthenticated caller can retrieve the full paginated expense list (employee IDs, amounts, descriptions, statuses, rejection reasons). This is the most visible security gap in the demo. For a *reference sample*, this sends the wrong message — showing financial PII without authorization is a bad pattern to teach. **Owner: Billy.**
+
+**Gap — workflow-engine endpoints carry no authorization:**  
+`POST /workflows/start`, `GET /workflows/{instanceId}`, and `POST /workflows/{instanceId}/decide` have no `RequireAuthorization()`. These are reachable via Dapr service invocation (mTLS-protected, app-ID scoped), but they are also reachable as plain HTTP within the cluster. A developer debugging the demo can call `/workflows/{instanceId}/decide` directly and approve any expense. **Owner: Billy.** *(Note: for demo purposes this is understandable; document the assumption explicitly rather than silently.)*
+
+---
+
+
+### 4. Data Flow Security (PII & Financial Data)
+
+
+**Data in flight:**  
+- Submission → expense-api → state store (PostgreSQL, TLS required, Entra auth). ✅  
+- expense-api → workflow-engine: Dapr service invocation (mTLS). ✅  
+- workflow-engine → notification-svc: Dapr pub/sub (mTLS). ✅  
+- Notification payload includes: `expenseId`, `employeeId`, `amount`, `currency`, `eventType`. This flows through Service Bus (TLS 1.2 enforced). ✅  
+
+**Gap — PII in notification logs:**  
+`EmailTransport` logs recipient, subject, expenseId, correlationId, and eventType at structured log level. For a demo this is fine (stub transport), but the log template teaches a pattern of logging PII at INFO. **Owner: Billy** (low severity — mark clearly as demo-only).
+
+**Gap — Full expense records returned to unauthenticated GET callers:**  
+Repeats the authorization gap above. EmployeeId + Amount + Description + RejectionReason are all returned. **Owner: Billy.**
+
+---
+
+
+### 5. Platform-Level Concerns (Dapr / Radius)
+
+
+**What's good:**  
+- PostgreSQL TLS enforced (`sslmode=require`). ✅  
+- Service Bus TLS 1.2 minimum. ✅  
+- Key Vault soft delete enabled. ✅  
+- Entra-only auth on all three Azure backing services. ✅  
+- Local Dapr components (Redis) have correct `scopes` entries. ✅  
+
+**Gap — Azure Dapr components have no `scopes` in the generated manifests:**  
+`deploy-dapr-components-workload-identity.sh` generates statestore, pubsub, and platform-secrets components with no `scopes` field. This means any pod in the namespace can bind to these components — including any new service added without review. The local Redis components correctly scope to `expense-api`/`workflow-engine`/`notification-svc`. The Azure path should match. **Owner: Graham.**
+
+**Gap — `allowAzureServices: true` is the default for dev/demo:**  
+The PostgreSQL firewall rule uses the 0.0.0.0/0.0.0.0 "Allow Azure services" magic rule when `allowAzureServices=true`. This permits any Azure resource in any subscription to reach the database. The parameter default is documented and rationalized (dev/demo), but operators following the walkthrough will deploy with this open by default. The docs should state this more prominently. **Owner: Eddie** (documentation), **Graham** (recipe default comment).
+
+---
+
+## Ownership Map
+
+| Gap | Severity | Owner |
+|---|---|---|
+| GET /expenses + GET /expenses/{id} unauthenticated | High | Billy |
+| workflow-engine endpoints unauthenticated (no explicit RequireAuthorization) | Medium | Billy |
+| PII in notification logs | Low | Billy |
+| Dapr Azure components missing `scopes` | Medium | Graham |
+| Deterministic PostgreSQL admin password | Medium | Graham |
+| `allowAzureServices=true` default insufficiently signposted | Low | Eddie + Graham |
+| No network policies (teaching gap) | Low | Graham |
+| Generated YAML file persists to disk | Low | Graham |
+
+---
+
+## Reference Sample Fit Assessment
+
+The Entra workload-identity story is clean and teachable. The secret externalization is correct. The main risk to the "ten-minute demo" narrative is the unauthenticated GET endpoints — a developer running the demo will notice that anyone can read all expenses without logging in, which either needs to be fixed or explicitly framed as a demo trade-off with a README callout. The Dapr component scoping gap is invisible in normal use but tells the wrong story about least-privilege Dapr design.
+
+**Recommended sequence:**  
+1. Billy: add RequireAuthorization to GET /expenses and GET /expenses/{id}, or add a README callout framing the anonymous-read design choice.  
+2. Graham: add `scopes` to the Azure Dapr component manifests.  
+3. Graham: address the deterministic password and note the allowAzureServices risk more prominently.  
+4. Eddie: update docs to call out the dev/demo firewall posture.
+
+### 1a. keyPrefix: none — Shared Flat Namespace
+
+**Verdict: ❌ RISK**  
+Both `expense-api` and `workflow-engine` write to the same PostgreSQL state store with `keyPrefix: none`. There is no per-app key namespacing. This is an intentional cross-service read design (workflow reads records expense-api wrote), but it means any future service added with a Dapr statestore connection can read or overwrite any key in the entire database. There is no ACL/scope restriction on the component CRD — the `scopes` field is not set in the Azure path (only the local Redis YAML uses scopes). This is a design assumption that must be documented as a constraint, not a silent default.
+
+**Risk:** A misconfigured service, a rogue sidecar, or a future addition could read or clobber another service's state with no guard.
+
+
+### 1b. passwordAuth Enabled — Password Auth Surface Open
+
+**Verdict: ⚠️ REVIEW**  
+The state-store recipe enables both `activeDirectoryAuth: Enabled` and `passwordAuth: Enabled`. The stated reason is that Dapr's `state.postgresql/v2` component uses SCRAM with an AD token as the "password" — this is the correct design for Entra token passthrough. However, `passwordAuth: Enabled` technically allows direct password authentication with the `postgresAdminLogin` account if the deterministic admin password becomes known.
+
+The admin password `'P${uniqueString(context.resource.id, serverName)}#9a'` is deterministic — anyone with the Radius context resource ID and the server name can compute it. These values appear in ARM deployment metadata, Radius state, and script logs.
+
+**Risk:** Admin password is computable from observable deployment inputs. If the PostgreSQL server is reachable (e.g., via `allowAzureServices`), this is a latent credential risk. Mitigation: rotate after deployment or move to a random generated secret stored in Key Vault.
+
+
+### 1c. Network Access — allowAzureServices Default is Overly Broad
+
+**Verdict: ❌ RISK**  
+In `azure-radius.bicep`, `allowAzureServices: true` is the default. This creates the `0.0.0.0 → 0.0.0.0` Azure services firewall rule, which allows all Azure-hosted traffic — not just the AKS cluster. Any Azure-hosted service in any tenant can potentially reach the PostgreSQL endpoint.
+
+Private endpoint support exists in the recipe but is `usePrivateEndpoint: false` by default. Even when `usePrivateEndpoint: true` is set, `publicNetworkAccess` is NOT automatically disabled (recipe comment: "allows the recipe to deploy correctly in environments where the Radius operator cannot yet route through the private endpoint").
+
+**Risk:** PostgreSQL is reachable from any Azure-hosted IP even in what operators may consider "production" deployments. No explicit post-deploy step enforces `publicNetworkAccess: Disabled`.
+
+
+### 1d. Encryption at Rest
+
+**Verdict: ⚠️ REVIEW**  
+Azure Database for PostgreSQL Flexible Server encrypts data at rest by default using platform-managed keys. No customer-managed key (CMK) is configured. For the reference sample use case this is acceptable, but operators targeting regulated workloads need to know this is platform-default, not explicitly enforced.
+
+---
+
+## 2. Dapr Pub/Sub Configuration
+
+
+### 2a. Entra Auth — Correctly Configured
+
+**Verdict: ✅ SECURE**  
+Service Bus namespace has `disableLocalAuth: true`. Minimum TLS 1.2 enforced. Dapr component uses Entra workload identity (azureClientId, azureTenantId). No SAS connection strings present in manifests or scripts.
+
+
+### 2b. Dead-Letter Handling — Not Configured
+
+**Verdict: ❌ RISK**  
+No dead-letter topic is configured anywhere: not in the Service Bus recipe, not in the Dapr component metadata, not in the application subscription definitions. If `notification-svc` fails to process a message (crash, transient error, deserialization failure), Dapr will retry based on the Service Bus default lock duration and then the message is dead-lettered silently into the Service Bus built-in dead-letter queue with no alert, no recovery handler, and no operator visibility.
+
+For a reimbursement and approval system, dropped notification events are a compliance and operational concern. A missed "Approved" or "Reimbursed" notification leaves claim submitters in the dark.
+
+
+### 2c. Entity Management — disableEntityManagement: false
+
+**Verdict: ⚠️ REVIEW**  
+`disableEntityManagement: 'false'` (the default) allows Dapr to auto-create topics and subscriptions at runtime. This is convenient but means any service with a pubsub connection can create new topics with default settings. In production, topics should be pre-created with explicit settings (max size, retention, duplicate detection window).
+
+
+### 2d. Message Ordering and Replay Guarantees
+
+**Verdict: ❌ RISK**  
+Service Bus Standard SKU (the recipe default) does not support sessions (required for FIFO ordering). No duplicate detection window is configured. For sensitive state transitions like approval → reimbursement, out-of-order or duplicate messages could trigger duplicate notifications or incorrect state displays. Premium SKU with sessions and duplicate detection should be evaluated for production.
+
+
+### 2e. RBAC Assignment Gap — Post-Deploy Script
+
+**Verdict: ⚠️ REVIEW**  
+The Service Bus RBAC assignment (Azure Service Bus Data Owner) is removed from the recipe Bicep and delegated to `bootstrap.sh`. If bootstrap is interrupted after recipe deploy but before RBAC assignment, the Dapr sidecar will fail to authenticate to Service Bus. There is no validation step that confirms RBAC exists before marking the deployment complete. This matches the state store RBAC gap pattern.
+
+---
+
+## 3. Dapr Service Invocation
+
+
+### 3a. mTLS — Default Enabled, Not Explicitly Verified
+
+**Verdict: ⚠️ REVIEW**  
+Dapr mTLS is on by default when running on Kubernetes — `dapr-sentry` manages certificate issuance. This was confirmed as healthy in past deployments (`dapr status -k` showing dapr-sentry Running). However, no Dapr `Configuration` CRD is deployed to explicitly enforce `mtls.enabled: true` or set `mtls.allowedClockSkew`. The default behavior is correct, but it's not pinned. An operator who unknowingly runs `dapr init --enable-mtls=false` would silently disable mTLS with no infra guard.
+
+No explicit Dapr `Resiliency` policy is deployed anywhere — no timeout, retry, or circuit breaker for service-to-service calls.
+
+
+### 3b. workflow-engine → expense-api Connection Declared as Plain HTTP
+
+**Verdict: ⚠️ REVIEW**  
+In `app.bicep`, workflow-engine declares `expenseApi: { source: 'http://expense-api:8080' }`. This is the Radius connection source and is used for Dapr service invocation routing. The HTTP scheme is expected for in-cluster Dapr service invocation (Dapr wraps it in mTLS), but it's worth confirming that the actual call path goes through the Dapr sidecar (port 3500 → service invocation) and not direct HTTP between pods. If any path bypasses the sidecar, it bypasses mTLS.
+
+
+### 3c. No Resiliency Policy
+
+**Verdict: ❌ RISK**  
+There is no Dapr `Resiliency` resource deployed. No timeout, retry count, circuit breaker, or bulkhead is configured for state store operations, pub/sub publishing, or service invocations. For approval and reimbursement workflows, a slow or briefly unavailable PostgreSQL instance will cause unbounded blocking with no fallback. Service Bus transient failures will propagate to callers without structured retry.
+
+---
+
+## 4. Radius Lifecycle & Idempotency
+
+
+### 4a. Core Deployment is Idempotent
+
+**Verdict: ✅ SECURE**  
+`rad deploy` is idempotent by design — re-running updates resources in place. PostgreSQL admin password uses `uniqueString(context.resource.id, serverName)` which is stable across redeployments. Recipe naming is deterministic when `randomNameSuffix` is not set. Bootstrap script wraps `rad env create` with `|| true` to handle existing environments.
+
+
+### 4b. Post-Deploy Configuration — Partial-State Risk
+
+**Verdict: ⚠️ REVIEW**  
+Multiple critical configuration steps happen in `bootstrap.sh` after `rad deploy` succeeds:  
+- PostgreSQL: database creation, Entra admin registration, firewall rule  
+- Service Bus: RBAC assignment  
+- Key Vault: RBAC assignment  
+
+If bootstrap is interrupted between `rad deploy` and any of these steps, the system is left in a partially configured state that will fail at runtime but appears healthy from a Radius control-plane perspective. There is no idempotency guard that checks "does RBAC already exist" before running `az role assignment create` — though the Azure CLI handles duplicates gracefully, a failed RBAC step leaves the component non-functional.
+
+
+### 4c. randomNameSuffix Creates New Resources
+
+**Verdict: ⚠️ REVIEW**  
+If `randomNameSuffix` is passed on a redeployment (e.g., after a botched first deploy), it creates new Azure resources rather than updating existing ones. Old resources are not cleaned up. Previous Key Vault names remain in soft-delete for 7 days. This was hit in production (see history — Sweden Central deployment required manual firewall fix). Operators need explicit guidance about when to set vs. not set this flag.
+
+
+### 4d. Key Vault — Soft Delete Without Purge Protection
+
+**Verdict: ⚠️ REVIEW**  
+Key Vault has soft delete enabled (7-day retention) but `enablePurgeProtection` is explicitly NOT set (recipe comment: "once enabled on a vault, it cannot be disabled"). This means a vault can be permanently purged before the retention period expires, which is acceptable for a reference sample but should be flagged for regulated workloads.
+
+---
+
+## 5. Cross-Service Visibility
+
+
+### 5a. Correlation IDs — Partial Coverage
+
+**Verdict: ⚠️ REVIEW**  
+- `workflow-engine`: `X-Correlation-ID` is extracted, generated if missing, propagated in HTTP responses, and logged. ✅  
+- Frontend (`expense-api`): generates UUID on page load, sends `X-Correlation-ID` header on all requests. ✅  
+- `notification-svc`: logs `correlationId` from the `NotificationRequest` contract. ✅  
+- **Gap:** The pub/sub path. When `expense-api` publishes a domain event to Service Bus, there is no evidence that `X-Correlation-ID` is included in the Dapr pub/sub message envelope metadata. Dapr's `PublishEventAsync` supports metadata headers, but the code path through the pub/sub channel to `notification-svc` needs verification. If the correlation ID drops at the pub/sub boundary, the notification delivery event in `notification-svc` logs cannot be linked back to the originating HTTP request.
+
+
+### 5b. OpenTelemetry — Dev Only, No Cloud Backend
+
+**Verdict: ⚠️ REVIEW**  
+All three services are instrumented with OpenTelemetry. Traces go to Jaeger for local development. No cloud backend (Application Insights) is configured for deployed environments. Per `OBSERVABILITY.md`: "Future versions will support Azure Application Insights."  
+Dapr gRPC calls (workflow client) are not automatically instrumented — correlation IDs are manually attached.  
+100% sampling rate in all environments — acceptable now but will need adjustment at scale.
+
+---
+
+## 6. Failure Modes & Recovery
+
+
+### 6a. Dapr Sidecar Crash — Recovery Path Exists
+
+**Verdict: ✅ SECURE**  
+Dapr state (PostgreSQL) is external — sidecar restart does not lose state. Actor state survives pod restart. Dapr Workflow uses actor-backed state so in-progress workflows resume after restart. This was confirmed in the Sweden Central deployment where pods recovered cleanly after firewall fix + rollout.
+
+
+### 6b. State Store Unreachable — No Circuit Breaker
+
+**Verdict: ❌ RISK**  
+If PostgreSQL becomes unreachable (network partition, AZ failure, quota exhaustion), all state store operations will block until timeout. No Dapr `Resiliency` policy defines a circuit breaker or timeout. Workloads will queue requests indefinitely, likely causing OOMKilled or liveness probe failures rather than a clean degraded state. There is no read-only fallback or graceful degradation path.
+
+
+### 6c. Bootstrap Failure Mid-Sequence — No Recovery Guide
+
+**Verdict: ⚠️ REVIEW**  
+If bootstrap fails between PostgreSQL deployment and firewall configuration (the exact failure seen in Sweden Central), the operator must manually determine which steps completed. There is no idempotent recovery checklist. The `validate-deployment.sh` script tests the happy path but does not diagnose partial configurations.
+
+
+### 6d. Service Bus Down — Notification Loss
+
+**Verdict: ❌ RISK**  
+If Service Bus is transiently unavailable during an approval or reimbursement event, Dapr will retry publishing according to the default resiliency (no explicit policy). If the retry window is exceeded, the event is dropped with no compensation. `notification-svc` has no dead-letter consumer. Reimbursement notifications could be silently lost — the expense state transitions in PostgreSQL but the user never receives confirmation.
+
+---
+
+## Summary of Findings
+
+| Area | Finding | Verdict |
+|------|---------|---------|
+| State Store | keyPrefix: none — flat shared namespace, no ACL scoping | ❌ RISK |
+| State Store | passwordAuth: Enabled — deterministic admin password computable from logs | ⚠️ REVIEW |
+| State Store | allowAzureServices default — any Azure-hosted IP can reach PostgreSQL | ❌ RISK |
+| State Store | Encryption at rest via platform-managed keys only | ⚠️ REVIEW |
+| Pub/Sub | Entra auth, TLS 1.2, SAS disabled | ✅ SECURE |
+| Pub/Sub | No dead-letter topic or consumer | ❌ RISK |
+| Pub/Sub | disableEntityManagement: false — auto-creates topics | ⚠️ REVIEW |
+| Pub/Sub | No duplicate detection, no ordering guarantees (Standard SKU) | ❌ RISK |
+| Pub/Sub | RBAC done post-deploy, partial-state gap | ⚠️ REVIEW |
+| Service Invocation | mTLS on by default, not explicitly pinned via Configuration CRD | ⚠️ REVIEW |
+| Service Invocation | workflow→expense connection declared as plain HTTP | ⚠️ REVIEW |
+| Service Invocation | No Resiliency policy (timeouts, retries, circuit breakers) | ❌ RISK |
+| Radius Lifecycle | Core deployment idempotent, stable naming | ✅ SECURE |
+| Radius Lifecycle | Post-deploy RBAC and config — partial-state risk | ⚠️ REVIEW |
+| Radius Lifecycle | randomNameSuffix creates new resources on redeployment | ⚠️ REVIEW |
+| Radius Lifecycle | Key Vault — soft delete without purge protection | ⚠️ REVIEW |
+| Cross-Service | X-Correlation-ID in HTTP paths, Dapr sidecar crash recovery | ✅ SECURE |
+| Cross-Service | Correlation ID may drop at pub/sub boundary | ⚠️ REVIEW |
+| Cross-Service | OTel traces are dev-only (Jaeger), no cloud backend | ⚠️ REVIEW |
+| Failure Modes | Actor state survives sidecar restart (PostgreSQL external) | ✅ SECURE |
+| Failure Modes | No circuit breaker — state store outage causes unbounded block | ❌ RISK |
+| Failure Modes | No dead-letter consumer — reimbursement notifications silently lost | ❌ RISK |
+
+**Critical risks to address before production:**
+1. Deploy a Dapr `Resiliency` resource with timeouts, retries, and circuit breakers for state and pub/sub
+2. Configure Service Bus dead-letter topic and a consumer in `notification-svc`
+3. Restrict PostgreSQL network access — either enforce private endpoints or lock down `allowAzureServices` with explicit AKS IP prefix rules
+4. Rotate the PostgreSQL admin password post-deployment or generate it via Key Vault rather than `uniqueString`
+5. Add Component `scopes` to restrict which services can access the statestore
+
+### Category 1: **RBAC Misconfiguration** (70% probability)
+
+- Managed identity is missing one or more data-plane roles
+- Expense submission fails because state store write returns 403
+- Counters don't increment for same reason
+- Workflows don't trigger because pub/sub publish fails with 403
+
+**Quick diagnosis:**
+1. Run `dapr-component-test.sh`
+2. If state set/get fails with 403 → **Storage Blob Data Contributor** missing
+3. If pub/sub fails with 403 → **Azure Service Bus Data Owner** missing
+4. **Single fix:** Apply both RBAC role assignments (see Block #3 above)
+
+
+### Category 2: **Bootstrap/Component Registration Incomplete** (15% probability)
+
+- Phase 2 of bootstrap didn't run or failed
+- Dapr components (statestore, pubsub) not registered as CRDs
+- Tests fail at component existence check
+
+**Quick diagnosis:**
+1. Run `health-check.sh`
+2. If components don't exist → **Re-run `apply-dapr-components-from-recipes.sh`**
+
+
+### Category 3: **Configuration Mismatch** (10% probability)
+
+- API service port doesn't match container port
+- Dapr sidecar port env var incorrect
+- State store recipe points to wrong storage account
+- Component metadata missing or incorrect
+
+**Quick diagnosis:**
+1. Run `api-endpoint-test.sh`
+2. If port mismatch → **Update app.bicep service port**
+3. Run `dapr-component-test.sh` and describe components
+4. If component metadata wrong → **Check recipe output or re-apply**
+
+
+### Category 4: **Application Code Bugs** (5% probability)
+
+- POST handler missing counter increment logic
+- Workflow code has unhandled null reference
+- Event schema mismatch between publisher and subscriber
+
+**Quick diagnosis:**
+1. If expense-submit test passes state ops but counter doesn't increment → **Check POST handler code**
+2. If workflow-trigger test shows publish succeeds but workflow silent → **Check workflow subscription logic**
+3. If workflow crashes → **Check error logs and fix code**
+
+---
+
+## Portable Fixes Summary
+
+All fixes are **portable** (not AKS-specific tweaks):
+
+| Fix Category | Location | Command/Change |
+|---|---|---|
+| **RBAC: Storage** | Azure | `az role assignment create --role "Storage Blob Data Contributor" --assignee-object-id <ID> --scope <STORAGE_RID>` |
+| **RBAC: Service Bus** | Azure | `az role assignment create --role "Azure Service Bus Data Owner" --assignee-object-id <ID> --scope <SB_RID>` |
+| **Component Registration** | Kubernetes | `./scripts/apply-dapr-components-from-recipes.sh` |
+| **Service Port Mismatch** | Bicep | Update `app.bicep` service targetPort to match container listening port |
+| **Sidecar Port Env Var** | Bicep | Set `DAPR_HTTP_PORT` env var in app.bicep deployment spec |
+| **POST Handler Code** | C# | Check `Program.cs` POST handler (line ~199-298) for state write and counter increment logic |
+| **Workflow Subscription** | Kubernetes | `kubectl rollout restart deployment/workflow-engine` to force resubscription |
+| **Workflow Code Bugs** | C# | Fix null refs, schema mismatches, or event handler logic in workflow code; rebuild and redeploy |
+| **Disable OAuth (dev)** | C# | Remove `.RequireAuthorization()` from POST handler in `Program.cs` |
+
+---
+
+## Verification Checklist
+
+After applying each fix category, verify:
+
+- [ ] Run `health-check.sh` → All pods running, all components exist
+- [ ] Run `api-endpoint-test.sh` → /health returns 200, POST endpoint responds
+- [ ] Run `dapr-component-test.sh` → State set/get succeed, pub/sub publishes without error
+- [ ] Run `expense-submit-test.sh` → Expense stored, counter incremented
+- [ ] Run `workflow-trigger-test.sh` → Event published, workflow processes and logs appear
+- [ ] Verify RBAC assignments: `az role assignment list --scope <RESOURCE_RID>`
+- [ ] Check pod logs for any warnings: `kubectl logs -f deployment/<NAME> -n namespace`
+
+---
+
+## Test Execution Commands
+
+```bash
+# Run all tests in sequence (full diagnostic suite)
+cd /home/wesleyb/git/RadiusClaim
+./scripts/deployment-readiness.sh
+
+# Or run individually (interactive diagnosis)
+./scripts/health-check.sh          # Infrastructure baseline
+./scripts/api-endpoint-test.sh     # API connectivity
+./scripts/dapr-component-test.sh   # State store & pub/sub
+./scripts/expense-submit-test.sh   # End-to-end submission
+./scripts/workflow-trigger-test.sh # Workflow event processing
+```
+
+---
+
+## Escalation Path
+
+If all tests fail after applying fixes:
+
+1. **Collect full diagnostics:**
+   ```bash
+   kubectl describe pod <pod> -n radiusclaim-azure-radiusclaim > pod-describe.txt
+   kubectl logs <pod> -n radiusclaim-azure-radiusclaim > pod-logs.txt
+   kubectl logs <pod> -c daprd -n radiusclaim-azure-radiusclaim > daprd-logs.txt
+   ```
+
+2. **Attach to platform team with:**
+   - All test script outputs
+   - Pod descriptions and logs
+   - Component YAML: `kubectl get component -o yaml -n radiusclaim-azure-radiusclaim`
+   - Recent git history: `git log --oneline -10`
+
+3. **Provide context:**
+   - When did it break? (Which commit?)
+   - What changed in infra or code?
+   - Was RBAC assigned initially or did someone remove it?
+
+---
+
+## References
+
+- **State Store RBAC Role:** Storage Blob Data Contributor
+- **Pub/Sub RBAC Role:** Azure Service Bus Data Owner
+- **Dapr Port:** 3500 (HTTP), 3501 (gRPC)
+- **Default namespace:** radiusclaim-azure-radiusclaim
+- **Component names:** statestore, pubsub (must match app.bicep references)
+- **Event topic:** expense.created
+
+---
+
+**End of Diagnosis Flowchart**
+
+### Phase 1: Validate Radius Deployment
+
+
+- Query `rad resource show Applications.Dapr/stateStores statestore` to get actual deployed resource
+- **Exit criteria:**
+  - Resource doesn't exist → fail with "recipe never deployed"
+  - `provisioningState != Succeeded` → fail with actual state (indicates deployment failure)
+  - `outputResources` is empty → fail with "recipe output is incomplete"
+
+
+### Phase 2: Extract and Validate Azure Resource Location
+
+
+- Extract PostgreSQL ARM resource ID from `outputResources[]` using jq filtering
+- Parse ARM ID to get actual `subscription`, `resource-group`, and `server-name` (not assumptions)
+- **Exit criteria:**
+  - No PostgreSQL ID in outputResources → fail with "recipe misconfigured"
+  - Malformed ARM ID → fail with specific parse error
+
+
+### Phase 3: Validate Azure Resource Existence
+
+
+- Query `az postgres flexible-server show` for that specific subscription + RG + server name
+- **Exit criteria:**
+  - ResourceNotFound error → fail with "Radius tracking non-existent server" (indicates deletion or stale state)
+  - InvalidParameterValue → fail with "server not found in expected location"
+  - Server exists but state != "Ready" → wait up to 300s with telemetry
+  - After 300s and still not ready → fail
+
+
+### Phase 4: Idempotent Post-Deployment Configuration
+
+
+- Create database and Entra admin using actual server location from Phase 2
+- **Idempotency pattern:** Capture error output, check for known "already exists" patterns, only suppress those, fail on everything else
+- **Rationale:** `db create` and Entra admin creation can legitimately hit "already exists" on re-runs; all other errors are real failures and should be visible to operator
+
+## Key Changes
+
+**File:** `scripts/bootstrap.sh` lines 2267-2405
+
+1. Replace hardcoded `_pg_server_name="pgstate${SUFFIX}"` with extraction from Radius outputs
+2. Add comprehensive Radius resource validation before Azure CLI operations
+3. Use actual subscription/RG from ARM ID instead of assuming `$RESOURCE_GROUP`
+4. Replace blanket `|| true` with targeted error suppression for idempotent operations
+5. Add clear, actionable error messages for each failure mode
+
+## Error Messages
+
+Each failure mode produces a distinct, actionable error:
+
+| Scenario | Message |
+|----------|---------|
+| stateStore not deployed | "Radius stateStore resource 'statestore' not found or not deployed. Check 'rad app list' and deployment logs." |
+| Radius deploy failed | "Radius stateStore provisioning failed with state: '$_pg_prov_state'. Check 'rad resource show ...' for details." |
+| No PostgreSQL in outputs | "Radius stateStore deployed but no PostgreSQL resource found in outputResources. Recipe may be misconfigured." |
+| Server deleted/missing | "PostgreSQL server '$_pg_server_name' in resource group '$_pg_resource_group' does not exist in Azure. Radius is tracking a non-existent or deleted server." |
+| Server in wrong location | "PostgreSQL server '$_pg_server_name' not found in the expected location (subscription: $_pg_subscription_id, RG: $_pg_resource_group). Radius outputResources may be stale." |
+
+## Idempotency Guarantees
+
+✅ Bootstrap can be re-run without manual cleanup between runs:
+- Phase 1-3 validation is idempotent (read-only queries)
+- Phase 4 operations detect "already exists" and treat as success
+- If server never existed, error message guides operator to fix root cause (Radius deploy)
+- If server exists in unexpected location, error message indicates stale state (operator must intervene or clean up)
+
+## No Auto-Remediation
+
+This fix deliberately does **not**:
+- Auto-delete PostgreSQL servers (too risky for production data)
+- Auto-re-trigger `rad recipe register` (likely not the issue; wrong diagnosis)
+- Auto-retry Radius deployment (bounded retry would be safe, but adds complexity; fail-fast is clearer)
+
+**Rationale:** Bootstrap's job is to detect and report problems with clear, actionable messages. Operator should fix the root cause (Radius deploy failure, stale resources, etc.) rather than hiding the problem.
+
+## Testing Checklist
+
+- [ ] Successful deployment: bootstrap completes with all PostgreSQL validation passing
+- [ ] Stale server cleanup: if server from previous run exists in different RG, error message is actionable
+- [ ] Re-run idempotency: second run completes without errors (db + entra already exist)
+- [ ] Radius deploy failure: if recipe deployment fails, bootstrap detects and reports with context
+- [ ] Missing outputResources: if recipe outputs are incomplete, bootstrap reports mismatch
+
+## Related Skills/Decisions
+
+- `.squad/skills/radius-idempotent-deployment/SKILL.md` — Bootstrap patterns and idempotency guards
+- [ADR: Fix Stale Application Guard in Bootstrap](previous fix) — Similar validation pattern for Radius applications
+
+### Mapping Table
+
+
+| azureEnvironment (input) | DNS key (unchanged) | daprEnvironmentName (new) |
+|--------------------------|---------------------|---------------------------|
+| AzurePublicCloud         | AzurePublicCloud    | AzurePublicCloud          |
+| AzureUSGovernment        | AzureUSGovernment   | AzureUSGovernmentCloud    |
+| AzureChina               | AzureChina          | AzureChinaCloud           |
+
+## Rationale
+
+- Single parameter keeps the recipe API clean for callers
+- Derived variables isolate translation logic within the recipe
+- The translation table is documented inline — prevents future collapse of the two names back into one
+- This pattern is reusable: any future recipe that needs to translate `azureEnvironment` across multiple consumers should follow the same derived-variable approach
+
+## Applicability
+
+This pattern should be applied to `pubsub.bicep` and any other recipe that outputs `azureEnvironment` to Dapr metadata if sovereign cloud support is ever wired in there.
+
+## Implementation
+
+`daprEnvironmentNameMap` and `daprEnvironmentName` variable added to `infra/radius/recipes/azure/state-store.bicep`. Dapr metadata output now references `daprEnvironmentName` instead of `azureEnvironment`.
 
