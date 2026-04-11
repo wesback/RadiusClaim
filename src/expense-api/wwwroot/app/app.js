@@ -56,6 +56,9 @@ const state = {
     selectedTimer: null
 };
 
+const DEV_TOKEN_KEY = "radiusclaim_dev_token";
+const DEV_TOKEN_EXPIRES_KEY = "radiusclaim_dev_token_expires";
+
 /**
  * Generates a UUID v4 for frontend trace correlation.
  * Uses crypto.getRandomValues() when available, falls back to a simple UUID-like string.
@@ -93,8 +96,9 @@ function initCorrelationId() {
 }
 
 /**
- * Wraps a fetch call to include the X-Correlation-ID header.
- * All API requests from this frontend will include this header for tracing.
+ * Wraps a fetch call to include the X-Correlation-ID header and, when a dev
+ * token is present in localStorage, an Authorization: Bearer header.
+ * All API requests from this frontend flow through this function.
  * 
  * @param {string} url - The URL to fetch
  * @param {object} [options={}] - Standard fetch options
@@ -105,6 +109,10 @@ function tracedFetch(url, options = {}) {
         ...options.headers,
         "X-Correlation-ID": window.correlationId
     };
+    const token = getStoredToken();
+    if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+    }
     return fetch(url, { ...options, headers });
 }
 
@@ -141,6 +149,7 @@ const statusToneMap = {
 };
 
 initCorrelationId();
+initDevAuth();
 bind();
 boot();
 
@@ -814,4 +823,144 @@ function escapeHtml(value) {
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#39;");
+}
+
+// =============================================================================
+// DEV AUTHENTICATION
+// =============================================================================
+// Manages a short-lived JWT used to test the approval/rejection endpoints in
+// development. The /test-token endpoint only exists in development builds;
+// the widget degrades gracefully when it responds with 404.
+
+/**
+ * Returns the stored dev token if present and not expired, otherwise null.
+ * Auto-evicts expired tokens from localStorage.
+ * @returns {string|null}
+ */
+function getStoredToken() {
+    const token = localStorage.getItem(DEV_TOKEN_KEY);
+    const expires = localStorage.getItem(DEV_TOKEN_EXPIRES_KEY);
+    if (!token || !expires) return null;
+    if (Date.now() > Number(expires)) {
+        localStorage.removeItem(DEV_TOKEN_KEY);
+        localStorage.removeItem(DEV_TOKEN_EXPIRES_KEY);
+        return null;
+    }
+    return token;
+}
+
+/**
+ * Returns the number of minutes until the stored token expires.
+ * Returns 0 if no token is stored.
+ * @returns {number}
+ */
+function getTokenMinutesRemaining() {
+    const expires = localStorage.getItem(DEV_TOKEN_EXPIRES_KEY);
+    if (!expires) return 0;
+    return Math.max(0, Math.round((Number(expires) - Date.now()) / 60000));
+}
+
+/** Removes the stored token and re-renders the widget. */
+function clearStoredToken() {
+    localStorage.removeItem(DEV_TOKEN_KEY);
+    localStorage.removeItem(DEV_TOKEN_EXPIRES_KEY);
+    renderDevAuthWidget();
+}
+
+/**
+ * Fetches a dev token from GET /test-token and stores it in localStorage.
+ * Updates the widget to reflect the new state (active, unavailable, or error).
+ */
+async function acquireDevToken() {
+    setDevAuthWidgetState("loading");
+    try {
+        const response = await fetch("/test-token", {
+            headers: { "X-Correlation-ID": window.correlationId }
+        });
+
+        if (response.status === 404) {
+            setDevAuthWidgetState("unavailable");
+            return;
+        }
+
+        if (!response.ok) {
+            setDevAuthWidgetState("error", `Token endpoint returned ${response.status}`);
+            return;
+        }
+
+        const data = await response.json();
+        const token = data.token ?? data.access_token ?? data.jwt;
+        if (!token) {
+            setDevAuthWidgetState("error", "No token found in response");
+            return;
+        }
+
+        const expiresInMs = (data.expiresIn ?? data.expiresInSeconds ?? 3600) * 1000;
+        localStorage.setItem(DEV_TOKEN_KEY, token);
+        localStorage.setItem(DEV_TOKEN_EXPIRES_KEY, String(Date.now() + expiresInMs));
+        renderDevAuthWidget();
+    } catch (err) {
+        setDevAuthWidgetState("error", err.message);
+    }
+}
+
+/**
+ * Renders a transitional widget state (loading, unavailable, error).
+ * For stable states (active/inactive), call renderDevAuthWidget() instead.
+ * @param {"loading"|"unavailable"|"error"} widgetState
+ * @param {string} [message=""]
+ */
+function setDevAuthWidgetState(widgetState, message = "") {
+    const widgetEl = document.querySelector("#dev-auth-widget");
+    if (!widgetEl) return;
+    widgetEl.dataset.state = widgetState;
+
+    if (widgetState === "loading") {
+        widgetEl.innerHTML = `<span class="dev-auth__status">Fetching token…</span>`;
+    } else if (widgetState === "unavailable") {
+        widgetEl.innerHTML = `<span class="dev-auth__status dev-auth__status--dim">Dev auth not available here</span>`;
+    } else if (widgetState === "error") {
+        widgetEl.innerHTML = `
+            <span class="dev-auth__status dev-auth__status--error">Token error: ${escapeHtml(message)}</span>
+            <button class="dev-auth__btn" type="button" data-action="get-token">Retry</button>
+        `;
+        widgetEl.querySelector("[data-action='get-token']")?.addEventListener("click", acquireDevToken);
+    }
+}
+
+/**
+ * Renders the dev auth widget based on stored token state.
+ * Active: shows token countdown + Clear button.
+ * Inactive: shows prompt + Get Token button.
+ */
+function renderDevAuthWidget() {
+    const widgetEl = document.querySelector("#dev-auth-widget");
+    if (!widgetEl) return;
+
+    const token = getStoredToken();
+    if (token) {
+        const minsLeft = getTokenMinutesRemaining();
+        widgetEl.dataset.state = "active";
+        widgetEl.innerHTML = `
+            <span class="dev-auth__status dev-auth__status--active">✅ Dev token active (~${minsLeft} min)</span>
+            <button class="dev-auth__btn" type="button" data-action="clear-token">Clear</button>
+        `;
+        widgetEl.querySelector("[data-action='clear-token']")?.addEventListener("click", clearStoredToken);
+    } else {
+        widgetEl.dataset.state = "inactive";
+        widgetEl.innerHTML = `
+            <span class="dev-auth__status">Dev token needed to approve</span>
+            <button class="dev-auth__btn" type="button" data-action="get-token">Get Token</button>
+        `;
+        widgetEl.querySelector("[data-action='get-token']")?.addEventListener("click", acquireDevToken);
+    }
+}
+
+/**
+ * Initialises the dev auth widget on page load.
+ * Renders initial state from localStorage and refreshes the countdown every minute.
+ */
+function initDevAuth() {
+    renderDevAuthWidget();
+    window.setInterval(renderDevAuthWidget, 60000);
 }
