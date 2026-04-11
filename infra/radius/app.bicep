@@ -76,6 +76,15 @@ param azureAdAuthority string = ''
 @description('Microsoft Entra ID audience (API URI) for JWT bearer token validation (e.g. api://{client-id}). Required in non-Development environments.')
 param azureAdAudience string = ''
 
+@description('''
+Dapr App API token used to authenticate Dapr sidecar → app calls.
+The Dapr sidecar reads APP_API_TOKEN from the container environment and injects it
+as the `dapr-api-token` header on every invocation request.
+Generated and stored as a Kubernetes secret by bootstrap.sh; never hardcoded.
+''')
+@secure()
+param appApiToken string
+
 // ---------------------------------------------------------------------------
 // Shared computed values
 // ---------------------------------------------------------------------------
@@ -202,6 +211,9 @@ resource expenseApi 'Applications.Core/containers@2023-10-01-preview' = {
         AzureAd__Audience: {
           value: !empty(azureAdAudience) ? azureAdAudience : 'https://radiusclaim.azurewebsites.net/api'
         }
+        APP_API_TOKEN: {
+          value: appApiToken
+        }
       }
       ports: {
         http: {
@@ -266,6 +278,11 @@ resource workflowEngine 'Applications.Core/containers@2023-10-01-preview' = {
     application: app.id
     container: {
       image: '${containerRegistry}/workflow-engine:${imageTag}'
+      env: {
+        APP_API_TOKEN: {
+          value: appApiToken
+        }
+      }
       ports: {
         http: {
           containerPort: 8080
@@ -331,6 +348,11 @@ resource notificationSvc 'Applications.Core/containers@2023-10-01-preview' = {
     application: app.id
     container: {
       image: '${containerRegistry}/notification-svc:${imageTag}'
+      env: {
+        APP_API_TOKEN: {
+          value: appApiToken
+        }
+      }
       ports: {
         http: {
           containerPort: 8080

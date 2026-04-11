@@ -452,3 +452,18 @@ FIC Sequencing Fix:
 - No code changes required
 
 **Lesson:** Always check git history before starting work on an issue. Issues may be marked OPEN even when the work is complete.
+
+### Dapr App API Token — idempotent K8s secret pattern (2025-07-14)
+
+**Task:** The `/decide` endpoint in workflow-engine validates the `dapr-api-token` header (fail-closed). Bootstrap wasn't setting `APP_API_TOKEN` on containers, causing 401s in production.
+
+**Solution:**
+- Added `ensure_dapr_app_api_token()` function to `bootstrap.sh` — checks for K8s secret `dapr-app-api-token` in `$WORKLOAD_NAMESPACE`; creates it with `openssl rand -hex 32` on first run, reads it on subsequent runs.
+- Added `@secure() param appApiToken string` to `infra/radius/app.bicep` with `APP_API_TOKEN` env var on all three containers (expense-api, workflow-engine, notification-svc).
+- Passed via `--parameters "appApiToken=${DAPR_APP_API_TOKEN}"` in `APP_DEPLOY_ARGS`.
+
+**Key files:** `infra/radius/app.bicep` (lines ~85-86, ~214, ~282, ~352), `scripts/bootstrap.sh` (function at ~831, invocation at ~2150, parameter at ~2282).
+
+**Pattern recorded:** `.squad/skills/dapr-app-api-token/SKILL.md` — reusable "idempotent K8s secret for bootstrap-generated tokens" pattern.
+
+**Decisions:** `.squad/decisions/inbox/pete-appapi-token-config.md`

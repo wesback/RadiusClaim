@@ -829,6 +829,47 @@ patch_pull_secret_to_serviceaccount() {
 }
 
 # ---------------------------------------------------------------------------
+# Dapr App API token — idempotent resolve-or-create
+# ---------------------------------------------------------------------------
+# The Dapr sidecar reads APP_API_TOKEN from the container env and injects it
+# as the `dapr-api-token` header on every sidecar → app invocation.  The app
+# validates this header to ensure calls originate from a trusted Dapr sidecar
+# (fail-closed: 401 if the header is absent or wrong).
+#
+# We persist the token in a Kubernetes secret so that re-running bootstrap
+# does NOT rotate the token, keeping the running pods in sync with whatever
+# value Radius last deployed.
+#
+# Secret: dapr-app-api-token / key: token  (in WORKLOAD_NAMESPACE)
+# Result: sets global DAPR_APP_API_TOKEN
+ensure_dapr_app_api_token() {
+  local secret_name="dapr-app-api-token"
+  local namespace="$WORKLOAD_NAMESPACE"
+
+  if [ "$DRY_RUN" = true ]; then
+    DAPR_APP_API_TOKEN="dry-run-placeholder-token"
+    log_info "[dry-run] Would resolve or create Dapr App API token secret '${secret_name}' in '${namespace}'."
+    return 0
+  fi
+
+  # Ensure namespace exists before touching secrets.
+  kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f - >/dev/null 2>&1
+
+  if kubectl get secret "$secret_name" -n "$namespace" >/dev/null 2>&1; then
+    DAPR_APP_API_TOKEN="$(kubectl get secret "$secret_name" -n "$namespace" \
+      -o jsonpath='{.data.token}' | base64 -d)"
+    log_success "Dapr App API token loaded from existing secret '${secret_name}' in '${namespace}'."
+  else
+    # Generate 32 random bytes as hex (256-bit entropy) — matches Dapr best-practice token length.
+    DAPR_APP_API_TOKEN="$(openssl rand -hex 32)"
+    kubectl create secret generic "$secret_name" \
+      --from-literal="token=${DAPR_APP_API_TOKEN}" \
+      -n "$namespace" >/dev/null
+    log_success "Dapr App API token generated and stored in secret '${secret_name}' in '${namespace}'."
+  fi
+}
+
+# ---------------------------------------------------------------------------
 # Radius stuck-state recovery
 # ---------------------------------------------------------------------------
 # When a previous `rad deploy` times out or is interrupted, Radius may leave
@@ -2105,6 +2146,10 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
     echo "  ℹ Skipping pull secret — using public GHCR or managed identity auth."
   fi
 
+  section "Resolving Dapr App API token"
+  DAPR_APP_API_TOKEN=""
+  ensure_dapr_app_api_token
+
   section "Checking for stuck Radius resources (pre-deploy)"
   cleanup_stuck_radius_resources "$APP_NAME" "$GROUP_NAME" "$WORKSPACE_NAME"
 
@@ -2234,6 +2279,7 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
     --parameters "useWorkloadIdentity=true"
     --parameters "azureAdAuthority=https://login.microsoftonline.com/${AZURE_TENANT_ID}"
     --parameters "azureAdAudience=api://radiusclaim"
+    --parameters "appApiToken=${DAPR_APP_API_TOKEN}"
   )
   
   # Only pass ghcrImagePullRef if we need a pull secret
