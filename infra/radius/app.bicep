@@ -100,35 +100,20 @@ var wiExtension = enableWorkloadIdentity ? [
   }
 ] : []
 
-// Kubernetes runtime spec with resource requests/limits.
-// Resources define container expectations: requests are used for scheduling,
-// limits enforce upper bounds on resource consumption.
-var kubernetesContainerResources = {
-  resources: {
-    requests: {
-      cpu: '100m'
-      memory: '128Mi'
-    }
-    limits: {
-      cpu: '500m'
-      memory: '256Mi'
-    }
-  }
-}
-
-// Pod-level runtimes block. Includes image pull secrets when supplied,
-// and always includes container resource specifications.
+// Pod-level runtimes block shared across all container resources.
+// Only includes imagePullSecrets at the pod level when a GHCR pull secret is provided.
+//
+// NOTE on resource limits: runtimes.kubernetes.pod.containers entries are treated as
+// *additional sidecar containers* by Radius — each entry requires its own `image` field.
+// To set CPU/memory limits on the main container, use a named entry matching the Radius
+// resource name (e.g. 'expense-api'), and do so per-container rather than in a shared var.
+// TODO(graham): add per-container resource limits using the correct Radius container name.
 var runtimesSpec = {
   kubernetes: {
     pod: {
       imagePullSecrets: !empty(ghcrImagePullRef) ? [
         { name: ghcrImagePullRef }
       ] : []
-      containers: [
-        union({
-          name: 'app'
-        }, kubernetesContainerResources)
-      ]
     }
   }
 }
