@@ -2,6 +2,109 @@
 
 ## Active Decisions
 
+# Billy — Anonymous workflow decision endpoint
+
+- Date: 2026-05-05
+- Context: Workstream 1 requires the manual decision endpoint in `workflow-engine` to accept anonymous approval decisions with no `APP_API_TOKEN` or `dapr-api-token` contract.
+- Decision: `POST /workflows/{instanceId}/decide` now stays anonymous by design and enforces correctness through explicit workflow-state checks (`404` missing workflow, `409` non-running workflow, `500` on failed event raise) instead of token validation.
+- Implementation note: the endpoint now depends on a narrow `IWorkflowDecisionClient` contract so tests can prove the anonymous contract and failure shapes without coupling to a live Dapr sidecar.
+
+# User Directive — Portability remediation critique (2026-05-05)
+
+- **By:** Wesley Backelant (via Copilot)
+- **What:** When all remediation work is done, run another critique pass on the fixes to catch anti-patterns, bad practices, and portability issues; treat removal of the approval-flow API key as intentional.
+- **Why:** User request — captured for team memory
+
+# Daisy Decision — Portability blog review baseline
+
+**Date:** 2026-06-06
+
+## Decision
+Review and blog guidance for `docs/blog/portability.md` must align to the repo's current contract surface:
+- describe app-code portability as the primary demonstrated win
+- describe the shipped platform path as Kubernetes-first with Azure-backed recipes today
+- state that Dapr component projection is an explicit post-deploy/bootstrap step in this repo, not something Radius can be credited with doing automatically
+- treat `infra/radius/environments/local.bicep` as future-looking/experimental, while local development remains the checked-in `infra/dapr/local` path
+- avoid guaranteeing public gateway exposure unless the claim is supported consistently by the app model and deployment path; present port-forward as the deterministic fallback when needed
+
+## Why
+This keeps the sample small, credible, and fit for platform-team audiences. The repo can still teach a strong portability pattern, but only if the narrative distinguishes today's Azure-backed implementation from the broader pattern it enables.
+
+# Eddie Decision — Portability blog must follow the shipped repo story
+
+**Date:** 2026-06-13  
+**Author:** Eddie (Docs & Story Specialist)  
+**Requested by:** Wesley Backelant
+
+## Decision
+
+When we position RadiusClaim in blog-style narrative, we must describe the **current supported story**:
+
+1. **Supported deployment path:** Kubernetes-first on AKS with Azure-backed recipes.
+2. **Portable application boundary:** Dapr keeps the app code portable.
+3. **Current infrastructure reality:** the shipped recipes are Azure-specific today (PostgreSQL, Service Bus, Key Vault).
+4. **Current platform caveat:** Dapr component projection still requires the documented bootstrap/backfill step.
+5. **Local path honesty:** local development is supported through `infra/dapr/local`, while `infra/radius/environments/local.bicep` remains an experimental placeholder until local Radius recipes are actually shipped.
+
+## Why
+
+The repo's docs now make a careful distinction between portable app code and the current platform implementation. Blog content that reintroduces old Blob Storage examples, automatic component-projection claims, or a fully shipped local Radius path weakens trust because readers who follow the repo will immediately hit contradictions.
+
+## Consequences
+
+- Blog and README narratives should stay aligned after future remediation work.
+- Portability language should be aspirational only when clearly labeled as future or pattern-level, not as current repo behavior.
+- Microsoft-authored posts can still tell the broader sovereignty story, but the sample walkthrough must stay grounded in what the repo demonstrably supports today.
+
+# Graham Decision — Portability blog must match the supported repo contract
+
+- **Date:** 2026-06-13
+- **Author:** Graham (Platform Dev)
+- **Requested by:** Wesley Backelant
+
+## Decision
+
+External portability-facing docs for RadiusClaim must describe the **current supported contract**, not earlier intermediary designs.
+
+That means:
+
+1. Azure-backed RadiusClaim uses **PostgreSQL Flexible Server**, **Azure Service Bus**, and **Azure Key Vault**.
+2. `rad deploy` alone is **not** the full Dapr wiring story in this repo; Dapr component CRDs are projected afterward via `scripts/apply-dapr-components-from-recipes.sh`.
+3. `infra/radius/environments/local.bicep` is an **experimental placeholder**, and the repo does **not** currently ship a supported `infra/radius/recipes/local/` path.
+4. Public access to `expense-api` is **platform-dependent**; deterministic validation uses workload-namespace `kubectl port-forward`, not a guaranteed Radius gateway.
+
+## Why
+
+The current `docs/blog/portability.md` overstates the realized portability story by mixing repo-current behavior with older Azure Blob / automatic-component-projection / local-recipes narratives. That drift makes the sample less trustworthy for platform engineers because the app model, scripts, and docs stop telling one coherent story.
+
+## Evidence
+
+- `infra/radius/app.bicep`
+- `infra/radius/environments/azure-radius.bicep`
+- `infra/radius/environments/dev.bicep`
+- `infra/radius/environments/local.bicep`
+- `infra/radius/recipes/azure/state-store.bicep`
+- `infra/radius/recipes/azure/pubsub.bicep`
+- `infra/radius/recipes/azure/secrets.bicep`
+- `scripts/bootstrap.sh`
+- `scripts/apply-dapr-components-from-recipes.sh`
+- `docs/local-dev.md`
+- `docs/dapr-component-backfill.md`
+- `README.md`
+
+# Simone Decision — Workflow-Owned Manual Decision Audit
+
+## Context
+Manual approval and rejection decisions can only be trusted after the workflow has accepted the signal and executed its own state transition.
+
+## Decision
+For manual review outcomes, the workflow-owned activities are now the authoritative writers of decision metadata:
+- `ApprovedBy` must be cleared for anonymous approval/rejection flows.
+- `ApprovedAt` is the workflow-owned decision timestamp, not an API prewrite timestamp.
+- Rejections persist the reason only from the workflow transition payload.
+
+## Why it matters
+This keeps the stored record aligned with what actually happened: a signal was accepted, then the workflow transitioned state. It also gives Rory and Eddie a stable contract to build on when they finish the expense-api ordering cleanup and demo narrative updates.
 
 ### Context
 

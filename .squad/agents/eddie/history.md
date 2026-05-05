@@ -29,4 +29,14 @@ status: archived_2026-05-05
 
 Documentation credibility contract maintained. All walkthrough steps match current code state. Validation guide aligned with actual operator workflows.
 
+## Learnings
+
+- 2026-06-13 — Portability blog reviews must align abstract portability claims with the repo's shipped contract. In RadiusClaim that means centering the Kubernetes-first AKS story, naming PostgreSQL/Service Bus/Key Vault as the current Azure-backed recipes, calling out the component-projection backfill step, and treating `infra/radius/environments/local.bicep` as a placeholder rather than a supported local Radius path.
+
+## Blog Review Work (2026-05-05)
+
+**Task:** Review docs/blog/portability.md for flow, tone, readability, engagement, and Microsoft narrative alignment  
+**Outcome:** Authored "Eddie Decision — Portability blog must follow the shipped repo story" (2026-06-13)  
+**Key Finding:** Blog narratives must describe only the current supported story to maintain credibility; aspirational features should be clearly labeled as future work.
+
 **Full history archived to `.squad/agents/eddie/history-archive.md`**

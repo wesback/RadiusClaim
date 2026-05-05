@@ -39,3 +39,18 @@ status: archived_2026-05-05
 All portability pillars validated. Application ready for showcase and multi-cloud deployment patterns.
 
 **Full history archived to `.squad/agents/graham/history-archive.md`**
+
+## Learnings
+
+- 2026-06-13 — `docs/blog/portability.md` still reflects an older repo shape in several high-risk places: it says Radius auto-configures Dapr components, shows Azure Blob Storage as the Azure state store, and presents `infra/radius/environments/local.bicep` / `infra/radius/recipes/local/` as a ready portability path. The current repo contract is PostgreSQL + Service Bus + Key Vault for Azure, explicit post-deploy Dapr component projection via `scripts/apply-dapr-components-from-recipes.sh`, and a local Radius environment that is only an experimental placeholder.
+
+## Blog Review Work (2026-05-05)
+
+**Task:** Review docs/blog/portability.md for technical and factual accuracy against the current repo  
+**Outcome:** Authored "Graham Decision — Portability blog must match the supported repo contract" (2026-06-13)  
+**Key Findings:**
+  - Blob Storage reference is outdated (should be PostgreSQL)
+  - Auto-component-projection claim is false (requires explicit post-deploy step)
+  - Local Radius path presented as ready when only an experimental placeholder
+  - Gateway access not guaranteed; port-forward is deterministic path
+**Impact:** Blog remediation work now has clear factual acceptance criteria.
