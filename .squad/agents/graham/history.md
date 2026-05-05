@@ -43,6 +43,7 @@ All portability pillars validated. Application ready for showcase and multi-clou
 ## Learnings
 
 - 2026-06-13 — `docs/blog/portability.md` still reflects an older repo shape in several high-risk places: it says Radius auto-configures Dapr components, shows Azure Blob Storage as the Azure state store, and presents `infra/radius/environments/local.bicep` / `infra/radius/recipes/local/` as a ready portability path. The current repo contract is PostgreSQL + Service Bus + Key Vault for Azure, explicit post-deploy Dapr component projection via `scripts/apply-dapr-components-from-recipes.sh`, and a local Radius environment that is only an experimental placeholder.
+- 2026-05-05 — Reviewer gate re-check: the updated `docs/blog/portability.md` now matches the repo's current platform contract closely enough to approve. The post stays honest about PostgreSQL + Service Bus + Key Vault on Azure, the explicit Dapr component projection step after `rad deploy`, the Kubernetes-first deployment story, and `infra/radius/environments/local.bicep` remaining an experimental placeholder rather than a supported local Radius path.
 
 ## Blog Review Work (2026-05-05)
 
@@ -54,3 +55,11 @@ All portability pillars validated. Application ready for showcase and multi-clou
   - Local Radius path presented as ready when only an experimental placeholder
   - Gateway access not guaranteed; port-forward is deterministic path
 **Impact:** Blog remediation work now has clear factual acceptance criteria.
+
+## Portability Blog Technical Gate Work (2026-05-05, Session T13:10Z)
+
+**Task (graham-6):** Technical accuracy gate for portability blog — APPROVE.  
+**Outcome:** ✓ APPROVE as technically accurate against current repo.  
+**Decision Made:** "Graham Decision — portability blog technical accuracy gate"  
+**Validation:** Azure services correct (PostgreSQL, Service Bus, Key Vault); Dapr projection explicit post-deploy step; Kubernetes-first with AKS example; local dev via `infra/dapr/local`; endpoint access honest about cluster dependency.  
+**Impact:** Combined with Eddie's rewrite (eddie-1) and Daisy's architecture gate (daisy-4), portability blog now passes full approval cycle with guardrails for future maintenance.

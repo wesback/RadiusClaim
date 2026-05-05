@@ -2,6 +2,71 @@
 
 ## Active Decisions
 
+# Graham Decision — portability blog technical accuracy gate
+
+- **Date:** 2026-05-05
+- **Owner:** Graham
+- **Artifact:** `docs/blog/portability.md`
+
+## Decision
+
+Approve `docs/blog/portability.md` as technically accurate against the current repo.
+
+## Why
+
+The updated post now matches the supported platform contract:
+
+- Azure-backed Radius recipes are described as **PostgreSQL + Service Bus + Key Vault**
+- Dapr component projection is called out as an **explicit post-deploy step** via `scripts/apply-dapr-components-from-recipes.sh`
+- The deployment story stays **Kubernetes-first**, with AKS as the managed Azure example rather than the only architectural fit
+- Local development is described through `infra/dapr/local`, while `infra/radius/environments/local.bicep` is treated as an **experimental placeholder**
+- Endpoint access is presented honestly as cluster-dependent, with `kubectl port-forward` kept as the deterministic validation path
+
+## Impact
+
+Future edits to the portability story should preserve these same guardrails. If any of the app model, environment recipes, bootstrap flow, or local-dev contract change, the blog should be re-audited in the same pass.
+
+# Daisy Decision — portability blog story architecture gate
+
+- **Date:** 2026-05-05
+- **Artifact:** `docs/blog/portability.md`
+
+## Decision
+
+APPROVE as the repo-aligned external portability narrative baseline.
+
+## Why it passes
+
+- It keeps the architecture boundary clear: Dapr owns the portable app contract and Radius owns the application model plus environment-specific recipe binding.
+- It matches the live repo contract: Kubernetes-first deployment, Azure-backed recipes today, explicit post-deploy Dapr component projection, and local development through `infra/dapr/local`.
+- It stays credible by naming what is not shipped yet: no supported local Radius recipe path and no interchangeable non-Azure recipe pack in this repo today.
+
+## Guardrails for future edits
+
+- Keep portability claims anchored to `README.md`, `docs/local-dev.md`, `docs/dapr-component-backfill.md`, `infra/radius/app.bicep`, and `infra/radius/environments/azure-radius.bicep`.
+- Do not collapse the projection step into "Radius does everything" language.
+- Do not market the sample as a shipped multi-cloud implementation; describe that as an architectural path enabled by alternate recipe sets.
+
+# Eddie Decision — Portability blog framing must stay repo-current
+
+**Date:** 2026-05-05  
+**Author:** Eddie (Docs/Story)  
+**Requested by:** Wesley Backelant
+
+## Decision
+
+The portability blog should lead with the **current RadiusClaim proof points** and keep its claims inside the repo's demonstrated contract:
+
+1. Dapr is the portable application boundary.
+2. Radius provides the Kubernetes-first deployment model.
+3. The shipped recipe set in this repo is Azure-backed today: PostgreSQL, Service Bus, and Key Vault.
+4. Dapr component projection is an explicit post-deploy/bootstrap step in this repo.
+5. Broader portability should be described as the architectural pattern enabled by Radius environments and recipes, not as a fully shipped multi-provider sample.
+
+## Why
+
+This keeps the blog credible for architects and platform engineers who read the post against the repository. It also aligns the narrative with the README, environment Bicep files, bootstrap flow, and the Dapr component backfill guide instead of reviving stale examples or promises.
+
 # Billy — Anonymous workflow decision endpoint
 
 - Date: 2026-05-05
