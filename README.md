@@ -23,17 +23,19 @@ RadiusClaim shows the answer: **Dapr keeps app code portable; Radius declares wh
 
 ### The Application Flow
 
-An employee submits an expense. A workflow validates, approves or rejects, processes reimbursement, and notifies the employee — all orchestrated through loosely coupled services.
+An employee submits an expense. A workflow validates, approves or rejects, processes reimbursement, and notifies the employee — all orchestrated through loosely coupled services. All state is persisted through a **Dapr state store** (PostgreSQL on Azure, Redis locally).
 
 ```
 Employee
    │
    ├─> expense-api: POST /expenses
    │          │
-   │          └─> [State] submit expense, invoke workflow-engine
+   │          ├─> [State Store] persist expense
+   │          └─> invoke workflow-engine
    │
    ├─> workflow-engine: Dapr Workflow orchestrator
    │          │
+   │          ├─> [State Store] durable checkpoints
    │          ├─> Activity: ApproveExpense
    │          ├─> Activity: ProcessReimbursement
    │          ├─> Activity: PublishNotification
@@ -50,8 +52,8 @@ Employee
 
 | Service | Responsibility | Dapr Building Blocks |
 |---------|---------------|---------------------|
-| **expense-api** | Accept submissions, expose query endpoints, and forward manual decisions to the workflow | Service Invocation, State |
-| **workflow-engine** | Orchestrate the approval flow and own durable approval/rejection transitions | Workflows, Pub/Sub (publisher) |
+| **expense-api** | Accept submissions, expose query endpoints, and forward manual decisions to the workflow | Service Invocation, State Store |
+| **workflow-engine** | Orchestrate the approval flow and own durable approval/rejection transitions | Workflows, State Store, Pub/Sub (publisher) |
 | **notification-svc** | Consume approval events, send notifications | Pub/Sub (subscriber) |
 
 ### Demo web UI
