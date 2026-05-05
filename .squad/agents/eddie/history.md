@@ -49,3 +49,17 @@ Documentation credibility contract maintained. All walkthrough steps match curre
 **Impact:** Blog now passes architecture (daisy-4) and technical accuracy (graham-6) gates.
 
 **Full history archived to `.squad/agents/eddie/history-archive.md`**
+
+## README Application Flow State Store Update (2026-05-05, Session T11:50Z)
+
+**Task:** Explicit State Store Backing in README Application Flow  
+**Outcome:** ✓ COMPLETE — README.md updated to surface Dapr state store persistence.  
+**Decision Made:** "Eddie Decision — Explicit State Store Backing in README Application Flow"  
+**Changes:**
+1. Opening paragraph (line 26): Added explicit mention of "All state is persisted through a **Dapr state store** (PostgreSQL on Azure, Redis locally)."
+2. Flow diagram (lines 33, 38): Changed `[State]` → `[State Store]` labels; added durable checkpoint reference for workflow-engine
+3. Service Boundaries table (lines 55-56): Updated expense-api and workflow-engine to include "State Store" in their Dapr bindings
+
+**Rationale:** Transparency for readers; clarity on backing store (PostgreSQL/Redis); narrative flow from architecture through service boundaries  
+**Impact:** Documentation accuracy improved; no code or behavior changes; readers can trace data lineage
+

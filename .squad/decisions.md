@@ -1596,3 +1596,37 @@ Repository surface is cleaner:
 
 Daisy's alignment boundaries honored throughout.
 
+# Decision: Explicit State Store Backing in README Application Flow
+
+**Date:** 2026-05-05  
+**Author:** Eddie (Docs/Story Agent)  
+**Status:** Approved
+
+## Summary
+
+Updated the README.md "Application Flow" section to explicitly mention Dapr state store backing and the concrete persistence implementations (PostgreSQL for Azure, Redis for local development).
+
+## Changes Made
+
+1. **Opening paragraph** (line 26): Added explicit mention that "All state is persisted through a **Dapr state store** (PostgreSQL on Azure, Redis locally)."
+
+2. **Flow diagram** (lines 33, 38): 
+   - Changed `[State] submit expense` to `[State Store] persist expense` for clarity
+   - Added `[State Store] durable checkpoints` to workflow-engine to show where Dapr Workflows maintain state
+
+3. **Service Boundaries table** (lines 55-56):
+   - Updated expense-api: "Service Invocation, State Store" (was "Service Invocation, State")
+   - Updated workflow-engine: "Workflows, State Store, Pub/Sub (publisher)" (was "Workflows, Pub/Sub (publisher)")
+
+## Rationale
+
+- **Transparency**: Readers now understand that data persists beyond in-memory, not just through abstract service interactions
+- **Clarity on backing**: Makes explicit that PostgreSQL backs Azure deployments and Redis backs local development — no more hidden assumptions
+- **Natural narrative**: The persistence story flows from the architecture diagram through to the service boundaries, supporting the overall Dapr portability narrative
+- **Concise**: Added information without bloating the documentation; the backing details fit naturally in the opening sentence
+
+## Impact
+
+- Documentation is more accurate regarding how this reference sample works
+- Readers can now clearly trace where data lives (Dapr state store) and what backs it (PostgreSQL/Redis)
+- No breaking changes to code or existing behavior—documentation alignment only
