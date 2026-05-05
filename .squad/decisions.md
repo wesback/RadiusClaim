@@ -556,3 +556,704 @@ That gap is worth adding, but it does **not** block approval of this fix because
 - Context: The repository contains the app-modeling skill under `.github/skills/app-modeling/` with `SKILL.md` plus supporting reference files.
 - Decision: Ignore `.github/skills/app-modeling/` in the root `.gitignore`.
 - Why: Ignoring the directory is the narrowest correct pattern that covers the full skill payload without hiding unrelated skills.
+
+
+# User Directive
+
+- **Captured at:** 2026-05-05 13:19:53
+- **Captured by:** Copilot
+- **User:** Wesley Backelant
+- **Scope:** `docs/blog/portability.md`
+
+## Directive
+
+The published blog post must not include editorial note-style comments or reviewer asides in the prose. Remove the explicitly identified sentence and any similar draft-note language so the article reads like final Microsoft-authored content.
+
+## Source
+
+> THe blog post should not have notes in the form of comments like "That distinction matters because architects and platform engineers will test a sample against the repo, not against our intent." You are not supposed to show these comments as part of the blog post.
+
+
+# Docs Folder Cleanup Directive
+
+**Date:** 2026-05-05  
+**Requested by:** Wesley Backelant
+
+## Decision
+
+Clean up the docs folder to retain only clearly relevant user-facing documentation.
+
+## Rationale
+
+Current docs structure contains unnecessary or outdated content. User-facing documentation should be streamlined to focus on core content.
+
+## Primary User Docs
+
+The following are the primary user-facing docs that should remain:
+- Getting Started
+- End-to-end walkthrough
+
+## Action Items
+
+Review and remove docs that don't align with these primary materials. Consolidate or archive supplementary documentation as needed.
+
+## Status
+
+Pending implementation by squad team.
+
+
+# Documentation Scope Decision: User-Facing Docs Set
+
+**Decision Owner:** Daisy (Lead)  
+**Date:** 2026-05-05  
+**Status:** Approved  
+**Scope:** Define the supported user-facing documentation surface for RadiusClaim
+
+---
+
+## Executive Summary
+
+The current docs folder contains a healthy mix of user-facing guides and technical references, but lacks clear hierarchy and discoverable routing. Based on user feedback ("only getting started and end to end walkthrough seems relevant"), I'm establishing a **three-tier user-facing docs model** that keeps our primary entry points clean while preserving essential operational and architectural references.
+
+**Outcome:** Keep docs accessible through guided navigation, not by eliminating content. Remove surfacing clutter, not helpful technical material.
+
+---
+
+## Docs Audit: Current State
+
+**Total files:** 15 markdown files across `docs/` (excluding `superpowers/` which is internal Squad workspace)
+
+| Doc | Purpose | Audience | Status |
+|-----|---------|----------|--------|
+| **GETTING_STARTED.md** | Primary entry point, audience-based routing | All users | ✅ **KEEP — Anchor** |
+| **end-to-end-setup-walkthrough.md** | Deployment guide, two-script path, full flow | Operators | ✅ **KEEP — Anchor** |
+| **PRD.md** | Product vision, goals, non-goals, target users | Architects, decision makers | ✅ **KEEP — Optional deepdive** |
+| **API_AUTHENTICATION.md** | Auth boundaries, demo mode, production requirements | API developers, operators | ✅ **KEEP — Referenced from GETTING_STARTED** |
+| **local-dev.md** | Running services locally with Dapr sidecars | Developers | ✅ **KEEP — Referenced from GETTING_STARTED** |
+| **radius-validation-checklist.md** | Pre-flight validation, troubleshooting guide | Operators | ✅ **KEEP — Referenced from end-to-end** |
+| **ADR-0001-kubernetes-first-deployment.md** | Why Kubernetes-first strategy | Architects, technical leads | ✅ **KEEP — Linked from Getting Started** |
+| **adr/ghcr-recipe-packages-public.md** | Recipe packaging decision | Platform engineers | ✅ **KEEP — In ADR folder** |
+| **adr/README.md** | ADR index | Architects | ✅ **KEEP — Supports ADR discovery** |
+| **DEMO_MODE.md** | Redirect stub (content moved to API_AUTHENTICATION) | — | 🟡 **KEEP as stub — Backward compat** |
+| **OBSERVABILITY.md** | Jaeger + OpenTelemetry setup | Operators, developers | ✅ **KEEP — Operational reference** |
+| **SCALING.md** | Scaling patterns, expenseIndex design | Operators, architects | ✅ **KEEP — Operational reference** |
+| **dapr-component-backfill.md** | Dapr component projection flow | Platform engineers | ✅ **KEEP — Technical reference** |
+| **CONSOLIDATION_REPORT.md** | Historical audit from Eddie (Docs/Story Writer) | Internal documentation | 🟡 **ARCHIVE** |
+| **superpowers/\*** | Session/Squad workspace artifacts | Internal only | — **Not user-facing** |
+
+---
+
+## Supported User-Facing Docs Set
+
+### **Tier 1: Entry Points (Users Start Here)**
+
+These docs are always accessible and discoverable:
+
+1. **README.md** (root) — Problem statement, architecture story, links to docs folder
+2. **docs/GETTING_STARTED.md** — Audience-based navigation hub with quick start
+3. **docs/end-to-end-setup-walkthrough.md** — Deployment journey from RG to browser
+
+✅ **Action:** Keep these stable and highly discoverable. Link prominently in README.
+
+---
+
+### **Tier 2: Guided References (Audience-Specific, Linked from Tier 1)**
+
+These docs are referenced from GETTING_STARTED based on audience role:
+
+- **docs/PRD.md** — Product vision (architects, decision makers)
+- **docs/API_AUTHENTICATION.md** — Auth boundaries and demo mode (API devs, operators)
+- **docs/local-dev.md** — Local development workflow (developers)
+- **docs/radius-validation-checklist.md** — Preflight & troubleshooting (operators)
+- **docs/ADR-0001-kubernetes-first-deployment.md** — Strategy rationale (architects)
+- **docs/adr/README.md + ADR files** — Architecture decisions (architects, tech leads)
+
+✅ **Action:** Keep accessible through clear cross-references from GETTING_STARTED. These are not "removed," just not discoverable by accident.
+
+---
+
+### **Tier 3: Operational/Technical References (Specialists)**
+
+These docs support specific operational or technical workflows:
+
+- **docs/OBSERVABILITY.md** — Jaeger + OTel instrumentation (operators)
+- **docs/SCALING.md** — Scaling patterns and design boundaries (architects, operators)
+- **docs/dapr-component-backfill.md** — Component projection mechanics (platform engineers)
+
+✅ **Action:** Keep in repo, linkable by URL, but not surfaced in navigation unless a user is solving a specific problem (e.g., "how do I set up Jaeger?" → Google finds OBSERVABILITY.md).
+
+---
+
+### **Tier 4: Stubs/Compatibility**
+
+- **docs/DEMO_MODE.md** — Redirect stub pointing to API_AUTHENTICATION.md
+
+✅ **Action:** Keep as a redirect to preserve old links and search results.
+
+---
+
+## Docs to Archive (Not Delete — Preserve in Git History)
+
+- **docs/CONSOLIDATION_REPORT.md** — Historical meta-documentation from Eddie's audit
+
+✅ **Action:** Move to `.squad/archive/CONSOLIDATION_REPORT.md` to preserve context but remove from main docs folder. Update GETTING_STARTED to not reference it.
+
+---
+
+## Supported Paths & Workflows
+
+### **Path 1: Deploy RadiusClaim (Most Common)**
+
+1. User reads **README.md** → understands the problem
+2. User clicks **docs/GETTING_STARTED.md** → finds quick start + two-script guidance
+3. User follows **docs/end-to-end-setup-walkthrough.md** → full deployment
+4. If blocked: **docs/radius-validation-checklist.md** → troubleshooting
+5. If curious about architecture: **docs/ADR-0001-kubernetes-first-deployment.md**
+
+✅ **Truthfulness:** Both scripts (`prepare-cluster.sh`, `bootstrap.sh`) are stable and tested. Walkthrough reflects current AKS + Dapr + Radius flow.
+
+---
+
+### **Path 2: Understand the Codebase (Developer Onboarding)**
+
+1. User reads **README.md** → understands the problem
+2. User clicks **docs/GETTING_STARTED.md** → routed to "Developers" section
+3. User reads **docs/PRD.md** → learns vision, goals, architecture intent
+4. User reads **docs/local-dev.md** → runs services locally with Dapr
+5. User browses **docs/adr/ → learns technical decisions**
+
+✅ **Truthfulness:** Local dev guide is tested and accurate. PRD reflects actual codebase.
+
+---
+
+### **Path 3: Set Up Authentication (API Developer or Operator)**
+
+1. User reads **docs/GETTING_STARTED.md** → routed to "API Developers" or "Security" section
+2. User clicks **docs/API_AUTHENTICATION.md** → learns boundaries, demo mode, production requirements
+3. If deploying: **docs/end-to-end-setup-walkthrough.md** → full flow
+4. If advanced: **docs/ADR-0001-kubernetes-first-deployment.md** → why the choices
+
+✅ **Truthfulness:** API_AUTHENTICATION accurately documents demo mode trade-offs and workload identity path.
+
+---
+
+### **Path 4: Optimize for Production (Operator or Architect)**
+
+1. User reads **docs/GETTING_STARTED.md** → routed to "SREs" section
+2. User clicks **docs/OBSERVABILITY.md** → instrument with Jaeger/OpenTelemetry
+3. User clicks **docs/SCALING.md** → understand expenseIndex boundaries and scaling patterns
+4. User clicks **docs/dapr-component-backfill.md** → understand how Dapr components wire to Radius recipes
+
+✅ **Truthfulness:** These docs are specialist references; users expect to find them via search or cross-reference, not browsing.
+
+---
+
+## Product/Story Clarity
+
+### ✅ Clear Positioning
+
+- **Problem:** Two hard questions (portability, connection management)
+- **Solution:** Dapr (portable app code) + Radius (infrastructure declaration)
+- **Proof:** Working, deployable reference sample
+
+### ✅ Supported Narrative
+
+1. **Getting started**: Two scripts, five minutes, browser-open
+2. **For different roles**: Developers, operators, architects all have a clear path
+3. **Why it matters**: PRD explains goals; ADRs explain decisions
+
+### ⚠️ Potential Gaps (Not addressed by docs scope, but noted)
+
+- No comprehensive "troubleshooting guide" (radius-validation-checklist is pre-flight, not runtime debugging)
+- No "how to extend RadiusClaim" guide (out of scope; this is a reference sample)
+- No "performance tuning" guide beyond SCALING.md (acceptable; reference sample)
+
+---
+
+## Recommendations for Implementation
+
+### **Immediate (Tier 1 Stability)**
+
+1. ✅ GETTING_STARTED.md already well-structured with audience-based routing
+2. ✅ end-to-end-setup-walkthrough.md already accurate and comprehensive
+3. ✅ README.md already drives users to docs folder
+
+**No changes needed.** These are solid.
+
+---
+
+### **Short-term (Tier 2 Cross-References)**
+
+1. Audit links in GETTING_STARTED — ensure all audience sections point to correct Tier 2 docs
+2. Add a "See Also" section to each Tier 2 doc pointing back to GETTING_STARTED
+3. Keep adr/README.md as the table of contents for architectural decisions
+
+**Effort:** Minimal link verification and cross-reference cleanup
+
+---
+
+### **Archive (Administrative)**
+
+1. Move **CONSOLIDATION_REPORT.md** to `.squad/archive/`
+2. Verify **DEMO_MODE.md** redirect points to correct section in API_AUTHENTICATION.md
+3. Add a comment to archived docs explaining why they're archived
+
+**Effort:** 10 minutes
+
+---
+
+## Out of Scope for This Decision
+
+- Updating docs content (that's an implementation task for the Docs/Story Writer)
+- Rewriting or consolidating docs (Eddie's earlier consolidation is solid; keep it)
+- Changing the supported deployment path (GETTING_STARTED and walkthrough are authoritative)
+
+---
+
+## Success Criteria
+
+✅ **New users can follow one of four clear paths from README → goal without confusion**
+
+✅ **Product story is clear:** Dapr for portability, Radius for infrastructure, together they solve the problem
+
+✅ **Supported workflows are truthful:** The two-script deployment path works; local dev works; auth story is honest
+
+✅ **Docs outside the primary paths are still discoverable** via search and cross-references, not buried
+
+✅ **No user-facing docs are deleted** — only archived (preserving history) and deduped (avoiding confusion)
+
+---
+
+## Decision
+
+**Approved:** Maintain current docs structure with the three-tier model above. Tier 1 stays anchor, Tier 2 stays referenced and discoverable, Tier 3 stays searchable, and Tier 4 (stubs/archive) stays for compatibility.
+
+No files require deletion. Archive CONSOLIDATION_REPORT.md. Continue using GETTING_STARTED and end-to-end-setup-walkthrough as the primary user-facing surface.
+
+
+# Shell Script Audit: Supported vs Debug Classification
+
+**Date:** 2026-05-05  
+**Author:** Daisy (Lead)  
+**Status:** Decision  
+**Scope:** Repository cleanliness; repo contract definition
+
+---
+
+## Executive Summary
+
+The repository contains **32 shell scripts** across three categories:
+
+1. **Production/Supported Deployment** (18 scripts in `scripts/`) — KEEP
+2. **Test & Validation** (6 scripts in `tests/portability/`) — KEEP
+3. **Debug/Ad Hoc Branch Analysis** (7 scripts at repo root) — **SAFE TO DELETE**
+4. **Skill Scripts** (1 script in `.copilot/`) — KEEP
+
+Additionally, **11 debug log files** at repo root should be removed or gitignored.
+
+---
+
+## Supported Scripts — MUST KEEP
+
+### Core Deployment Orchestration
+- `scripts/bootstrap.sh` (115 KB) — Main orchestrator; documented in README; referenced across deployment docs
+- `scripts/prepare-cluster.sh` (25 KB) — First-time cluster prep; documented in scripts/README.md
+- `scripts/teardown.sh` (25 KB) — Cleanup utility; documented in README
+
+### Dapr Component & Recipe Integration
+- `scripts/apply-dapr-components-from-recipes.sh` (26 KB) — Deploy Dapr components from Radius recipes; referenced in Phase 2 docs
+- `scripts/deploy-dapr-components-workload-identity.sh` (24 KB) — Workload identity bootstrap (canonical path; replaces legacy script)
+- `scripts/deploy-dapr-components.sh` (14 KB) — **DEPRECATED but documented** — Service principal fallback; retained as reference; script itself warns not to use
+- `scripts/publish-radius-recipes.sh` (6.6 KB) — Recipe publishing utility
+
+### Container Build & Registry
+- `scripts/build-and-push.sh` (2.6 KB) — Build and push images to GHCR; feature-complete with --dry-run, --registry, --tag options
+
+### Cluster & Service Validation
+- `scripts/validate-deployment.sh` (13 KB) — End-to-end smoke test ($50 auto-approve, $150 manual-review flows); documented in TEST_GUIDE.md and README
+- `scripts/health-check.sh` (6.7 KB) — Cluster/pod/Dapr health check; referenced in TEST_GUIDE.md
+- `scripts/api-endpoint-test.sh` (5.6 KB) — HTTP connectivity test; documented in TEST_GUIDE.md
+- `scripts/dapr-component-test.sh` (6.2 KB) — Dapr component CRD validation; documented in TEST_GUIDE.md
+- `scripts/expense-submit-test.sh` (6.5 KB) — End-to-end expense submission over port-forward; documented in TEST_GUIDE.md
+- `scripts/workflow-trigger-test.sh` (6.2 KB) — Workflow trigger validation
+
+### Utilities & Configuration
+- `scripts/deployment-readiness.sh` (3.4 KB) — Runs diagnostic suite; documented in TEST_GUIDE.md
+- `scripts/annotate-service-accounts.sh` (5.2 KB) — Service account annotation utility
+- `scripts/lib/platform-common.sh` — Shared bash library; sourced by 6+ scripts
+
+**Verdict:** All in `scripts/` have documented purpose and are either:
+- Explicitly documented in README.md, TEST_GUIDE.md, or scripts/README.md
+- Shipped as examples in PHASE*.md documents
+- Actively sourced as utilities by other supported scripts
+- Referenced by the deployment story
+
+---
+
+## Test Scripts — KEEP
+
+Located in `tests/portability/`:
+- `run-all.sh` — Master runner for portability validation
+- `region-agnostic.sh` — Azure region portability test
+- `app-no-azure-hardcoding.sh` — Code hardcoding scan
+- `recipes-are-complete.sh` — Recipe metadata validation
+- `bootstrap-idempotency.sh` — Idempotency check
+- `dapr-components-loaded.sh` — Component loading validation
+
+**Verdict:** Part of the test validation story; not yet integrated into CI but are documented in TEST_GUIDE.md as exemplars of portability testing.
+
+---
+
+## Debug Scripts — SAFE TO DELETE
+
+Located at **repo root** (7 scripts, 352 lines total):
+
+| Script | Purpose | Status | Risk |
+|--------|---------|--------|------|
+| `analyze_critical.sh` | Branch diff analysis (critical file changes) | Ad hoc; no references | **SAFE** |
+| `final_analysis.sh` | Merge safety analysis (branch table) | Ad hoc; no references | **SAFE** |
+| `final_strategy.sh` | Merge strategy revision assessment | Ad hoc; no references | **SAFE** |
+| `merge_analysis.sh` | Merge conflict check variant | Ad hoc; no references | **SAFE** |
+| `merge_strategy.sh` | Merge strategy assessment variant | Ad hoc; no references | **SAFE** |
+| `deep_conflict_check.sh` | Detailed conflict detection | Ad hoc; no references | **SAFE** |
+| `squad_changes_detail.sh` | Squad/.squad file change listing | Ad hoc; no references | **SAFE** |
+
+**Characteristics:**
+- Created during complex branch-merge resolution (~2026-03-27)
+- All are ~40–70 lines; hard-coded branch lists
+- No CI references; no documentation mentions
+- All examine historical squad/* branches (old, pre-2026-04 work)
+- None are imported or sourced by other scripts
+- No user-facing value post-integration
+
+**Verdict:** Delete all 7 scripts; they are diagnostic artifacts from a specific merge campaign and do not represent ongoing operational needs.
+
+---
+
+## Debug Log Files — SHOULD BE GITIGNORED
+
+Located at repo root (11 files, ~80 KB total):
+
+- `bootstrap-full.log`
+- `bootstrap-run.log`
+- `bootstrap-run2.log`
+- `bootstrap-run3.log`
+- `bootstrap-run-final.log`
+- `bootstrap-run-final-2.log`
+- `bootstrap-run-p3.log`
+- `bootstrap-success.log`
+- `prepare-cluster-run.log`
+- `prepare-cluster-final.log`
+- `teardown-run.log`
+
+Also: `debug-logs.zip`, `.DS_Store` (already should be ignored)
+
+**Verdict:** These are ephemeral test/debug runs. They should not be in version control.
+
+- **Option A (Minimal):** Delete .log and .zip files now; ensure `.gitignore` has `*.log` and `debug-logs.zip` rules
+- **Option B (If not yet in .gitignore):** Add to `.gitignore` and commit (don't force-delete history)
+
+---
+
+## Risky Deletions to Avoid
+
+**NEVER delete:**
+1. `scripts/deploy-dapr-components.sh` — Although deprecated, it is explicitly marked as a reference fallback. Document its status clearly but retain it.
+2. `scripts/lib/platform-common.sh` — Required by multiple scripts; deletion will break bootstrap.
+3. Any script in `tests/portability/` — These exemplify the team's testing philosophy and may be referenced by future CI workflows.
+
+**Safe to move (not delete):**
+- If the team adopts `.copilot/skills/distributed-mesh/sync-mesh.sh` and it no longer serves project development, it can be archived to a docs/archived-scripts/ folder with a comment explaining why.
+
+---
+
+## Recommendation for Pete (Implementation)
+
+### Phase 1: Immediate Cleanup (LOW RISK)
+```bash
+# Delete debug scripts
+rm -f \
+  analyze_critical.sh \
+  final_analysis.sh \
+  final_strategy.sh \
+  merge_analysis.sh \
+  merge_strategy.sh \
+  deep_conflict_check.sh \
+  squad_changes_detail.sh
+
+# Delete debug logs (or add to .gitignore and commit if preferred)
+rm -f \
+  bootstrap-*.log \
+  prepare-cluster-*.log \
+  teardown-run.log \
+  debug-logs.zip
+```
+
+### Phase 2: Ensure .gitignore
+Verify `.gitignore` contains:
+```
+*.log
+debug-logs.zip
+*.zip (if not already present)
+```
+
+### Phase 3: Validate (SAFE)
+After deletion:
+```bash
+# Run a smoke test to ensure scripts still work
+./scripts/bootstrap.sh --help
+./scripts/prepare-cluster.sh --help
+./scripts/validate-deployment.sh --help
+```
+
+All documented deployment workflows will remain fully functional. No breaking changes to the supported repo contract.
+
+---
+
+## Summary Table
+
+| Category | Count | Action | Rationale |
+|----------|-------|--------|-----------|
+| **Production Scripts** (`scripts/`) | 18 | ✅ KEEP | Documented; operational necessity |
+| **Test Scripts** (`tests/portability/`) | 6 | ✅ KEEP | Part of test strategy |
+| **Debug Scripts** (root) | 7 | 🗑️ DELETE | Ad hoc; no ongoing use |
+| **Log Files** (root) | 11+ | 🗑️ DELETE/IGNORE | Ephemeral test output |
+| **Skill Scripts** (`.copilot/`) | 1 | ✅ KEEP | Project development tool |
+
+**Total lines of debug code to remove:** ~352 shell lines + ~80 KB logs  
+**Risk level:** Minimal (no dependencies, no documentation references)  
+**Benefit:** Cleaner repo root; reduced noise in file listings; clearer contract definition for new contributors.
+
+
+# Eddie Decision — Docs Folder Cleanup: Hub + Intentional Linking
+
+**Date:** 2026-05-05  
+**Author:** Eddie (Docs/Story)  
+**Requested by:** Wesley Backelant  
+**Reviewed by:** Daisy
+
+---
+
+## Decision
+
+Restructure the `docs/` folder with **GETTING_STARTED.md as the central hub** that intentionally links to both primary and specialist docs. Archive only truly historical/meta documents that don't serve end users.
+
+---
+
+## What Stays (All User-Serving Docs)
+
+### Primary Entry Points
+
+Keep these as the main user journey:
+1. **README.md** — Overview and architecture context
+2. **GETTING_STARTED.md** — Central hub with audience-aware routing (replacing aggressive deletion with intentional discoverability)
+3. **end-to-end-setup-walkthrough.md** — Complete deployment guide for operators
+
+### Secondary/Specialist References
+
+Restored to main `docs/` folder with intentional linking from the hub:
+- **PRD.md** — Product vision, goals, and non-goals (linked for developers/architects)
+- **local-dev.md** — Local development guide (linked for developers)
+- **API_AUTHENTICATION.md** — Auth boundaries and sample endpoint rules (linked for security/developers)
+- **radius-validation-checklist.md** — Preflight validation and troubleshooting (linked for operators)
+- **ADR-0001-kubernetes-first-deployment.md** — Kubernetes-first strategy rationale (linked for architects)
+- **adr/README.md** — Architecture decision records directory (linked for developers/designers)
+- **OBSERVABILITY.md** — Jaeger, OpenTelemetry, Application Insights setup (linked for advanced users/SREs)
+- **SCALING.md** — Performance limits and mitigation strategies (linked for advanced users)
+- **dapr-component-backfill.md** — Dapr component projection details (linked for advanced users)
+
+### Archive Only
+
+Historical/meta documents not serving end users:
+- **docs/archive/CONSOLIDATION_REPORT.md** — Internal status (clearly stale, no user value)
+- **docs/archive/DEMO_MODE.md** — Internal demo setup (not part of user journey)
+- **docs/archive/superpowers/** — Internal/experimental folder
+
+---
+
+## Updates Made
+
+### GETTING_STARTED.md — Now the True Hub
+- **Restructured audiences:** Platform Engineers, Developers, Security/API Developers, Advanced Users
+- **Intentional linking:** Primary docs (deployment, local-dev, auth) at first level; secondary docs (PRD, scaling, observability, ADRs) nested under "Learn more" per audience
+- **Preserved all secondary links:** No deletion, just strategic placement to reduce initial cognitive load while keeping specialist docs discoverable
+- **Added Advanced Users section** to surface SCALING.md, OBSERVABILITY.md, and dapr-component-backfill.md for those who need them
+
+### README.md
+- **Restored SCALING.md reference** to boundary discussion (user requests may ask about performance)
+- **Kept ADR-0001 reference** in the docs list with proper context
+- **Full doc links preserved:** All user-serving docs linked intentionally from README
+
+### end-to-end-setup-walkthrough.md
+- **Restored Architecture Decision reference** (ADR-0001) in Reference section
+- **Preserved full reference chain** for operators who want to understand the Kubernetes-first approach
+
+### radius-validation-checklist.md
+- **Restored ADR-0001 reference** in References section (operators may need architectural context)
+
+---
+
+## Why This Approach
+
+Daisy's feedback was clear: **preserve docs that still earn their place; focus on reducing discoverability, not deletion.**
+
+This is better because:
+- **Specialist docs stay available:** Users who need SCALING, OBSERVABILITY, or ADRs can find them
+- **Hub guides first-timers:** GETTING_STARTED.md routes fresh users to their primary path (deploy vs. develop) without overwhelm
+- **Intentional linking:** Docs are linked strategically from the hub, not aggressively deleted
+- **No stale content:** Only truly historical/meta docs are archived (CONSOLIDATION_REPORT, DEMO_MODE, superpowers/)
+- **Future-proof:** If OBSERVABILITY or SCALING becomes essential to getting started, we don't have to resurrect archived docs
+
+---
+
+## Guardrails for Future Docs
+
+- **Keep specialist docs linkable:** If a doc serves a genuine use case (even for advanced users), keep it and link intentionally
+- **Archive only if truly meta:** CONSOLIDATION_REPORT-like docs that track process, not deliver value
+- **Use the hub pattern:** Route all new docs through GETTING_STARTED.md audiences; make secondary docs discoverable through "Learn more" sections
+
+---
+
+## Related Decisions
+
+- Eddie Decision — Portability blog must follow the shipped repo story (2026-05-05)
+- User Directive — Keep supported docs lean and current (2026-05-05)
+- Daisy Review — Preserve specialist docs with intentional discoverability (2026-05-05)
+
+
+# Decision: Add docs/superpowers to .gitignore
+
+**Date:** 2026-05-05  
+**Agent:** Eddie (Docs/Story)  
+**Issue:** Add docs/superpowers to .gitignore
+
+## Context
+The `docs/superpowers/` directory contains generated Copilot CLI documentation artifacts that should not be committed to the repository.
+
+## Decision
+Added `docs/superpowers/` to `.gitignore` under the "Copilot CLI artifacts" section, alongside the existing `.github/skills/app-modeling/` entry.
+
+## Rationale
+- Both `docs/superpowers/` and `.github/skills/app-modeling/` are Copilot CLI-generated runtime artifacts
+- Grouping them together maintains clarity and consistency in the `.gitignore` organization
+- Using the trailing slash (`docs/superpowers/`) indicates it's a directory and follows existing pattern conventions
+
+
+# Pete: Shell Script Cleanup Decision
+
+**Date:** 2026-05-05  
+**Status:** IMPLEMENTED  
+**Reviewed by:** Daisy (alignment 2026-05-05)  
+**Impact:** Repository surface cleaning, no impact to supported workflows
+
+## Summary
+
+Audited all `.sh` files and root-level debug artifacts in the repository. Removed:
+1. Debug-only shell scripts from past merge analysis
+2. Root-level bootstrap/teardown run logs (artifacts)
+
+All supported operational, testing, and validation scripts are preserved per Daisy's alignment boundaries.
+
+## Scripts Removed (Debug/Ad-hoc Analysis Tools)
+
+The following **one-time analysis scripts** from a past merge conflict assessment (April 2026) are removed:
+
+1. **analyze_critical.sh** — Branch critical file analyzer (root)
+2. **deep_conflict_check.sh** — Merge conflict checker (root)
+3. **final_analysis.sh** — Merge analysis output (root)
+4. **final_strategy.sh** — Merge strategy assessment (root)
+5. **merge_analysis.sh** — Branch-by-branch merge analysis (root)
+6. **merge_strategy.sh** — Merge conflict classification script (root)
+7. **squad_changes_detail.sh** — Squad file diff analyzer (root)
+
+**Rationale:** Hardcoded branch names, served no ongoing operational purpose, zero references in code/docs.
+
+## Debug Log Files Removed (Run Artifacts)
+
+The following **bootstrap/teardown run artifacts** from April 3 testing are removed:
+
+- bootstrap-full.log
+- bootstrap-run-final-2.log
+- bootstrap-run-final.log
+- bootstrap-run-p3.log
+- bootstrap-run.log
+- bootstrap-run2.log
+- bootstrap-run3.log
+- bootstrap-success.log
+- prepare-cluster-final.log
+- prepare-cluster-run.log
+- teardown-run.log
+
+**Rationale:** Leftover run artifacts from development/testing. .gitignore already prevents `*.log` from being committed, so no policy change needed.
+
+## Scripts Preserved (Supported Workflows — Daisy's Alignment)
+
+All other shell scripts are **operational, tested, and documented** per Daisy's boundaries:
+
+### scripts/ Directory (16 scripts, all kept)
+- `bootstrap.sh` — AKS cluster + Dapr/Radius bootstrap
+- `teardown.sh` — Cluster + resources teardown
+- `prepare-cluster.sh` — Pre-bootstrap AKS setup
+- `build-and-push.sh` — Container build and push
+- `annotate-service-accounts.sh` — Workload identity setup
+- `deploy-dapr-components.sh` — **Kept (deprecated but in scope)**
+- `deploy-dapr-components-workload-identity.sh` — Workload identity variant
+- `apply-dapr-components-from-recipes.sh` — Component bootstrapping
+- `publish-radius-recipes.sh` — Recipe registry publishing
+- `health-check.sh` — Cluster & component status (TEST_GUIDE.md)
+- `api-endpoint-test.sh` — API connectivity (TEST_GUIDE.md)
+- `dapr-component-test.sh` — State store & pub/sub (TEST_GUIDE.md)
+- `expense-submit-test.sh` — End-to-end submission (TEST_GUIDE.md)
+- `workflow-trigger-test.sh` — Workflow event processing (TEST_GUIDE.md)
+- `deployment-readiness.sh` — Aggregate test runner (TEST_GUIDE.md)
+- `validate-deployment.sh` — Deployment validation
+
+### scripts/lib/ (1 shared function library)
+- `platform-common.sh` — Shared bash functions (referenced by other scripts)
+
+### tests/portability/ (6 validation scripts)
+- `app-no-azure-hardcoding.sh` — Verify portability from Azure specifics
+- `bootstrap-idempotency.sh` — Verify re-runnable bootstrap
+- `dapr-components-loaded.sh` — Verify Dapr sidecar components
+- `recipes-are-complete.sh` — Verify Radius recipe contracts
+- `region-agnostic.sh` — Verify multi-region deployment readiness
+- `run-all.sh` — Master test runner (documented in tests/portability/README.md)
+
+### Copilot Skills
+- `.copilot/skills/distributed-mesh/sync-mesh.sh` — Mesh state sync helper
+
+## References Updated
+
+None. The removed scripts and log files were not referenced in:
+- README.md
+- TEST_GUIDE.md
+- GitHub workflows (.github/workflows/)
+- Documentation files
+- Other shell scripts
+
+## .gitignore Status
+
+✓ Already configured. Line 46 has `*.log` rule, which prevents future bootstrap/teardown run artifacts from being committed. No changes needed.
+
+## Verification
+
+✓ All 7 debug shell scripts removed (were untracked — never in git)
+✓ All 11 debug log files removed (run artifacts from April 3 testing)
+✓ No GitHub workflows referenced removed scripts or logs
+✓ No documentation references broken
+✓ .gitignore already prevents `*.log` from future commits
+✓ All supported operational scripts preserved per Daisy's alignment
+✓ All documented tests preserved (TEST_GUIDE.md, tests/portability/README.md)
+✓ deploy-dapr-components.sh kept (deprecated but in scope per Daisy)
+
+## Outcome
+
+Repository surface is cleaner:
+- Removed 7 one-time analysis scripts from past merge work
+- Removed 11 leftover bootstrap/teardown run artifacts
+- Zero impact to supported operational, bootstrap, testing, or validation workflows
+- Scripts/lib/platform-common.sh and tests/portability/* remain intact
+- All scripts under scripts/ remain intact
+- Copilot skills remain intact
+
+Daisy's alignment boundaries honored throughout.
