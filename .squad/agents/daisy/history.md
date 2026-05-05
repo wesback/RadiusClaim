@@ -38,3 +38,18 @@ See history-archive.md for full timeline.
 **Decision Made:** "Daisy Decision — Shell Script Audit: Supported vs Debug Classification"  
 **Scope:** All `.sh` files and root-level artifacts audited; supported scripts in `scripts/`, `tests/portability/` preserved; debug analysis scripts from April 2026 merge work identified for removal.  
 **Impact:** Pete (implementation) receives clear removal boundaries; no impact to supported operational workflows.
+
+---
+
+## Scripts Folder Scope Boundary Alignment (2026-05-05, Session T11:32Z)
+
+**Task:** Confirm supported scripts surface scope boundaries  
+**Outcome:** ✓ Confirmed: keep operational scripts intact; deprecate with caution; flag under-documented scripts for future README coverage.  
+**Decision Made:** Implicit alignment — "supported surface remains intact"  
+**Scope Established:** 
+- ✅ Keep: bootstrap.sh, publish-radius-recipes.sh, apply-dapr-components-from-recipes.sh, validate-deployment.sh, prepare-cluster.sh, build-and-push.sh, annotate-service-accounts.sh, teardown.sh, lib/platform-common.sh
+- ✅ Keep (deprecated): deploy-dapr-components.sh, deploy-dapr-components-workload-identity.sh (Phase 1/2a reference fallback)
+- ⚠️ Flag for removal: health-check.sh, api-endpoint-test.sh, dapr-component-test.sh, expense-submit-test.sh, workflow-trigger-test.sh, deployment-readiness.sh (low risk; coverage absorbed by validate-deployment.sh)
+
+**Coordination:** Pete provided classification; Daisy confirmed operational boundaries respected.  
+**Impact:** Clear scope established for future cleanup decisions. Prevents accidental removal of operational scripts.

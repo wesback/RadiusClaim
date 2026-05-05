@@ -2,6 +2,54 @@
 
 ## Active Decisions
 
+# Pete Decision — Scripts Folder Audit & Obsolescence Classification
+
+**Date:** 2026-05-05  
+**Author:** Pete (Infrastructure Automation Specialist)  
+**Status:** Awaiting review & decision on removals
+
+## Summary
+
+Audited `scripts/` and `scripts/lib/`. Found:
+- **8 active/critical scripts** (bootstrap, publish recipes, Dapr projection, validation, prep, build, workload identity, teardown)
+- **2 intentionally deprecated scripts** (old Dapr deployment paths; marked for removal)
+- **6 likely obsolete diagnostic scripts** (health-check, component tests, submission tests, workflow tests, readiness orchestrator)
+- **1 active supporting library** (platform-common.sh — shared logging utilities)
+
+## Key Findings
+
+### 🔴 Active/Critical — Do Not Remove
+- `bootstrap.sh`, `publish-radius-recipes.sh`, `apply-dapr-components-from-recipes.sh`, `validate-deployment.sh`, `prepare-cluster.sh`, `build-and-push.sh`, `annotate-service-accounts.sh`, `teardown.sh`
+- `lib/platform-common.sh` (shared logging utilities)
+
+### 🟡 Deprecated But Intentionally Kept
+- `deploy-dapr-components.sh` — header: "DEPRECATED SCRIPT — DO NOT USE FOR NEW DEPLOYMENTS"
+- `deploy-dapr-components-workload-identity.sh` — header: "OBSOLETE as of Phase 2b". Kept as reference fallback; marked for future removal.
+
+### 🟢 Likely Obsolete Diagnostic Scripts (Candidates for Removal)
+| Script | Why | Overlap |
+|--------|-----|---------|
+| `health-check.sh` | Pre-flight checks absorbed by bootstrap.sh | LOW RISK |
+| `api-endpoint-test.sh` | HTTP checks absorbed by validate-deployment.sh | LOW RISK |
+| `dapr-component-test.sh` | Component checks absorbed by validate-deployment.sh | LOW RISK |
+| `expense-submit-test.sh` | Flow coverage absorbed by validate-deployment.sh | LOW RISK |
+| `workflow-trigger-test.sh` | Flow coverage absorbed by validate-deployment.sh | LOW RISK |
+| `deployment-readiness.sh` | Diagnostic wrapper; users should run validate-deployment.sh directly | LOW RISK |
+
+### Evidence
+- `.github/workflows/deploy-azure.yml` calls: `publish-radius-recipes.sh`, `apply-dapr-components-from-recipes.sh`, `validate-deployment.sh`
+- `scripts/bootstrap.sh` calls: publish-radius-recipes, apply-dapr-components, validate-deployment, annotate-service-accounts
+- Multiple docs reference: `validate-deployment.sh` (PRD.md, end-to-end-setup-walkthrough.md, radius-validation-checklist.md)
+
+## Recommendations
+
+1. **Confirm classifications** (Daisy's scope + infrastructure stakeholder feedback required)
+2. **Safe removal candidates:** health-check.sh, api-endpoint-test.sh, dapr-component-test.sh, expense-submit-test.sh, workflow-trigger-test.sh, deployment-readiness.sh
+3. **Deprecation path:** Both legacy deploy-dapr-components scripts already marked; keep in place unless explicitly removed in future phase
+4. **Optional update:** README_TESTS.md currently references 6 outdated diagnostic scripts; should redirect to validate-deployment.sh as canonical path or deprecate
+
+---
+
 # Graham Decision — portability blog technical accuracy gate
 
 - **Date:** 2026-05-05

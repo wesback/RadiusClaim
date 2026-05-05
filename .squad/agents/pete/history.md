@@ -34,13 +34,18 @@ All infrastructure scripts audit-compliant and idempotent. Bootstrap automation 
 
 ---
 
-## Shell Script Cleanup Implementation (2026-05-05, Session T11:34Z)
+## Scripts Folder Audit & Classification (2026-05-05, Session T11:32Z)
 
-**Task:** Remove debug shell scripts and log artifacts per Daisy's classification.  
-**Outcome:** ✓ Removed 7 debug scripts + 11 log files; all supported scripts preserved.  
-**Scripts Removed:** analyze_critical.sh, deep_conflict_check.sh, final_analysis.sh, final_strategy.sh, merge_analysis.sh, merge_strategy.sh, squad_changes_detail.sh  
-**Logs Removed:** All bootstrap/teardown run artifacts from April 3 testing  
-**Verification:** No references in README, TEST_GUIDE, or workflows; .gitignore already covers `*.log`; all supported operational scripts intact.  
-**Impact:** Repository surface cleaner; zero impact to supported workflows. Daisy alignment boundaries honored throughout.
+**Task:** Audit and classify all scripts in scripts/ and scripts/lib/  
+**Outcome:** ✓ Complete classification: 8 active/critical, 2 deprecated-but-kept, 6 likely-obsolete diagnostic  
+**Decision Made:** "Pete Decision — Scripts Folder Audit & Obsolescence Classification"  
+**Classification Rationale:**
+- Active/critical scripts are called by CI/CD (.github/workflows/deploy-azure.yml) or bootstrap.sh; no removal candidate
+- 2 legacy deploy-dapr scripts have explicit "DO NOT USE" headers and Phase markers; kept as reference fallback per Daisy's scope boundaries
+- 6 diagnostic test scripts (health-check, api-endpoint-test, dapr-component-test, expense-submit-test, workflow-trigger-test, deployment-readiness) have zero CI/CD integration and coverage overlaps with validate-deployment.sh
+
+**Evidence:** All findings tied to CI/CD workflow analysis, source reference scan, and bootstrap.sh dependency tree
+
+**Impact:** Clear removal candidates identified for squad review. Daisy's operational-vs-diagnostic scope boundary honored.
 
 **Full history archived to `.squad/agents/pete/history-archive.md`**
