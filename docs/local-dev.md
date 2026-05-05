@@ -1,192 +1,90 @@
 # Local Development Guide
 
-This guide covers running RadiusClaim locally using Radius with **in-cluster components** — no Azure subscription required.
+> **Supported local path:** run the services directly with Dapr sidecars and the checked-in `infra/dapr/local` overlays. The repo does **not** currently ship a supported local Radius recipe set, so this guide avoids `infra/radius/environments/local.bicep`.
 
 ## Overview
 
-RadiusClaim uses Radius recipes to abstract its Dapr components. Two recipe sets are available:
+Local development keeps the app contract the same while swapping in lightweight local dependencies:
 
-| Environment | State store | Pub/sub | Secrets |
-|---|---|---|---|
-| `azure` / `dev` | Azure PostgreSQL (transactional for Dapr Actors) | Azure Service Bus | Azure Key Vault |
-| `local` | Redis (in-cluster) | RabbitMQ (in-cluster) | Kubernetes secrets |
+| Concern | Local development path |
+|---|---|
+| State store | Redis via Dapr |
+| Pub/Sub | Redis via Dapr |
+| Secrets | Local file secret store via Dapr |
+| Workflow orchestration | Dapr Workflow runtime |
 
-Switching between them is a single parameter change at deploy time. The application code is unchanged.
+This is the fastest way to iterate on the app code, hosted web UI, and workflow behavior without provisioning Azure resources.
 
 ## Prerequisites
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) or equivalent container runtime
-- [kind](https://kind.sigs.k8s.io/) or [k3d](https://k3d.io/) for a local Kubernetes cluster
-- [Radius CLI](https://docs.radapp.io/getting-started/) (`rad`)
-- [Helm](https://helm.sh/) for installing Redis and RabbitMQ
+- Docker Desktop or equivalent container runtime
+- .NET SDK matching the repo's `global.json`
 - [Dapr CLI](https://docs.dapr.io/getting-started/install-dapr-cli/)
 
-## 1 — Cluster Setup
+## 1. Start local dependencies
 
 ```bash
-# Create a local cluster (kind example)
-kind create cluster --name radiusclaim
-
-# Install Radius
-rad install kubernetes
-
-# Install Dapr
-dapr init --kubernetes --wait
+docker compose -f infra/dapr/local/docker-compose.yaml up -d
 ```
 
-## 2 — Install In-Cluster Dependencies
+This starts the local dependencies referenced by the checked-in Dapr component files under `infra/dapr/local`.
 
-The local recipes point to Redis and RabbitMQ by their Kubernetes service names. Install both with Helm:
+## 2. Run the services with Dapr
+
+Start each service in its own terminal.
+
+### Terminal 1 — workflow-engine
 
 ```bash
-# Redis — state store backend
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo update
-helm install redis bitnami/redis \
-  --namespace default \
-  --set auth.enabled=false \
-  --set replica.replicaCount=0
-
-# RabbitMQ — pub/sub backend
-helm install rabbitmq bitnami/rabbitmq \
-  --namespace default \
-  --set auth.username=guest \
-  --set auth.password=guest
+dapr run --app-id workflow-engine --app-port 5299 --resources-path ./infra/dapr/local -- \
+  dotnet run --project src/workflow-engine/WorkflowEngine.csproj
 ```
 
-The local recipes default to:
-- Redis: `redis-master.default.svc.cluster.local:6379`
-- RabbitMQ: `amqp://guest@rabbitmq.default.svc.cluster.local:5672`
-
-Override `redisServiceName`, `redisNamespace`, `rabbitmqServiceName`, or `rabbitmqNamespace` in `local.parameters.json` if your Helm release names differ.
-
-## 3 — Publish Local Recipes
-
-Local recipes must be pushed to a container registry accessible from your cluster. For local clusters, use a registry bundled with kind/k3d:
+### Terminal 2 — expense-api
 
 ```bash
-# k3d example — creates cluster + registry in one step
-k3d cluster create radiusclaim --registry-create radiusclaim-registry:5000
-
-# Push local recipe images
-az bicep publish \
-  --file infra/radius/recipes/local/state-store.bicep \
-  --target br:localhost:5000/recipes/local/state-store:latest
-
-az bicep publish \
-  --file infra/radius/recipes/local/pubsub.bicep \
-  --target br:localhost:5000/recipes/local/pubsub:latest
-
-az bicep publish \
-  --file infra/radius/recipes/local/secrets.bicep \
-  --target br:localhost:5000/recipes/local/secrets:latest
+dapr run --app-id expense-api --app-port 5062 --resources-path ./infra/dapr/local -- \
+  dotnet run --project src/expense-api/ExpenseApi.csproj
 ```
 
-Then update `infra/radius/environments/local.parameters.json`:
-
-```json
-{
-  "recipeRegistry": { "value": "localhost:5000/recipes/local" }
-}
-```
-
-For CI environments using kind with GHCR access, you can keep the default `ghcr.io/wesback/radiusclaim/recipes/local` registry and publish recipes as part of the workflow.
-
-## 4 — Deploy the Local Environment
+### Terminal 3 — notification-svc (optional but useful)
 
 ```bash
-# Register the local Radius environment
-rad deploy infra/radius/environments/local.bicep \
-  --parameters @infra/radius/environments/local.parameters.json
-
-# Deploy the application using local recipe selections
-rad deploy infra/radius/app.bicep \
-  --environment local \
-  --parameters containerRegistry=ghcr.io/wesback/radiusclaim \
-  --parameters imageTag=dev \
-  --parameters deploymentTarget=local \
-  --parameters daprBackings='{"stateStore":{"recipeName":"local-redis-state","parameters":{}},"pubsub":{"recipeName":"local-rabbitmq-pubsub","parameters":{}},"secretStore":{"recipeName":"local-k8s-secrets","parameters":{}}}'
+dapr run --app-id notification-svc --app-port 5238 --resources-path ./infra/dapr/local -- \
+  dotnet run --project src/notification-svc/NotificationSvc.csproj
 ```
 
-### Using a Parameters File
+## 3. Open the demo UI
 
-Create `infra/radius/app.local.parameters.json`:
+Once `expense-api` is running with its Dapr sidecar, open:
 
-```json
-{
-  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
-  "contentVersion": "1.0.0.0",
-  "parameters": {
-    "containerRegistry": { "value": "ghcr.io/wesback/radiusclaim" },
-    "imageTag": { "value": "dev" },
-    "deploymentTarget": { "value": "local" },
-    "daprBackings": {
-      "value": {
-        "stateStore": { "recipeName": "local-redis-state", "parameters": {} },
-        "pubsub":     { "recipeName": "local-rabbitmq-pubsub", "parameters": {} },
-        "secretStore": { "recipeName": "local-k8s-secrets", "parameters": {} }
-      }
-    }
-  }
-}
+```text
+http://localhost:5062/app
 ```
 
-Then deploy with:
+## 4. Validate the local flow
 
-```bash
-rad deploy infra/radius/app.bicep \
-  --environment local \
-  --parameters @infra/radius/app.local.parameters.json
-```
-
-## 5 — Kubernetes Secrets for Local Secret Store
-
-The `local-k8s-secrets` recipe uses `secretstores.kubernetes` — Dapr reads secrets directly from Kubernetes in the pod's namespace. Create secrets the same way you'd create any Kubernetes secret:
-
-```bash
-kubectl create secret generic my-app-secret \
-  --namespace radiusclaim-local \
-  --from-literal=api-key=my-local-value
-```
-
-Application code accesses secrets through the Dapr secret API with the Kubernetes secret name and key.
-
-## 6 — Verify the Deployment
-
-```bash
-# Check Radius environment
-rad env show local
-
-# List application resources
-rad resource list Applications.Dapr/stateStores --application radiusclaim
-rad resource list Applications.Dapr/pubSubBrokers --application radiusclaim
-rad resource list Applications.Dapr/secretStores --application radiusclaim
-
-# Check Dapr components loaded correctly
-kubectl get components -n radiusclaim-local
-
-# Check pod health
-kubectl get pods -n radiusclaim-local
-```
-
-## Switching Back to Azure
-
-To run against Azure resources, use the `dev` or `azure-radius` environment without overriding `daprBackings`:
-
-```bash
-rad deploy infra/radius/app.bicep \
-  --environment dev \
-  --parameters @infra/radius/dev.parameters.json
-```
-
-The `daprBackings` default in `app.bicep` points to Azure recipes — no additional flags needed.
+- Submit a small expense and confirm it auto-approves
+- Submit a larger expense and confirm it enters manual review
+- If `notification-svc` is running, watch its console output for published events
 
 ## Troubleshooting
 
-**Redis connection refused**: Confirm the Helm release name matches `redisServiceName` in `local.parameters.json`. Check with `kubectl get svc -n default | grep redis`.
+### `/app` loads but actions fail
 
-**RabbitMQ auth errors**: The local recipe defaults to `guest` user and no password secret. If you installed RabbitMQ with a different username, set `rabbitmqUser` in `pubsub.bicep` or pass a custom parameters object via `daprBackings.pubsub.parameters`.
+Make sure both `expense-api` and `workflow-engine` are running with Dapr sidecars. A plain `dotnet run` without `dapr run` only starts the ASP.NET host.
 
-**Recipe template not found**: Ensure you've published the local recipe OCI artifacts to the registry configured in `local.parameters.json`. Run `az bicep publish` for all three recipes.
+### Redis-backed components do not load
 
-**Dapr component not loading**: Run `kubectl describe component statestore -n radiusclaim-local` for the full error. Common cause is the recipe outputting a Dapr component type (`state.redis`) that doesn't match the installed Dapr version.
+Restart the local dependencies:
+
+```bash
+docker compose -f infra/dapr/local/docker-compose.yaml down
+docker compose -f infra/dapr/local/docker-compose.yaml up -d
+```
+
+Then restart the Dapr sidecars.
+
+### You want the full Radius + Azure path instead
+
+Use `scripts/bootstrap.sh` and the Kubernetes-first walkthrough in [`docs/end-to-end-setup-walkthrough.md`](./end-to-end-setup-walkthrough.md). That is the supported deployment path for the repo's Radius model.

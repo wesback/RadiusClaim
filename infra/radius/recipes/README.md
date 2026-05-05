@@ -1,91 +1,47 @@
 # Radius Recipes
 
-This directory contains reusable Bicep recipes for provisioning Azure-backed Dapr components (state store, pub/sub, secrets).
+This directory contains the Azure-backed Radius recipes used by the repo's Kubernetes-first deployment path.
 
-## Architecture
+## What these recipes do
 
 Each recipe:
-- Accepts a **context** parameter injected automatically by Radius
-- Provisions a specific Azure resource (Blob Storage, Service Bus, Key Vault)
-- Returns **values** (connection info) and **resources** (Azure IDs) for Radius lifecycle tracking
-- Uses Microsoft Entra **workload identity** for authentication (zero shared keys)
 
-## Resource Naming
+- accepts the Radius-provided `context` object
+- provisions one Azure backing service
+- emits `values` plus structured `resourceMetadata.dapr` for downstream automation
+- relies on Microsoft Entra / workload identity metadata instead of shared secrets
 
-### Deterministic Naming (Production)
+## Current backing services
 
-By default, recipes generate deterministic resource names using `uniqueString(context.resource.id)`:
-
-```
-State Store: staterc{suffix}          (Azure Storage Account)
-Pub/Sub:     pubsubrc{suffix}         (Azure Service Bus Namespace)
-Secrets:     kvrc{suffix}             (Azure Key Vault)
-```
-
-This ensures the same resource name is created on every deployment, enabling stable Azure RBAC and access policies.
-
-### Random Naming (Dev/Demo)
-
-For non-production environments, recipes support an optional `randomNameSuffix` parameter to generate unique resource names on each deployment run:
-
-```
-randomNameSuffix: a3f9e2  (6-char timestamp-hash, generated at deploy time)
-
-State Store: staterC-a3f9e2
-Pub/Sub:     pubsubrc-a3f9e2
-Secrets:     kvrc-a3f9e2
-```
-
-**Why random naming?**
-- Azure soft-deletes resources for 7 days. A re-deployment within that window would collide with the deletion marker.
-- Random naming prevents this collision pain, enabling clean demo runs back-to-back.
-- Naming still remains readable (base name + short hash) for manual resource lookups.
-
-**When to use?**
-- ✅ Dev/demo environments: Apply random naming to avoid soft-delete collisions
-- ❌ Production: Use deterministic naming only
-
-## Deployment
-
-### With Random Naming (Dev/Demo)
-
-The `scripts/bootstrap.sh` automatically applies random naming when deploying to `radiusclaim-azure` environment:
-
-```bash
-./scripts/bootstrap.sh \
-  --resource-group my-rg \
-  --env-name radiusclaim-azure
-```
-
-The script generates a 6-character timestamp-hash and passes it to all recipes via the `--parameters randomNameSuffix=<value>` flag.
-
-### With Deterministic Naming (Production)
-
-Omit the suffix (or set it to empty) to use `uniqueString` for stable resource names:
-
-```bash
-rad deploy infra/radius/environments/azure-radius.bicep \
-  --parameters randomNameSuffix=
-```
-
-## Cleanup
-
-For dev/demo environments, Azure soft-deleted resources accumulate over time. A future enhancement should add a cleanup script to purge old orphaned resources in the subscription.
-
-Example (future):
-```bash
-./scripts/cleanup-orphaned-resources.sh --subscription-id <id> --prefix staterc --keep-days 7
-```
-
-## Recipe Files
-
-- **state-store.bicep** — Azure Blob Storage for Dapr state management
+- **state-store.bicep** — Azure Database for PostgreSQL Flexible Server for Dapr state and actor storage
 - **pubsub.bicep** — Azure Service Bus for Dapr pub/sub messaging
 - **secrets.bicep** — Azure Key Vault for Dapr secret management
 
-## Implementation Notes
+## Projection model
 
-- All recipes use RBAC-only authorization (no shared keys or access policies)
-- Workload identity credentials are injected by the AKS webhook into Dapr sidecars
-- Recipes run in the context of a Radius-provisioned managed identity with appropriate roles
-- Azure SDK + Dapr automatically handle token exchange transparently
+These recipes provision Azure resources only. They do **not** directly create Kubernetes `components.dapr.io` CRDs in the current repo flow.
+
+Instead:
+
+1. Radius deploys the recipe and tracks the Azure resources.
+2. The recipe publishes Dapr-facing metadata in `resourceMetadata.dapr` and `values`.
+3. `scripts/bootstrap.sh` and CI run `scripts/apply-dapr-components-from-recipes.sh`.
+4. That script projects `statestore`, `pubsub`, and `platform-secrets` into the workload namespace.
+
+This keeps the recipe contract declarative while acknowledging the current Radius component-projection gap honestly.
+
+## Resource naming
+
+The current Azure recipes use these prefixes:
+
+- **State store:** `pgstate{suffix}`
+- **Pub/Sub:** `pubsubrc{suffix}`
+- **Secret store:** `kvrc{suffix}`
+
+Deployments can use deterministic naming (`uniqueString`) or pass demo-friendly suffix overrides where supported by the environment/bootstrap flow.
+
+## Implementation notes
+
+- RBAC-only authorization is used where supported; no legacy Key Vault access policies
+- Recipe metadata is the source of truth for Dapr component projection
+- Post-deploy CLI steps still exist where Radius v0.56 requires workarounds for child resources or cross-scope RBAC

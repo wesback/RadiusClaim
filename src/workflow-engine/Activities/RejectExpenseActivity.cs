@@ -26,6 +26,9 @@ internal sealed class RejectExpenseActivity(
         }
 
         var stateKey = RadiusClaimDapr.StateKeys.Expense(input.ExpenseId);
+        var decisionTimeUtc = input.DecisionTimeUtc == default
+            ? DateTimeOffset.UtcNow
+            : input.DecisionTimeUtc.ToUniversalTime();
         var record = await daprClient.GetStateAsync<ExpenseRecord>(
             RadiusClaimDapr.Components.StateStore,
             stateKey,
@@ -35,6 +38,12 @@ internal sealed class RejectExpenseActivity(
         {
             throw new InvalidOperationException(
                 $"Expense '{input.ExpenseId}' was not found in state store before rejection.");
+        }
+
+        if (!string.Equals(record.CorrelationId, input.CorrelationId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Expense '{input.ExpenseId}' correlation mismatch. Expected '{input.CorrelationId}', found '{record.CorrelationId}'.");
         }
 
         // Idempotent: already rejected is fine.
@@ -58,7 +67,9 @@ internal sealed class RejectExpenseActivity(
         {
             Status = ExpenseStatus.Rejected,
             RejectionReason = input.Reason,
-            LastUpdatedAtUtc = DateTimeOffset.UtcNow
+            ApprovedBy = null,
+            ApprovedAt = decisionTimeUtc,
+            LastUpdatedAtUtc = decisionTimeUtc
         };
 
         await daprClient.SaveStateAsync(
@@ -68,8 +79,9 @@ internal sealed class RejectExpenseActivity(
             stateOptions: new StateOptions { Consistency = ConsistencyMode.Strong });
 
         logger.LogInformation(
-            "Expense '{ExpenseId}' rejected (reason: '{Reason}') for workflow '{InstanceId}'.",
+            "Expense '{ExpenseId}' rejected at {DecisionTimeUtc} (reason: '{Reason}') for workflow '{InstanceId}'.",
             input.ExpenseId,
+            decisionTimeUtc,
             input.Reason,
             context.InstanceId);
 

@@ -26,19 +26,14 @@ param environmentName string = 'radiusclaim-azure'
 @description('Kubernetes namespace where workloads deploy. Radius creates it if absent.')
 param kubernetesNamespace string = 'radiusclaim-azure'
 
+@description('Application name used to derive the workload namespace.')
+param applicationName string = 'radiusclaim'
+
 // ── Workload Namespace Pattern ──────────────────────────────────────────────
-// Dapr components are created in the Kubernetes namespace specified above.
-// The Radius platform projects these as CRDs and injects them into the workload
-// pods via Dapr sidecars.
-//
-// When workloads reference Dapr components (e.g., stateStore, pubSub), they use
-// the component names defined in the recipes below (e.g., 'azure-postgres-statestore',
-// 'azure-servicebus-pubsub'). These components are namespaced within
-// kubernetesNamespace and are automatically wired to backing Azure resources.
-//
-// Example: environment 'radiusclaim-azure' + kubernetes namespace 'radiusclaim-azure'
-//   → Dapr components created in 'radiusclaim-azure' namespace
-//   → Workloads in the same namespace auto-discover and link to them
+// The Radius environment owns the base namespace. This repo then projects Dapr
+// components and deploys workloads into a derived workload namespace:
+//   ${kubernetesNamespace}-${applicationName}
+// Example: radiusclaim-azure + radiusclaim → radiusclaim-azure-radiusclaim
 
 @description('OCI registry base path for Recipe Bicep modules.')
 param recipeRegistry string = 'ghcr.io/wesback/radiusclaim/recipes'
@@ -175,10 +170,10 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
           parameters: {
             location: location
             randomNameSuffix: randomNameSuffix
-            daprPrincipalId: daprAzurePrincipalId
             daprClientId: daprAzureClientId
             azureSubscriptionId: azureSubscriptionId
             azureResourceGroupName: azureResourceGroupName
+            azureEnvironment: azureEnvironment
           }
         }
       }
@@ -208,10 +203,10 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
           parameters: {
             location: location
             randomNameSuffix: randomNameSuffix
-            daprPrincipalId: daprAzurePrincipalId
             daprClientId: daprAzureClientId
             azureSubscriptionId: azureSubscriptionId
             azureResourceGroupName: azureResourceGroupName
+            azureEnvironment: azureEnvironment
           }
         }
       }
@@ -228,4 +223,4 @@ output environmentId string = env.id
 output environmentNamespace string = kubernetesNamespace
 
 @description('Workload namespace: where Dapr components are projected and workloads run.')
-output workloadNamespace string = kubernetesNamespace
+output workloadNamespace string = '${kubernetesNamespace}-${applicationName}'

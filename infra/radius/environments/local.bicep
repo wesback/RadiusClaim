@@ -1,16 +1,12 @@
 // ---------------------------------------------------------------------------
-// local.bicep — Radius Environment: In-Cluster Recipes (No Azure)
+// local.bicep — Experimental placeholder for a local Radius environment
 // ---------------------------------------------------------------------------
-// Targets a Kubernetes cluster with ALL backing services running in-cluster.
-// No Azure provider — Recipes deploy Redis, RabbitMQ, and Kubernetes Secrets
-// directly into the cluster. Zero cloud dependency.
+// This file is not part of the repo's currently supported deployment path.
+// Local development uses the checked-in Dapr overlays under infra/dapr/local.
+// Keep this file only as a placeholder for future local Radius recipe work.
 //
-// This environment proves the portability story: the same app.bicep that runs
-// against Azure Service Bus and Key Vault also runs here against RabbitMQ and
-// Kubernetes secrets — zero app code changes.
-//
-// Deploy:
-//   rad deploy infra/radius/environments/local.bicep
+// Deploying this environment still requires separately published local recipe
+// artifacts; those source recipes are not shipped in this repository today.
 // ---------------------------------------------------------------------------
 
 extension radius

@@ -11,9 +11,6 @@ using OpenTelemetry.Trace;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
 
-const string CorrelationIdContextKey = "CorrelationId";
-const string CorrelationIdHeader = "X-Correlation-ID";
-
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -30,6 +27,7 @@ builder.Services.AddDaprWorkflow(options =>
     options.RegisterActivity<RecordApprovalActivity>();
     options.RegisterActivity<RejectExpenseActivity>();
 });
+builder.Services.AddScoped<IWorkflowDecisionClient, DaprWorkflowDecisionClient>();
 
 // Bind from appsettings.json; override with APPROVAL_THRESHOLD_USD / APPROVAL_TIMEOUT_HOURS env vars if set.
 builder.Services.Configure<ApprovalOptions>(builder.Configuration.GetSection("ApprovalThreshold"));
@@ -127,14 +125,14 @@ app.UseCloudEvents();
 var correlationLogger = app.Services.GetRequiredService<ILogger<Program>>();
 app.Use(async (context, next) =>
 {
-    var traceId = context.Request.Headers[CorrelationIdHeader].FirstOrDefault();
+    var traceId = context.Request.Headers[Program.CorrelationIdHeader].FirstOrDefault();
     if (string.IsNullOrWhiteSpace(traceId))
     {
         traceId = Guid.NewGuid().ToString();
     }
 
-    context.Items[CorrelationIdContextKey] = traceId;
-    context.Response.Headers.Append(CorrelationIdHeader, traceId);
+    context.Items[Program.CorrelationIdContextKey] = traceId;
+    context.Response.Headers.Append(Program.CorrelationIdHeader, traceId);
 
     correlationLogger.LogInformation(
         "Workflow request started: {Method} {Path} [TraceId: {TraceId}]",
@@ -152,18 +150,6 @@ app.Use(async (context, next) =>
         traceId);
 });
 
-// Read the Dapr App API token used to authenticate service-to-service calls.
-// When APP_API_TOKEN is set, Dapr sidecars automatically inject a matching
-// dapr-api-token header on every forwarded request. The /decide endpoint
-// validates this header; in non-development environments the token is required.
-var appApiToken = app.Configuration["APP_API_TOKEN"] ?? app.Configuration["Dapr:AppApiToken"];
-if (string.IsNullOrEmpty(appApiToken))
-{
-    startupLogger.LogWarning(
-        "⚠ APP_API_TOKEN is not set. The /decide endpoint will reject all requests " +
-        "in non-development environments. Set APP_API_TOKEN to enable service-to-service auth.");
-}
-
 app.MapPost("/workflows/start", async (
     HttpContext context,
     ExpenseSubmission submission,
@@ -171,7 +157,7 @@ app.MapPost("/workflows/start", async (
     ILogger<Program> logger,
     CancellationToken cancellationToken) =>
 {
-    var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
+    var traceId = context.Items[Program.CorrelationIdContextKey] as string ?? "unknown";
     var errors = ValidateSubmission(submission);
     if (errors.Count > 0)
     {
@@ -242,7 +228,7 @@ app.MapGet("/workflows/{instanceId}", async (
     DaprWorkflowClient workflowClient,
     CancellationToken cancellationToken) =>
 {
-    var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
+    var traceId = context.Items[Program.CorrelationIdContextKey] as string ?? "unknown";
 
     if (string.IsNullOrWhiteSpace(instanceId))
     {
@@ -264,125 +250,9 @@ app.MapGet("/workflows/{instanceId}", async (
 });
 
 // POST /workflows/{instanceId}/decide — raises the manual-approval event to resume a paused workflow.
-// Called by expense-api approve/reject endpoints via Dapr service invocation.
-// Requires a valid dapr-api-token header when APP_API_TOKEN is configured.
-app.MapPost("/workflows/{instanceId}/decide", async (
-    string instanceId,
-    HttpContext context,
-    ManualDecisionRequest decisionRequest,
-    DaprWorkflowClient workflowClient,
-    ILogger<Program> logger,
-    CancellationToken cancellationToken) =>
-{
-    var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
-
-    // Auth: validate incoming Dapr App API token.
-    // In production (APP_API_TOKEN set), the header must match exactly.
-    // In non-development with no token configured, fail closed.
-    if (!string.IsNullOrEmpty(appApiToken))
-    {
-        var incoming = context.Request.Headers["dapr-api-token"].FirstOrDefault();
-        if (string.IsNullOrEmpty(incoming) || incoming != appApiToken)
-        {
-            logger.LogWarning(
-                "Unauthorized /decide request — invalid or missing dapr-api-token [TraceId: {TraceId}]",
-                traceId);
-            return Results.Unauthorized();
-        }
-    }
-    else if (!app.Environment.IsDevelopment())
-    {
-        logger.LogError(
-            "APP_API_TOKEN not configured — /decide is blocked in non-development environments [TraceId: {TraceId}]",
-            traceId);
-        return Results.Unauthorized();
-    }
-
-    // Validate decision request fields before touching workflow state.
-    var decisionErrors = ValidateDecisionRequest(decisionRequest);
-    if (decisionErrors.Count > 0)
-    {
-        return Results.ValidationProblem(decisionErrors);
-    }
-
-    if (string.IsNullOrWhiteSpace(instanceId))
-    {
-        return Results.ValidationProblem(new Dictionary<string, string[]>
-        {
-            ["instanceId"] = ["Workflow instance id is required."]
-        });
-    }
-
-    var normalizedInstanceId = instanceId.Trim();
-    var workflowState = await workflowClient.GetWorkflowStateAsync(
-        normalizedInstanceId,
-        getInputsAndOutputs: false,
-        cancellationToken);
-
-    if (workflowState?.Exists != true)
-    {
-        logger.LogWarning(
-            "Decision request for non-existent workflow {InstanceId} [TraceId: {TraceId}]",
-            normalizedInstanceId,
-            traceId);
-
-        return Results.NotFound();
-    }
-
-    if (!workflowState.IsWorkflowRunning)
-    {
-        logger.LogWarning(
-            "Decision request for non-running workflow {InstanceId}, status: {Status} [TraceId: {TraceId}]",
-            normalizedInstanceId,
-            workflowState.RuntimeStatus,
-            traceId);
-
-        return Results.Conflict(new
-        {
-            error = "Workflow is not running and cannot accept a decision.",
-            instanceId = normalizedInstanceId,
-            runtimeStatus = workflowState.RuntimeStatus.ToString()
-        });
-    }
-
-    var reason = string.IsNullOrWhiteSpace(decisionRequest.Reason)
-        ? (decisionRequest.Approved ? null : "Manual rejection by approver")
-        : decisionRequest.Reason;
-
-    var decisionEvent = new ManualDecisionEvent(decisionRequest.Approved, reason);
-
-    try
-    {
-        await workflowClient.RaiseEventAsync(
-            normalizedInstanceId,
-            ExpenseApprovalWorkflow.ManualDecisionEventName,
-            decisionEvent,
-            cancellationToken);
-
-        logger.LogInformation(
-            "Decision {Decision} raised for workflow {InstanceId} [TraceId: {TraceId}]",
-            decisionRequest.Approved ? "Approved" : "Rejected",
-            normalizedInstanceId,
-            traceId);
-
-        return Results.Accepted(
-            $"/workflows/{normalizedInstanceId}",
-            new { instanceId = normalizedInstanceId, decision = decisionRequest.Approved ? "Approved" : "Rejected" });
-    }
-    catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
-    {
-        logger.LogError(
-            ex,
-            "Failed to raise decision event for workflow {InstanceId} [TraceId: {TraceId}]",
-            normalizedInstanceId,
-            traceId);
-
-        return Results.Problem(
-            title: "Decision could not be submitted.",
-            detail: "The manual decision event could not be raised for this workflow instance.",
-            statusCode: StatusCodes.Status500InternalServerError);
-    }
-});
+// Approval decisions are anonymous by design in this sample, so the endpoint stays open
+// and relies on workflow state checks for clear failure behavior.
+app.MapPost("/workflows/{instanceId}/decide", Program.HandleManualDecisionAsync);
 
 app.MapGet("/", () => TypedResults.Ok(new WorkflowEngineDescriptor(
     RadiusClaimDapr.AppIds.WorkflowEngine,
@@ -431,20 +301,6 @@ static Dictionary<string, string[]> ValidateSubmission(ExpenseSubmission submiss
         errors[nameof(submission.Description)] = ["Description is required."];
     else if (submission.Description.Trim().Length > maxDescriptionLength)
         errors[nameof(submission.Description)] = [$"Description must not exceed {maxDescriptionLength} characters."];
-
-    return errors;
-}
-
-static Dictionary<string, string[]> ValidateDecisionRequest(ManualDecisionRequest request)
-{
-    const int maxReasonLength = 1000;
-
-    var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
-
-    if (request.Reason is not null && request.Reason.Length > maxReasonLength)
-    {
-        errors[nameof(request.Reason)] = [$"Reason must not exceed {maxReasonLength} characters."];
-    }
 
     return errors;
 }
@@ -534,4 +390,162 @@ internal sealed record ManualDecisionRequest(
     bool Approved,
     string? Reason = null);
 
-public partial class Program;
+internal sealed record WorkflowDecisionState(
+    bool Exists,
+    bool IsRunning,
+    string? RuntimeStatus);
+
+internal sealed record WorkflowDecisionAcceptedResponse(
+    string InstanceId,
+    string Decision);
+
+internal sealed record WorkflowDecisionConflictResponse(
+    string Error,
+    string InstanceId,
+    string? RuntimeStatus);
+
+internal interface IWorkflowDecisionClient
+{
+    Task<WorkflowDecisionState> GetDecisionStateAsync(string instanceId, CancellationToken cancellationToken);
+
+    Task RaiseDecisionAsync(string instanceId, ManualDecisionEvent decisionEvent, CancellationToken cancellationToken);
+}
+
+internal sealed class DaprWorkflowDecisionClient(DaprWorkflowClient workflowClient) : IWorkflowDecisionClient
+{
+    public async Task<WorkflowDecisionState> GetDecisionStateAsync(string instanceId, CancellationToken cancellationToken)
+    {
+        var workflowState = await workflowClient.GetWorkflowStateAsync(
+            instanceId,
+            getInputsAndOutputs: false,
+            cancellationToken);
+
+        return new WorkflowDecisionState(
+            workflowState?.Exists == true,
+            workflowState?.IsWorkflowRunning == true,
+            workflowState?.RuntimeStatus.ToString());
+    }
+
+    public Task RaiseDecisionAsync(string instanceId, ManualDecisionEvent decisionEvent, CancellationToken cancellationToken) =>
+        workflowClient.RaiseEventAsync(
+            instanceId,
+            ExpenseApprovalWorkflow.ManualDecisionEventName,
+            decisionEvent,
+            cancellationToken);
+}
+
+public partial class Program
+{
+    internal const string CorrelationIdContextKey = "CorrelationId";
+    internal const string CorrelationIdHeader = "X-Correlation-ID";
+
+    internal static async Task<IResult> HandleManualDecisionAsync(
+        string instanceId,
+        HttpContext context,
+        ManualDecisionRequest decisionRequest,
+        IWorkflowDecisionClient workflowDecisionClient,
+        ILogger<Program> logger,
+        CancellationToken cancellationToken)
+    {
+        var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
+
+        var decisionErrors = ValidateDecisionRequest(decisionRequest);
+        if (decisionErrors.Count > 0)
+        {
+            return Results.ValidationProblem(decisionErrors);
+        }
+
+        if (string.IsNullOrWhiteSpace(instanceId))
+        {
+            return Results.ValidationProblem(new Dictionary<string, string[]>
+            {
+                ["instanceId"] = ["Workflow instance id is required."]
+            });
+        }
+
+        var normalizedInstanceId = instanceId.Trim();
+        var workflowState = await workflowDecisionClient.GetDecisionStateAsync(
+            normalizedInstanceId,
+            cancellationToken);
+
+        if (!workflowState.Exists)
+        {
+            logger.LogWarning(
+                "Decision request for non-existent workflow {InstanceId} [TraceId: {TraceId}]",
+                normalizedInstanceId,
+                traceId);
+
+            return Results.NotFound();
+        }
+
+        if (!workflowState.IsRunning)
+        {
+            logger.LogWarning(
+                "Decision request for non-running workflow {InstanceId}, status: {Status} [TraceId: {TraceId}]",
+                normalizedInstanceId,
+                workflowState.RuntimeStatus,
+                traceId);
+
+            return Results.Conflict(new WorkflowDecisionConflictResponse(
+                "Workflow is not running and cannot accept a decision.",
+                normalizedInstanceId,
+                workflowState.RuntimeStatus));
+        }
+
+        var reason = string.IsNullOrWhiteSpace(decisionRequest.Reason)
+            ? (decisionRequest.Approved ? null : "Manual rejection by approver")
+            : decisionRequest.Reason;
+
+        var decisionEvent = new ManualDecisionEvent(
+            decisionRequest.Approved,
+            reason,
+            DateTimeOffset.UtcNow);
+
+        try
+        {
+            await workflowDecisionClient.RaiseDecisionAsync(
+                normalizedInstanceId,
+                decisionEvent,
+                cancellationToken);
+
+            logger.LogInformation(
+                "Decision {Decision} raised for workflow {InstanceId} [TraceId: {TraceId}]",
+                decisionRequest.Approved ? "Approved" : "Rejected",
+                normalizedInstanceId,
+                traceId);
+
+            return Results.Accepted(
+                $"/workflows/{normalizedInstanceId}",
+                new WorkflowDecisionAcceptedResponse(
+                    normalizedInstanceId,
+                    decisionRequest.Approved ? "Approved" : "Rejected"));
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogError(
+                ex,
+                "Failed to raise decision event for workflow {InstanceId} [TraceId: {TraceId}]",
+                normalizedInstanceId,
+                traceId);
+
+            return Results.Problem(
+                title: "Decision could not be submitted.",
+                detail: "The manual decision event could not be raised for this workflow instance.",
+                statusCode: StatusCodes.Status500InternalServerError);
+        }
+    }
+
+    internal static Dictionary<string, string[]> ValidateDecisionRequest(ManualDecisionRequest request)
+    {
+        const int maxReasonLength = 1000;
+
+        var errors = new Dictionary<string, string[]>(StringComparer.Ordinal);
+
+        if (request.Reason is not null && request.Reason.Length > maxReasonLength)
+        {
+            errors[nameof(request.Reason)] = [$"Reason must not exceed {maxReasonLength} characters."];
+        }
+
+        return errors;
+    }
+}

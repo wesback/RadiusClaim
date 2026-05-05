@@ -48,9 +48,6 @@ param tenantId string = subscription().tenantId
 @description('Optional random suffix for non-deterministic naming (dev/demo environments). If provided, replaces uniqueString generation.')
 param randomNameSuffix string = ''
 
-@description('Principal (object) ID of the Dapr workload identity for RBAC assignments.')
-param daprPrincipalId string
-
 @description('Client (application) ID of the Dapr workload identity for component auth metadata.')
 param daprClientId string = ''
 
@@ -74,6 +71,11 @@ var vaultName = 'kvrc${nameSuffix}'
 
 // Explicit Azure resource ID — bypasses Radius deployment engine UCP scope resolution
 var keyVaultArmId = '/subscriptions/${azureSubscriptionId}/resourceGroups/${azureResourceGroupName}/providers/Microsoft.KeyVault/vaults/${vaultName}'
+var daprEnvironmentName = azureEnvironment == 'AzureUSGovernment'
+  ? 'AzureUSGovernmentCloud'
+  : azureEnvironment == 'AzureChina'
+    ? 'AzureChinaCloud'
+    : 'AzurePublicCloud'
 
 // ---------------------------------------------------------------------------
 // Key Vault — RBAC authorization (no access policies)
@@ -123,6 +125,7 @@ output values object = {
   vaultName: keyVault.name
   vaultUri: keyVault.properties.vaultUri
   componentName: daprComponentName
+  azureEnvironment: daprEnvironmentName
 }
 
 // Omit explicit `output resources` — Radius auto-populates from ARM deployment.
@@ -147,7 +150,7 @@ output resourceMetadata object = {
     metadata: {
       vaultName: keyVault.name
       azureClientId: daprClientId
-      azureEnvironment: azureEnvironment
+      azureEnvironment: daprEnvironmentName
     }
   }
 }

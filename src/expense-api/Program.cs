@@ -73,16 +73,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-// ApproverPolicy: requires a bearer token AND the "expense.approver" app role claim.
-// Roles are populated by Entra ID from the app manifest's appRoles definition.
-// Bare .RequireAuthorization() (authenticated-only) is intentionally NOT used on
-// approval/rejection endpoints — scope enforcement is mandatory there.
-builder.Services.AddAuthorization(options =>
-{
-    options.AddPolicy("ApproverPolicy", policy =>
-        policy.RequireAuthenticatedUser()
-              .RequireClaim("roles", "expense.approver"));
-});
+// Approval endpoints stay anonymous in this sample. Auth is still configured so authenticated
+// callers can flow best-effort identity context, but no expense-api route requires a bearer
+// token or approver role.
+builder.Services.AddAuthorization();
 
 // OpenTelemetry: configure tracing and logging
 // Traces are exported to Jaeger (see docs/OBSERVABILITY.md for setup)
@@ -378,8 +372,8 @@ expenses.MapGet("/{id}/workflow", async (
 });
 
 // POST /expenses/{id}/approve — signals the paused workflow to approve the expense.
-// Requires ApproverPolicy (authenticated + expense.approver role).
-// Self-approval is blocked inside HandleExpenseApprovalActionAsync.
+// No auth required — allows unauthenticated demo access; any identity is best-effort context only.
+// Self-approval is blocked inside HandleExpenseApprovalActionAsync when a caller identity is present.
 expenses.MapPost("/{id}/approve", async (
     string id,
     HttpContext context,
@@ -391,11 +385,11 @@ expenses.MapPost("/{id}/approve", async (
     var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
     var approverIdentity = GetApproverIdentity(context.User);
     return await HandleExpenseApprovalActionAsync(id, approved: true, body?.Reason, approverIdentity, daprClient, logger, traceId, cancellationToken);
-}).RequireAuthorization("ApproverPolicy");
+});
 
 // POST /expenses/{id}/reject — signals the paused workflow to reject the expense.
-// Requires ApproverPolicy (authenticated + expense.approver role).
-// Self-approval is blocked inside HandleExpenseApprovalActionAsync.
+// No auth required — allows unauthenticated demo access; any identity is best-effort context only.
+// Self-approval is blocked inside HandleExpenseApprovalActionAsync when a caller identity is present.
 expenses.MapPost("/{id}/reject", async (
     string id,
     HttpContext context,
@@ -407,7 +401,7 @@ expenses.MapPost("/{id}/reject", async (
     var traceId = context.Items[CorrelationIdContextKey] as string ?? "unknown";
     var approverIdentity = GetApproverIdentity(context.User);
     return await HandleExpenseApprovalActionAsync(id, approved: false, body?.Reason, approverIdentity, daprClient, logger, traceId, cancellationToken);
-}).RequireAuthorization("ApproverPolicy");
+});
 
 expenses.MapGet("/{id}", async (string id, HttpContext context, DaprClient daprClient, ILogger<Program> logger, CancellationToken cancellationToken) =>
 {
@@ -821,11 +815,15 @@ static async Task<IResult> HandleExpenseApprovalActionAsync(
 
     if (record.Status != ExpenseStatus.ManualReviewRequested)
     {
-        return Results.Conflict(new
-        {
-            error = $"Expense '{normalizedId}' is not awaiting manual approval. Current status: {record.Status}.",
-            status = record.Status.ToString()
-        });
+        return Results.Problem(
+            title: "Expense is not awaiting manual review.",
+            detail: $"Expense '{normalizedId}' is currently '{record.Status}', so no decision was forwarded and the stored record was left unchanged.",
+            statusCode: StatusCodes.Status409Conflict,
+            extensions: new Dictionary<string, object?>
+            {
+                ["expenseId"] = normalizedId,
+                ["status"] = record.Status.ToString()
+            });
     }
 
     // Self-approval prevention: block the original filer from approving their own expense.
@@ -847,30 +845,6 @@ static async Task<IResult> HandleExpenseApprovalActionAsync(
             statusCode: StatusCodes.Status403Forbidden);
     }
 
-    // Audit trail: stamp the record with who acted and when, before forwarding to the workflow.
-    // This persists the approver identity to the state store even if the workflow signal fails.
-    var decisionTime = DateTimeOffset.UtcNow;
-    var auditedRecord = record with
-    {
-        ApprovedBy = approverIdentity,
-        ApprovedAt = decisionTime
-    };
-    await daprClient.SaveStateAsync(
-        RadiusClaimDapr.Components.StateStore,
-        RadiusClaimDapr.StateKeys.Expense(normalizedId),
-        auditedRecord,
-        stateOptions: new StateOptions { Consistency = ConsistencyMode.Strong },
-        cancellationToken: cancellationToken);
-
-    logger.LogInformation(
-        "Expense {ExpenseId} {Action} decision recorded: approver={ApproverId} at {DecisionTime} workflow={InstanceId} [TraceId: {TraceId}]",
-        normalizedId,
-        approved ? "approval" : "rejection",
-        approverIdentity,
-        decisionTime,
-        record.CorrelationId,
-        traceId);
-
     try
     {
         using var workflowClient = DaprClient.CreateInvokeHttpClient(RadiusClaimDapr.AppIds.WorkflowEngine);
@@ -891,7 +865,7 @@ static async Task<IResult> HandleExpenseApprovalActionAsync(
 
             return Results.Problem(
                 title: "Workflow instance not found.",
-                detail: $"No running workflow found for expense '{normalizedId}'.",
+                detail: $"No running workflow found for expense '{normalizedId}', so the stored expense remains in manual review.",
                 statusCode: StatusCodes.Status404NotFound);
         }
 
@@ -902,11 +876,14 @@ static async Task<IResult> HandleExpenseApprovalActionAsync(
                 normalizedId,
                 traceId);
 
-            return Results.Conflict(new
-            {
-                error = "The workflow is no longer waiting for a decision.",
-                expenseId = normalizedId
-            });
+            return Results.Problem(
+                title: "Workflow is no longer waiting for a decision.",
+                detail: $"The workflow for expense '{normalizedId}' is no longer awaiting a manual decision, so the stored expense was left unchanged.",
+                statusCode: StatusCodes.Status409Conflict,
+                extensions: new Dictionary<string, object?>
+                {
+                    ["expenseId"] = normalizedId
+                });
         }
 
         response.EnsureSuccessStatusCode();
@@ -933,7 +910,7 @@ static async Task<IResult> HandleExpenseApprovalActionAsync(
 
         return Results.Problem(
             title: "Could not deliver decision to workflow.",
-            detail: "The approval/rejection signal could not be forwarded to the workflow engine.",
+            detail: "The approval/rejection signal could not be forwarded to the workflow engine, so the stored expense remains in manual review.",
             statusCode: StatusCodes.Status502BadGateway);
     }
 }

@@ -1,12 +1,13 @@
 #!/bin/bash
-# Fail if any service code references hardcoded Azure resource names, subscriptions, regions
+# Fail if service code or the Radius app definition references non-portable Azure specifics
 
-set -e
+set -euo pipefail
 
 echo "🔍 Validating app code contains no hardcoded Azure references..."
 
 # Track failures
 FAILURES=0
+APP_DEF="infra/radius/app.bicep"
 
 # Check for hardcoded Azure subscription/resource group references
 if grep -r "subscription\|resource_group" src/ --include="*.cs" --include="*.csproj" 2>/dev/null | grep -v "Microsoft.Azure.Cosmos\|Microsoft.Extensions" | grep -v "//.*subscription\|<!--.*subscription"; then
@@ -34,10 +35,20 @@ if grep -rE "DefaultEndpointsProtocol=https|AccountKey=|SharedAccessKey=" src/ -
   FAILURES=$((FAILURES + 1))
 fi
 
+# Verify the Radius app definition doesn't fall back to raw in-cluster service URLs
+if [ ! -f "$APP_DEF" ]; then
+  echo "❌ FAIL: Radius app definition not found: $APP_DEF"
+  FAILURES=$((FAILURES + 1))
+elif grep -nE "http://(expense-api|workflow-engine|notification-svc)([:/]|$)|\\.svc\\.cluster\\.local" "$APP_DEF" 2>/dev/null; then
+  echo "❌ FAIL: Radius app definition contains raw service URLs"
+  echo "   Use Dapr app IDs/service invocation and Radius connections instead"
+  FAILURES=$((FAILURES + 1))
+fi
+
 if [ $FAILURES -eq 0 ]; then
-  echo "✅ PASS: App code is portable (no hardcoded Azure references)"
+  echo "✅ PASS: App portability contract is intact"
   exit 0
 else
-  echo "❌ FAIL: Found $FAILURES portability violation(s) in app code"
+  echo "❌ FAIL: Found $FAILURES portability violation(s) in app portability contract"
   exit 1
 fi

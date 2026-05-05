@@ -94,7 +94,7 @@ If you have not registered the managed identity with Radius yet, ensure the AKS 
 export AZURE_RESOURCE_GROUP="radiusclaim-rg"
 export AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
 
-# Verify the managed identity exists (created by deploy-dapr-components-workload-identity.sh)
+# Verify the managed identity exists (used by bootstrap/apply flows for workload identity)
 az identity show \
   --resource-group "$AZURE_RESOURCE_GROUP" \
   --name radiusclaim-workload-identity \
@@ -122,10 +122,11 @@ Before running any deployment or validation commands, know the two namespaces:
 # Environment namespace — holds the Radius environment and backing-service definitions.
 # Do NOT run kubectl pod/log/component commands here; workloads don't live here.
 export ENVIRONMENT_NAMESPACE="radiusclaim-azure"
+export APP_NAME="radiusclaim"
 
 # Workload namespace — holds the three services, Dapr sidecars, and Dapr Component CRDs.
 # ALL pod, log, component, and port-forward commands target this namespace.
-export WORKLOAD_NAMESPACE="azure-radiusclaim"
+export WORKLOAD_NAMESPACE="${ENVIRONMENT_NAMESPACE}-${APP_NAME}"
 ```
 
 > Radius creates the workload namespace automatically by appending the application name (`radiusclaim`) to the environment namespace (`radiusclaim-azure`). If you used a different environment namespace, adjust `WORKLOAD_NAMESPACE` accordingly.
@@ -252,7 +253,7 @@ rad credential list
 - Each workspace must have the Azure credential registered independently
 
 **For CI/CD (GitHub Actions):**
-- The workflow automatically handles this by running `rad credential register azure wi ...` before deploying the environment
+- The workflow automatically handles this by running `rad credential register azure sp ...` before deploying the environment
 - See `.github/workflows/deploy-azure.yml` for the implementation
 
 ---
@@ -319,10 +320,13 @@ rad deploy infra/radius/environments/azure-radius.bicep \
   --parameters environmentName=azure \
   --parameters kubernetesNamespace=radiusclaim-azure \
   --parameters azureProviderScope="/subscriptions/<subscription-id>/resourceGroups/<resource-group>" \
+  --parameters azureSubscriptionId="<subscription-id>" \
+  --parameters azureResourceGroupName="<resource-group>" \
   --parameters location=<azure-location> \
   --parameters daprAzureClientId="$AZURE_CLIENT_ID" \
   --parameters daprAzurePrincipalId="$AZURE_PRINCIPAL_ID" \
-  --parameters daprAzureTenantId="$AZURE_TENANT_ID" \
+  --parameters daprAzurePrincipalName="$MANAGED_IDENTITY_NAME" \
+  --parameters azureTenantId="$AZURE_TENANT_ID" \
   --parameters recipeRegistry='ghcr.io/<your-org>/radiusclaim/recipes' \
   --parameters recipeTag='<your-tag>'
 ```
@@ -373,10 +377,10 @@ Resources:
   workflow-engine-service Applications.Core/containers
   notification-service    Applications.Core/containers
 
-Public endpoint http://expense.radiusclaim.<platform-address>.nip.io/
+Expense API URL (or workload-namespace port-forward) http://expense.radiusclaim.<platform-address>.nip.io/
 ```
 
-The `Public endpoint ...` line is the preferred base URL for the hosted `/app` UI and the `expense-api` HTTP endpoints. Radius keeps `workflow-engine` and `notification-svc` internal; they should still be observed through Kubernetes logs, not exposed directly.
+If your platform prints a public URL, you can use it for `/app` and the `expense-api` HTTP endpoints. The deterministic fallback for this repo is a workload-namespace `kubectl port-forward`. `workflow-engine` and `notification-svc` stay internal and should still be observed through Kubernetes logs.
 
 **Validation:**
 ```bash
@@ -420,7 +424,7 @@ kubectl rollout restart deployment/expense-api deployment/workflow-engine deploy
   -n "$WORKLOAD_NAMESPACE"
 ```
 
-`apply-dapr-components-from-recipes.sh` reads Azure resource IDs from Radius `outputResources`, then creates `statestore`, `pubsub`, and `platform-secrets` components using workload identity (OIDC token exchange — no `azureClientSecret` in the cluster).
+`apply-dapr-components-from-recipes.sh` reads Radius `resourceMetadata.dapr` and recipe `values`, with Azure `outputResources` as a fallback, then creates `statestore`, `pubsub`, and `platform-secrets` components using workload identity (OIDC token exchange — no `azureClientSecret` in the cluster).
 
 **Verify Components:**
 ```bash
@@ -461,7 +465,7 @@ kubectl describe component statestore -n "$WORKLOAD_NAMESPACE"
 kubectl describe component pubsub -n "$WORKLOAD_NAMESPACE"
 kubectl describe component platform-secrets -n "$WORKLOAD_NAMESPACE"
 # Expected:
-# - statestore => state.azure.blobstorage / v2
+# - statestore => state.postgresql / v2
 # - pubsub => pubsub.azure.servicebus.topics / v1
 # - platform-secrets => secretstores.azure.keyvault / v1
 #
@@ -491,14 +495,14 @@ az keyvault list --resource-group <your-resource-group> --query "[].{name:name,l
 
 ### ✅ Service Connectivity
 
-Preferred path: use the public Radius gateway emitted by `rad deploy`.
+Preferred path: use the `expense-api` URL your platform emits, or use workload-namespace port-forwarding for deterministic access.
 
 ```bash
-# Test the public endpoint printed by rad deploy
+# Test the platform URL if one is available
 curl https://<expense-api-base-url>/healthz
 # Expected: {"status":"ok"}
 
-# Fallback if the cluster does not yet have a public address:
+# Deterministic fallback:
 kubectl port-forward -n "$WORKLOAD_NAMESPACE" svc/expense-api 8080:8080 &
 FORWARD_PID=$!
 
@@ -514,14 +518,14 @@ kill $FORWARD_PID
 
 ## End-to-End Validation
 
-**IMPORTANT:** This requires a live Radius environment with deployed services. The preferred path is the public Radius gateway for `expense-api`; use `kubectl port-forward` only as a fallback when the public endpoint is not yet reachable from your workstation.
+**IMPORTANT:** This requires a live Radius environment with deployed services. Use the hosted `expense-api` URL if your platform emits one; otherwise use `kubectl port-forward` against the workload namespace.
 
-If a live environment is available, run the shared validation script against the public `expense-api` base URL:
+If a live environment is available, run the shared validation script against the `expense-api` base URL:
 
 ```bash
 ./scripts/validate-deployment.sh https://<expense-api-base-url>
 
-# Fallback when the gateway address is unavailable or still propagating:
+# Fallback when a hosted address is unavailable or still propagating:
 kubectl port-forward -n "$WORKLOAD_NAMESPACE" svc/expense-api 8080:8080 &
 FORWARD_PID=$!
 ./scripts/validate-deployment.sh http://127.0.0.1:8080
@@ -530,7 +534,7 @@ kill $FORWARD_PID
 kubectl logs -n "$WORKLOAD_NAMESPACE" deployment/notification-svc -c notification-svc --tail=200
 ```
 
-Then confirm the same observable outcomes described in the [Phase 7 Demo Walkthrough](./phase-7-demo-walkthrough.md):
+Then confirm the successful outcome:
 
 1. Submit a $50 expense (auto-approve flow)
 2. Verify status progresses: Submitted → Approved → Reimbursed
@@ -590,6 +594,8 @@ rad deploy infra/radius/environments/azure-radius.bicep \
   --parameters environmentName=azure \
   --parameters kubernetesNamespace=radiusclaim-azure \
   --parameters azureProviderScope="/subscriptions/<subscription-id>/resourceGroups/<resource-group>" \
+  --parameters azureSubscriptionId="<subscription-id>" \
+  --parameters azureResourceGroupName="<resource-group>" \
   --parameters location=<azure-location> \
   --parameters recipeRegistry='ghcr.io/<your-org>/radiusclaim/recipes' \
   --parameters recipeTag='<your-tag>'
@@ -599,7 +605,7 @@ rad deploy infra/radius/environments/azure-radius.bicep \
 
 ### Issue: `rad deploy` fails with `InvalidResourceNamespace` for `Radius.Compute/containers`
 
-**Cause:** The target Radius control plane is running the stock 0.55 application catalog, which expects `Applications.Core/containers` and `Applications.Core/gateways` for app services and ingress. Preview `Radius.Compute/*` resources are not registered there.
+**Cause:** The target Radius control plane is running the stock 0.55 application catalog, which expects `Applications.Core/containers` for app services. Preview `Radius.Compute/*` resources are not registered there.
 
 **Solution:**
 ```bash
@@ -614,7 +620,7 @@ rad deploy infra/radius/app.bicep \
   --parameters deploymentTarget='radius'
 ```
 
-**Exact pivot:** `Applications.Core/containers` ↔ `Radius.Compute/containers` and `Applications.Core/gateways` ↔ `Radius.Compute/routes`. On stock Radius 0.55, stay on the `Applications.Core/*` side unless your platform team has explicitly installed a preview catalog that documents the `Radius.Compute/*` types.
+**Exact pivot:** `Applications.Core/containers` ↔ `Radius.Compute/containers`. On stock Radius 0.55, stay on the `Applications.Core/*` side unless your platform team has explicitly installed a preview catalog that documents the `Radius.Compute/*` types.
 
 ### Issue: Pods remain in `Pending` state
 
@@ -702,7 +708,7 @@ kubectl rollout restart deployment/expense-api deployment/workflow-engine deploy
 
 **Confirm:**
 ```bash
-export WORKLOAD_NAMESPACE="azure-radiusclaim"
+export WORKLOAD_NAMESPACE="radiusclaim-azure-radiusclaim"
 POD=$(kubectl get pods -n "$WORKLOAD_NAMESPACE" --no-headers | awk '/expense-api/ {print $1; exit}')
 
 kubectl logs -n "$WORKLOAD_NAMESPACE" "$POD" -c daprd --previous --tail=120
@@ -831,5 +837,4 @@ Phase 7 Radius validation is **complete** when:
 - **Radius Deployment Guide:** https://docs.radapp.io/guides/deploy-apps/
 - **Radius Recipes:** https://docs.radapp.io/guides/recipes/
 - **Radius Environments:** https://docs.radapp.io/guides/deploy-apps/environments/
-- **Phase 7 Demo Walkthrough:** [docs/phase-7-demo-walkthrough.md](./phase-7-demo-walkthrough.md)
 - **ADR-0001 (Kubernetes-First Deployment Strategy):** [docs/ADR-0001-kubernetes-first-deployment.md](./ADR-0001-kubernetes-first-deployment.md)

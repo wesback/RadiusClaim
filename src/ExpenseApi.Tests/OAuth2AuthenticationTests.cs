@@ -1,233 +1,124 @@
 using System.Net;
 using System.Net.Http.Json;
-using Dapr.Client;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.IdentityModel.JsonWebTokens;
-using Microsoft.IdentityModel.Tokens;
-using Moq;
 using RadiusClaim.Contracts;
 using Xunit;
 
 namespace ExpenseApi.Tests;
 
 /// <summary>
-/// OAuth2 authentication tests for expense endpoints.
-/// Verifies that bearer token validation is enforced on approval actions (approve, reject).
-/// Submission (POST /expenses) and read endpoints (GET) remain public and do not require authentication.
+/// Approval-path contract tests for expense-api.
+/// These focus on observable behavior: anonymous manual decisions and truthful failure semantics.
 /// </summary>
-public sealed class OAuth2AuthenticationTests : IClassFixture<WebApplicationFactory<Program>>
+public sealed class OAuth2AuthenticationTests
 {
-    private readonly WebApplicationFactory<Program> _factory;
-    private const string TestAuthority = "https://login.microsoftonline.com/test-tenant";
-    private const string TestAudience = "https://radiusclaim.azurewebsites.net/api";
+    private static ExpenseRecord ManualReviewRecord(string expenseId = "exp-manual-1") =>
+        new(
+            ExpenseId: expenseId,
+            CorrelationId: $"corr-{expenseId}",
+            EmployeeId: "emp-review",
+            Amount: 250m,
+            Currency: "USD",
+            Description: "Needs manual review",
+            Status: ExpenseStatus.ManualReviewRequested,
+            SubmittedAtUtc: DateTimeOffset.UtcNow.AddMinutes(-5),
+            LastUpdatedAtUtc: DateTimeOffset.UtcNow.AddMinutes(-5));
 
-    public OAuth2AuthenticationTests(WebApplicationFactory<Program> factory)
-    {
-        _factory = factory.WithWebHostBuilder(builder =>
-        {
-            builder.ConfigureServices(services =>
-            {
-                // Mock DaprClient to avoid requiring Dapr sidecar
-                var existing = services.SingleOrDefault(d => d.ServiceType == typeof(DaprClient));
-                if (existing is not null) services.Remove(existing);
-
-                var mockDaprClient = new Mock<DaprClient>();
-                
-                // Mock successful state creation for expense POST
-                mockDaprClient
-                    .Setup(c => c.TrySaveStateAsync(
-                        It.IsAny<string>(),
-                        It.IsAny<string>(),
-                        It.IsAny<ExpenseRecord>(),
-                        It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(true);
-
-                // Mock index updates
-                mockDaprClient
-                    .Setup(c => c.SaveStateAsync(
-                        It.IsAny<string>(),
-                        It.IsAny<string>(),
-                        It.IsAny<object>(),
-                        It.IsAny<StateOptions>(),
-                        It.IsAny<CancellationToken>()))
-                    .Returns(Task.CompletedTask);
-
-                // Mock workflow invocation
-                mockDaprClient
-                    .Setup(c => c.StartWorkflowAsync(
-                        It.IsAny<string>(),
-                        It.IsAny<string>(),
-                        It.IsAny<object>(),
-                        It.IsAny<CancellationToken>()))
-                    .ReturnsAsync("workflow-id");
-
-                services.AddSingleton(mockDaprClient.Object);
-            });
-
-            // Configure authentication to accept test tokens without real Entra validation
-            builder.UseSetting("AzureAd:Authority", TestAuthority);
-            builder.UseSetting("AzureAd:Audience", TestAudience);
-        });
-    }
-
-    private HttpClient CreateClient() => _factory.CreateClient();
-
-    private string GenerateTestJwt(string issuer = TestAuthority, string audience = TestAudience)
-    {
-        // Create a minimal test JWT without real signing
-        // In production, tokens are signed by Entra ID
-        var token = new JsonWebTokenHandler().CreateToken(new SecurityTokenDescriptor
-        {
-            Issuer = issuer,
-            Audience = audience,
-            IssuedAt = DateTime.UtcNow,
-            Expires = DateTime.UtcNow.AddHours(1),
-            SigningCredentials = new SigningCredentials(
-                new SymmetricSecurityKey(System.Text.Encoding.UTF8.GetBytes("test-key-32-characters-long-test")),
-                SecurityAlgorithms.HmacSha256)
-        });
-        return token;
-    }
-
-    // Test: POST /expenses WITHOUT bearer token is allowed (public endpoint — anyone can submit)
     [Fact]
-    public async Task PostExpense_WithoutBearerToken_IsAllowed()
+    public async Task PostApproveExpense_WithoutBearerToken_AcceptsAnonymousDecision()
     {
-        var client = CreateClient();
-        var response = await client.PostAsJsonAsync("/expenses/", new
+        var original = ManualReviewRecord("exp-anon-approve");
+        await using var host = ExpenseApiTestHost.Create(
+            seedRecord: original,
+            workflowDecisionStatusCode: HttpStatusCode.Accepted);
+
+        var response = await host.Client.PostAsJsonAsync("/expenses/exp-anon-approve/approve", new
         {
-            employeeId = "emp-test",
-            amount = 50m,
-            currency = "USD",
-            description = "Test expense"
+            reason = "Approved for reimbursement"
         });
 
-        // POST /expenses is intentionally anonymous — employees can submit without auth.
-        // Auth is only required for approve/reject actions.
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(1, host.Sidecar.DecisionRequestCount);
+        AssertRecordUnchanged(host.GetExpense("exp-anon-approve"), original);
     }
 
-    // Test: POST /expenses WITH invalid bearer token returns 401
     [Fact]
-    public async Task PostExpense_WithInvalidBearerToken_Returns401Unauthorized()
+    public async Task PostRejectExpense_WithoutBearerToken_AcceptsAnonymousDecision()
     {
-        var client = CreateClient();
-        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", "invalid-token-xyz");
-        
-        var response = await client.PostAsJsonAsync("/expenses/", new
+        var original = ManualReviewRecord("exp-anon-reject");
+        await using var host = ExpenseApiTestHost.Create(
+            seedRecord: original,
+            workflowDecisionStatusCode: HttpStatusCode.Accepted);
+
+        var response = await host.Client.PostAsJsonAsync("/expenses/exp-anon-reject/reject", new
         {
-            employeeId = "emp-test",
-            amount = 50m,
-            currency = "USD",
-            description = "Test expense"
+            reason = "Rejected for missing receipt"
         });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
+        Assert.Equal(1, host.Sidecar.DecisionRequestCount);
+        AssertRecordUnchanged(host.GetExpense("exp-anon-reject"), original);
     }
 
-    // Test: GET /expenses (read) without bearer token is allowed (public endpoint)
     [Fact]
-    public async Task GetExpensesList_WithoutBearerToken_ReturnsOk()
+    public async Task PostApproveExpense_WhenWorkflowReturnsNotFound_DoesNotMutateApprovalAuditFields()
     {
-        var client = CreateClient();
-        var response = await client.GetAsync("/expenses/");
+        var original = ManualReviewRecord("exp-workflow-404");
+        await using var host = ExpenseApiTestHost.Create(
+            seedRecord: original,
+            workflowDecisionStatusCode: HttpStatusCode.NotFound);
 
-        // Should succeed or return 503 (Dapr unavailable), not 401
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    // Test: GET /expenses/{id} (read) without bearer token is allowed (public endpoint)
-    [Fact]
-    public async Task GetExpenseById_WithoutBearerToken_ReturnsOkOrNotFound()
-    {
-        var client = CreateClient();
-        var response = await client.GetAsync("/expenses/test-id");
-
-        // Should succeed, return 404 or 503, but NOT 401
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    // Test: POST /expenses/{id}/approve WITHOUT bearer token returns 401
-    [Fact]
-    public async Task PostApproveExpense_WithoutBearerToken_Returns401Unauthorized()
-    {
-        var client = CreateClient();
-        var response = await client.PostAsJsonAsync("/expenses/test-id/approve", new
+        var response = await host.Client.PostAsJsonAsync("/expenses/exp-workflow-404/approve", new
         {
-            reason = "Approved by finance"
+            reason = "Approved by reviewer"
         });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+
+        AssertRecordUnchanged(host.GetExpense("exp-workflow-404"), original);
     }
 
-    // Test: POST /expenses/{id}/reject WITHOUT bearer token returns 401
     [Fact]
-    public async Task PostRejectExpense_WithoutBearerToken_Returns401Unauthorized()
+    public async Task PostRejectExpense_WhenWorkflowReturnsConflict_DoesNotMutateApprovalAuditFields()
     {
-        var client = CreateClient();
-        var response = await client.PostAsJsonAsync("/expenses/test-id/reject", new
+        var original = ManualReviewRecord("exp-workflow-409");
+        await using var host = ExpenseApiTestHost.Create(
+            seedRecord: original,
+            workflowDecisionStatusCode: HttpStatusCode.Conflict);
+
+        var response = await host.Client.PostAsJsonAsync("/expenses/exp-workflow-409/reject", new
         {
-            reason = "Rejected: invalid receipt"
+            reason = "Policy violation"
         });
 
-        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+
+        AssertRecordUnchanged(host.GetExpense("exp-workflow-409"), original);
     }
 
-    // Test: GET /expenses/{id}/workflow (read) without bearer token is allowed (public)
     [Fact]
-    public async Task GetExpenseWorkflow_WithoutBearerToken_ReturnsOkOrNotFound()
+    public async Task PostApproveExpense_WhenWorkflowSignalFails_DoesNotMutateApprovalAuditFields()
     {
-        var client = CreateClient();
-        var response = await client.GetAsync("/expenses/test-id/workflow");
+        var original = ManualReviewRecord("exp-workflow-500");
+        await using var host = ExpenseApiTestHost.Create(
+            seedRecord: original,
+            workflowDecisionStatusCode: HttpStatusCode.InternalServerError);
 
-        // Should return 404 or success, not 401
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
-    }
-
-    // Test: POST /expenses with valid bearer token (bearer prefix)
-    // Note: In real scenarios, token validation occurs via Entra ID; 
-    // for tests, we verify the middleware accepts Authorization header presence
-    [Fact]
-    public async Task PostExpense_WithValidBearerTokenFormat_VerifiesAuthHeaderProcessing()
-    {
-        var client = CreateClient();
-        
-        // Valid JWT format (with correct Bearer prefix)
-        var validToken = GenerateTestJwt();
-        client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", validToken);
-
-        var response = await client.PostAsJsonAsync("/expenses/", new
+        var response = await host.Client.PostAsJsonAsync("/expenses/exp-workflow-500/approve", new
         {
-            employeeId = "emp-test",
-            amount = 50m,
-            currency = "USD",
-            description = "Test expense"
+            reason = "Approved by reviewer"
         });
 
-        // In test environment with mocked auth, this might succeed (200/201/503)
-        // The important assertion is that it is NOT 401 due to malformed/missing Bearer prefix
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadGateway, response.StatusCode);
+
+        AssertRecordUnchanged(host.GetExpense("exp-workflow-500"), original);
     }
 
-    // Verify that POST /expenses without Authorization header is allowed (public endpoint)
-    [Fact]
-    public async Task PostExpense_MissingAuthorizationHeader_IsAllowed()
+    private static void AssertRecordUnchanged(ExpenseRecord? stored, ExpenseRecord original)
     {
-        var client = CreateClient();
-        
-        // Explicitly ensure no Authorization header is set
-        Assert.Null(client.DefaultRequestHeaders.Authorization);
-
-        var response = await client.PostAsJsonAsync("/expenses/", new
-        {
-            employeeId = "emp-test",
-            amount = 50m,
-            currency = "USD",
-            description = "Test expense"
-        });
-
-        // POST /expenses is anonymous by design — no auth required
-        Assert.NotEqual(HttpStatusCode.Unauthorized, response.StatusCode);
+        Assert.NotNull(stored);
+        Assert.Equal(original.Status, stored!.Status);
+        Assert.Equal(original.ApprovedBy, stored.ApprovedBy);
+        Assert.Equal(original.ApprovedAt, stored.ApprovedAt);
+        Assert.Equal(original.RejectionReason, stored.RejectionReason);
     }
 }

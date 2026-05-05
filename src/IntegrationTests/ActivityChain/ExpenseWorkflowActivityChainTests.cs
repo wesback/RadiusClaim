@@ -8,6 +8,7 @@ using RadiusClaim.Dapr;
 using Dapr.Workflow;
 using WorkflowEngine;
 using WorkflowEngine.Activities;
+using WorkflowEngine.Models;
 using Xunit;
 
 namespace IntegrationTests.ActivityChain;
@@ -172,6 +173,71 @@ public sealed class ExpenseWorkflowActivityChainTests
     }
 
     [Fact]
+    public async Task ManualApproval_Path_PersistsWorkflowOwnedApprovalMetadata_BeforeReimbursement()
+    {
+        const string expenseId = "exp-manual-approved";
+        const string correlationId = "corr-manual-approved";
+        var decisionTimeUtc = new DateTimeOffset(2026, 05, 05, 15, 00, 00, TimeSpan.Zero);
+        var record = MakeRecord(expenseId, correlationId, 250m);
+        var submission = MakeSubmission(expenseId, correlationId, 250m);
+        var (mock, stateStore, _) = BuildInMemoryDapr(record);
+        var ctx = CreateContext("workflow-manual-approved");
+
+        var approveActivity = new ApproveExpenseActivity(mock.Object, DefaultOptions(), NullLogger<ApproveExpenseActivity>.Instance);
+        var decision = await approveActivity.RunAsync(ctx, submission);
+
+        Assert.Equal(ExpenseStatus.ManualReviewRequested, decision.Status);
+
+        var recordApprovalActivity = new RecordApprovalActivity(mock.Object, NullLogger<RecordApprovalActivity>.Instance);
+        await recordApprovalActivity.RunAsync(
+            ctx,
+            new ApprovalRecordInput(expenseId, correlationId, decisionTimeUtc));
+
+        var approvedRecord = stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)];
+        Assert.Equal(ExpenseStatus.Approved, approvedRecord.Status);
+        Assert.Null(approvedRecord.ApprovedBy);
+        Assert.Null(approvedRecord.RejectionReason);
+        Assert.Equal(decisionTimeUtc, approvedRecord.ApprovedAt);
+
+        var reimburseActivity = new ProcessReimbursementActivity(mock.Object, NullLogger<ProcessReimbursementActivity>.Instance);
+        await reimburseActivity.RunAsync(ctx, expenseId);
+
+        var reimbursedRecord = stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)];
+        Assert.Equal(ExpenseStatus.Reimbursed, reimbursedRecord.Status);
+        Assert.Equal(decisionTimeUtc, reimbursedRecord.ApprovedAt);
+        Assert.Null(reimbursedRecord.ApprovedBy);
+    }
+
+    [Fact]
+    public async Task ManualRejection_Path_PersistsWorkflowOwnedDecisionMetadata()
+    {
+        const string expenseId = "exp-manual-rejected";
+        const string correlationId = "corr-manual-rejected";
+        const string reason = "Policy threshold requires a different cost centre";
+        var decisionTimeUtc = new DateTimeOffset(2026, 05, 05, 16, 00, 00, TimeSpan.Zero);
+        var record = MakeRecord(expenseId, correlationId, 250m);
+        var submission = MakeSubmission(expenseId, correlationId, 250m);
+        var (mock, stateStore, _) = BuildInMemoryDapr(record);
+        var ctx = CreateContext("workflow-manual-rejected");
+
+        var approveActivity = new ApproveExpenseActivity(mock.Object, DefaultOptions(), NullLogger<ApproveExpenseActivity>.Instance);
+        var decision = await approveActivity.RunAsync(ctx, submission);
+
+        Assert.Equal(ExpenseStatus.ManualReviewRequested, decision.Status);
+
+        var rejectActivity = new RejectExpenseActivity(mock.Object, NullLogger<RejectExpenseActivity>.Instance);
+        await rejectActivity.RunAsync(
+            ctx,
+            new RejectionInput(expenseId, correlationId, reason, decisionTimeUtc));
+
+        var rejectedRecord = stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)];
+        Assert.Equal(ExpenseStatus.Rejected, rejectedRecord.Status);
+        Assert.Equal(reason, rejectedRecord.RejectionReason);
+        Assert.Equal(decisionTimeUtc, rejectedRecord.ApprovedAt);
+        Assert.Null(rejectedRecord.ApprovedBy);
+    }
+
+    [Fact]
     public async Task BoundaryAmount_ExactlyOneHundred_RoutesToManualReview()
     {
         const string expenseId = "exp-boundary";
@@ -186,6 +252,64 @@ public sealed class ExpenseWorkflowActivityChainTests
 
         Assert.Equal(ExpenseStatus.ManualReviewRequested, decision.Status);
         Assert.Equal(ExpenseStatus.ManualReviewRequested, stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)].Status);
+    }
+
+    [Fact]
+    public async Task ManualApproval_TransitionsStateWithoutInventingReviewerIdentity()
+    {
+        const string expenseId = "exp-manual-approval";
+        const string correlationId = "corr-manual-approval";
+        var record = MakeRecord(expenseId, correlationId, 250m) with
+        {
+            Status = ExpenseStatus.ManualReviewRequested
+        };
+        var (mock, stateStore, _) = BuildInMemoryDapr(record);
+        var ctx = CreateContext("workflow-manual-approval");
+        var decisionTimeUtc = DateTimeOffset.UtcNow;
+
+        var recordApproval = new RecordApprovalActivity(mock.Object, NullLogger<RecordApprovalActivity>.Instance);
+        var approved = await recordApproval.RunAsync(
+            ctx,
+            new ApprovalRecordInput(expenseId, correlationId, decisionTimeUtc));
+
+        Assert.True(approved);
+        Assert.Equal(ExpenseStatus.Approved, stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)].Status);
+        Assert.Null(stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)].ApprovedBy);
+        Assert.Equal(decisionTimeUtc, stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)].ApprovedAt);
+
+        var reimburseActivity = new ProcessReimbursementActivity(mock.Object, NullLogger<ProcessReimbursementActivity>.Instance);
+        var reimbursed = await reimburseActivity.RunAsync(ctx, expenseId);
+
+        Assert.True(reimbursed);
+        Assert.Equal(ExpenseStatus.Reimbursed, stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)].Status);
+        Assert.Null(stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)].ApprovedBy);
+        Assert.Equal(decisionTimeUtc, stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)].ApprovedAt);
+    }
+
+    [Fact]
+    public async Task ManualRejection_PersistsReasonWithoutInventingReviewerIdentity()
+    {
+        const string expenseId = "exp-manual-rejection";
+        const string correlationId = "corr-manual-rejection";
+        const string reason = "Receipt is missing required detail";
+        var record = MakeRecord(expenseId, correlationId, 250m) with
+        {
+            Status = ExpenseStatus.ManualReviewRequested
+        };
+        var (mock, stateStore, _) = BuildInMemoryDapr(record);
+        var ctx = CreateContext("workflow-manual-rejection");
+        var decisionTimeUtc = DateTimeOffset.UtcNow;
+
+        var rejectActivity = new RejectExpenseActivity(mock.Object, NullLogger<RejectExpenseActivity>.Instance);
+        var rejected = await rejectActivity.RunAsync(ctx, new RejectionInput(expenseId, correlationId, reason, decisionTimeUtc));
+
+        Assert.True(rejected);
+
+        var finalRecord = stateStore[RadiusClaimDapr.StateKeys.Expense(expenseId)];
+        Assert.Equal(ExpenseStatus.Rejected, finalRecord.Status);
+        Assert.Equal(reason, finalRecord.RejectionReason);
+        Assert.Null(finalRecord.ApprovedBy);
+        Assert.Equal(decisionTimeUtc, finalRecord.ApprovedAt);
     }
 
     [Fact]

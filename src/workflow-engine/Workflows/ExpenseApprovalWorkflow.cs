@@ -69,8 +69,14 @@ internal sealed class ExpenseApprovalWorkflow(IOptions<ApprovalOptions> approval
                 var manualDecision = await decisionTask;
                 if (manualDecision?.Approved == true)
                 {
+                    var decisionTimeUtc = ResolveDecisionTimeUtc(
+                        manualDecision.DecisionTimeUtc,
+                        context.CurrentUtcDateTime);
+
                     // Transition ManualReviewRequested → Approved in state store before reimbursing.
-                    await context.CallActivityAsync<bool>(nameof(RecordApprovalActivity), input.ExpenseId);
+                    await context.CallActivityAsync<bool>(
+                        nameof(RecordApprovalActivity),
+                        new ApprovalRecordInput(input.ExpenseId, input.CorrelationId, decisionTimeUtc));
 
                     context.SetCustomStatus(new WorkflowProgress(
                         input.ExpenseId,
@@ -94,9 +100,12 @@ internal sealed class ExpenseApprovalWorkflow(IOptions<ApprovalOptions> approval
                     var reason = string.IsNullOrWhiteSpace(manualDecision?.Reason)
                         ? "Manual rejection by approver"
                         : manualDecision.Reason;
+                    var decisionTimeUtc = ResolveDecisionTimeUtc(
+                        manualDecision?.DecisionTimeUtc ?? default,
+                        context.CurrentUtcDateTime);
 
                     await context.CallActivityAsync<bool>(nameof(RejectExpenseActivity),
-                        new RejectionInput(input.ExpenseId, input.CorrelationId, reason));
+                        new RejectionInput(input.ExpenseId, input.CorrelationId, reason, decisionTimeUtc));
 
                     finalStatus = ExpenseStatus.Rejected;
                     finalEventType = NotificationEventType.ExpenseRejected;
@@ -112,8 +121,13 @@ internal sealed class ExpenseApprovalWorkflow(IOptions<ApprovalOptions> approval
             else
             {
                 // Timeout expired — auto-reject.
+                var decisionTimeUtc = ResolveDecisionTimeUtc(default, context.CurrentUtcDateTime);
                 await context.CallActivityAsync<bool>(nameof(RejectExpenseActivity),
-                    new RejectionInput(input.ExpenseId, input.CorrelationId, "Auto-rejected: approval timeout exceeded"));
+                    new RejectionInput(
+                        input.ExpenseId,
+                        input.CorrelationId,
+                        "Auto-rejected: approval timeout exceeded",
+                        decisionTimeUtc));
 
                 finalStatus = ExpenseStatus.Rejected;
                 finalEventType = NotificationEventType.ExpenseRejected;
@@ -193,5 +207,11 @@ internal sealed class ExpenseApprovalWorkflow(IOptions<ApprovalOptions> approval
                 $"Unsupported final notification event type '{eventType}'.")
         };
     }
-}
 
+    private static DateTimeOffset ResolveDecisionTimeUtc(DateTimeOffset signaledDecisionTimeUtc, DateTime workflowUtcNow)
+    {
+        return signaledDecisionTimeUtc == default
+            ? new DateTimeOffset(DateTime.SpecifyKind(workflowUtcNow, DateTimeKind.Utc))
+            : signaledDecisionTimeUtc.ToUniversalTime();
+    }
+}

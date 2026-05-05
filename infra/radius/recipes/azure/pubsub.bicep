@@ -52,9 +52,6 @@ param skuName string = 'Standard'
 @description('Optional random suffix for non-deterministic naming (dev/demo environments). If provided, replaces uniqueString generation.')
 param randomNameSuffix string = ''
 
-@description('Principal (object) ID of the Dapr workload identity for RBAC assignments.')
-param daprPrincipalId string
-
 @description('Client (application) ID of the Dapr workload identity for component auth metadata.')
 param daprClientId string = ''
 
@@ -111,15 +108,27 @@ resource serviceBusNamespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview
 // bootstrap = Kubernetes configuration.
 
 var daprComponentName = 'pubsub'
+var normalizedAzureEnvironment = toLower(azureEnvironment)
+var serviceBusDnsSuffix = normalizedAzureEnvironment == 'azureusgovernment'
+  ? 'servicebus.usgovcloudapi.net'
+  : normalizedAzureEnvironment == 'azurechina'
+    ? 'servicebus.chinacloudapi.cn'
+    : 'servicebus.windows.net'
+var daprEnvironmentName = azureEnvironment == 'AzureUSGovernment'
+  ? 'AzureUSGovernmentCloud'
+  : azureEnvironment == 'AzureChina'
+    ? 'AzureChinaCloud'
+    : 'AzurePublicCloud'
 
 // ---------------------------------------------------------------------------
 // Radius recipe outputs
 // ---------------------------------------------------------------------------
 
 output values object = {
-  namespaceName: '${serviceBusNamespace.name}.servicebus.windows.net'
-  endpoint: '${serviceBusNamespace.name}.servicebus.windows.net'
+  namespaceName: '${serviceBusNamespace.name}.${serviceBusDnsSuffix}'
+  endpoint: '${serviceBusNamespace.name}.${serviceBusDnsSuffix}'
   componentName: daprComponentName
+  azureEnvironment: daprEnvironmentName
 }
 
 // Omit explicit `output resources` — Radius auto-populates from ARM deployment.
@@ -133,7 +142,7 @@ output values object = {
 output resourceMetadata object = {
   serviceBusNamespaceName: serviceBusNamespace.name
   serviceBusNamespaceId: serviceBusArmId
-  endpoint: '${serviceBusNamespace.name}.servicebus.windows.net'
+  endpoint: '${serviceBusNamespace.name}.${serviceBusDnsSuffix}'
   resourceGroup: azureResourceGroupName
   location: location
   // Dapr component metadata for bootstrap script
@@ -142,9 +151,9 @@ output resourceMetadata object = {
     componentType: 'pubsub.azure.servicebus.topics'
     componentVersion: 'v1'
     metadata: {
-      namespaceName: '${serviceBusNamespace.name}.servicebus.windows.net'
+      namespaceName: '${serviceBusNamespace.name}.${serviceBusDnsSuffix}'
       azureClientId: daprClientId
-      azureEnvironment: azureEnvironment
+      azureEnvironment: daprEnvironmentName
       disableEntityManagement: 'false'
     }
   }

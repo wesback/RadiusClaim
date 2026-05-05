@@ -1,7 +1,7 @@
 #!/bin/bash
 # Master script to run all portability validation tests
 
-set -e
+set -uo pipefail
 
 echo "=========================================="
 echo "RadiusClaim Portability Validation Suite"
@@ -12,7 +12,7 @@ echo ""
 TOTAL_TESTS=0
 PASSED_TESTS=0
 FAILED_TESTS=0
-WARNINGS=0
+SKIPPED_TESTS=0
 
 # Get script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +36,12 @@ for test in "${TESTS[@]}"; do
   if bash "$SCRIPT_DIR/$test"; then
     PASSED_TESTS=$((PASSED_TESTS + 1))
   else
-    FAILED_TESTS=$((FAILED_TESTS + 1))
+    status=$?
+    if [ "$status" -eq 2 ]; then
+      SKIPPED_TESTS=$((SKIPPED_TESTS + 1))
+    else
+      FAILED_TESTS=$((FAILED_TESTS + 1))
+    fi
   fi
   
   echo ""
@@ -48,18 +53,24 @@ echo "Portability Validation Summary"
 echo "=========================================="
 echo "Total Tests:  $TOTAL_TESTS"
 echo "Passed:       $PASSED_TESTS ✅"
+echo "Skipped:      $SKIPPED_TESTS ⏭️"
 echo "Failed:       $FAILED_TESTS ❌"
 echo ""
 
 if [ $FAILED_TESTS -eq 0 ]; then
-  echo "🎉 All portability validations passed!"
+  if [ $SKIPPED_TESTS -eq 0 ]; then
+    echo "🎉 All portability validations passed!"
+  else
+    echo "🎉 Static portability validations passed."
+    echo "   Cluster-dependent checks skipped: $SKIPPED_TESTS"
+  fi
   echo ""
   echo "Your codebase adheres to the portability paradigm:"
   echo "  • App code is cloud-agnostic (uses Dapr abstractions)"
-  echo "  • Recipes are self-contained and complete"
-  echo "  • Bootstrap is idempotent"
+  echo "  • Radius recipe contracts match current bootstrap/component flows"
+  echo "  • Bootstrap stays re-runnable and contract-aware"
   echo "  • Deployment is region-agnostic"
-  echo "  • Dapr components are properly configured"
+  echo "  • Dapr component checks only skip when a live cluster is required"
   exit 0
 else
   echo "⚠️  Some portability validations failed."

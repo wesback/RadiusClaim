@@ -11,7 +11,7 @@ public sealed record ExpenseRecord(
     DateTimeOffset SubmittedAtUtc,
     DateTimeOffset LastUpdatedAtUtc,
     string? RejectionReason = null,
-    /// <summary>Identity of the approver who acted on this expense (JWT sub/oid). Set on approval or rejection.</summary>
+    /// <summary>Anonymous manual decisions leave this null; do not treat it as a verified reviewer identity.</summary>
     string? ApprovedBy = null,
-    /// <summary>UTC timestamp when the approval or rejection decision was recorded by the API.</summary>
+    /// <summary>UTC timestamp when the workflow recorded the latest manual approval or rejection decision.</summary>
     DateTimeOffset? ApprovedAt = null);

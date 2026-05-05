@@ -90,6 +90,7 @@ RESOURCE_GROUP_CREATED=false
 PORT_FORWARD_PID=""
 VALIDATION_BASE_URL=""
 GHCR_PACKAGES_PRIVATE="${GHCR_PACKAGES_PRIVATE:-false}"
+RANDOM_NAME_SUFFIX=""
 
 usage() {
   cat <<USAGE
@@ -138,9 +139,10 @@ Optional GHCR pull secret (required for private GHCR images on AKS):
   GHCR_PACKAGES_PRIVATE Set to "true" if GHCR packages are private (default: false)
 
 Behavior note:
-  For Azure-backed platform-secrets, bootstrap preflights the deterministic Key Vault
-  name. If the vault is soft-deleted and recoverable back into this deployment scope,
-  bootstrap restores it; otherwise it fails early with actionable guidance.
+  For Azure-backed platform-secrets, bootstrap resolves the Key Vault from Radius
+  metadata when available and otherwise uses the kvrc recipe naming contract. If the
+  vault is soft-deleted and recoverable back into this deployment scope, bootstrap
+  restores it; otherwise it fails early with actionable guidance.
 USAGE
 }
 
@@ -310,10 +312,160 @@ fetch_env_namespace() {
     | jq -r '.properties.compute.namespace // empty' 2>/dev/null || true
 }
 
-fetch_env_id() {
-  "$RAD_BIN" env show "$ENV_NAME" -o json 2>/dev/null \
-    | sed -n '/^{/,$p' \
-    | jq -r '.id // empty' 2>/dev/null || true
+fetch_radius_app_resource_json() {
+  local resource_type="$1"
+  local resource_name="$2"
+
+  "$RAD_BIN" resource show "$resource_type" "$resource_name" \
+    --application "$APP_NAME" \
+    --output json 2>/dev/null \
+    | sed -n '/^{/,$p' || true
+}
+
+extract_first_output_resource_id() {
+  local resource_json="$1"
+  local resource_pattern="$2"
+
+  printf '%s' "$resource_json" | jq -r --arg pattern "$resource_pattern" '
+    [.properties.status.outputResources[]? | .id]
+    | map(select(test($pattern)))
+    | .[0] // empty
+  ' 2>/dev/null || true
+}
+
+resolve_secret_store_key_vault_contract() {
+  local secret_store_json
+  local key_vault_id
+  local key_vault_name
+  local key_vault_uri
+  local key_vault_resource_group
+  local key_vault_subscription_id
+
+  secret_store_json="$(fetch_radius_app_resource_json "Applications.Dapr/secretStores" "platform-secrets")"
+  [ -n "$secret_store_json" ] || return 1
+
+  key_vault_id="$(extract_first_output_resource_id "$secret_store_json" '/Microsoft.KeyVault/vaults/[^/]+$')"
+  key_vault_name="$(printf '%s' "$secret_store_json" | jq -r '
+    .properties.status.resourceMetadata.keyVaultName
+    // .properties.status.values.vaultName
+    // empty
+  ' 2>/dev/null || true)"
+  if [ -z "$key_vault_name" ] && [ -n "$key_vault_id" ]; then
+    key_vault_name="${key_vault_id##*/}"
+  fi
+
+  key_vault_uri="$(printf '%s' "$secret_store_json" | jq -r '
+    .properties.status.resourceMetadata.vaultUri
+    // .properties.status.values.vaultUri
+    // empty
+  ' 2>/dev/null || true)"
+
+  key_vault_resource_group="$(printf '%s' "$secret_store_json" | jq -r '
+    .properties.status.resourceMetadata.resourceGroup
+    // empty
+  ' 2>/dev/null || true)"
+  if [ -z "$key_vault_resource_group" ] && [ -n "$key_vault_id" ]; then
+    key_vault_resource_group="$(extract_resource_group_from_resource_id "$key_vault_id")"
+  fi
+
+  key_vault_subscription_id=""
+  if [ -n "$key_vault_id" ]; then
+    key_vault_subscription_id="$(extract_subscription_from_resource_id "$key_vault_id")"
+  fi
+
+  [ -n "$key_vault_name" ] || [ -n "$key_vault_id" ] || return 1
+
+  jq -nc \
+    --arg vaultName "$key_vault_name" \
+    --arg vaultId "$key_vault_id" \
+    --arg vaultUri "$key_vault_uri" \
+    --arg resourceGroup "$key_vault_resource_group" \
+    --arg subscriptionId "$key_vault_subscription_id" \
+    '{
+      vaultName: $vaultName,
+      vaultId: $vaultId,
+      vaultUri: $vaultUri,
+      resourceGroup: $resourceGroup,
+      subscriptionId: $subscriptionId
+    }'
+}
+
+discover_existing_kvrc_vault_name() {
+  local kvrc_vaults
+  local kvrc_vault_count
+
+  kvrc_vaults="$(az keyvault list \
+    --resource-group "$RESOURCE_GROUP" \
+    --query "[?starts_with(name, 'kvrc')].name" \
+    -o tsv 2>/dev/null || true)"
+  kvrc_vault_count="$(printf '%s\n' "$kvrc_vaults" | sed '/^$/d' | wc -l | tr -d ' ')"
+
+  [ "$kvrc_vault_count" = "1" ] || return 1
+  printf '%s\n' "$kvrc_vaults" | sed '/^$/d' | head -n 1
+}
+
+extract_kvrc_suffix_from_vault_name() {
+  local vault_name="$1"
+
+  if [[ "$vault_name" =~ ^kvrc(.+)$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  return 1
+}
+
+generate_random_name_suffix() {
+  printf '%s\n' "$(date +%s | sha256sum | cut -c1-6)"
+}
+
+initialize_radius_resource_naming() {
+  local secret_store_contract_json
+  local existing_vault_name
+  local existing_suffix
+
+  RANDOM_NAME_SUFFIX=""
+  if [ "$DEPLOYMENT_TARGET" != "radius" ]; then
+    return 0
+  fi
+
+  secret_store_contract_json="$(resolve_secret_store_key_vault_contract || true)"
+  existing_vault_name="$(printf '%s' "$secret_store_contract_json" | jq -r '.vaultName // empty' 2>/dev/null || true)"
+  if [ -z "$existing_vault_name" ]; then
+    existing_vault_name="$(discover_existing_kvrc_vault_name || true)"
+  fi
+  existing_suffix="$(extract_kvrc_suffix_from_vault_name "$existing_vault_name" || true)"
+
+  if [ -n "$existing_suffix" ]; then
+    RANDOM_NAME_SUFFIX="$existing_suffix"
+    log_info "Reusing Radius resource naming suffix from existing Key Vault '${existing_vault_name}': ${RANDOM_NAME_SUFFIX}"
+    return 0
+  fi
+
+  RANDOM_NAME_SUFFIX="$(generate_random_name_suffix)"
+  log_info "Using new Radius resource naming suffix for this deployment: ${RANDOM_NAME_SUFFIX}"
+}
+
+resolve_secret_store_vault_name() {
+  local secret_store_contract_json
+  local secret_vault_name
+
+  secret_store_contract_json="$(resolve_secret_store_key_vault_contract || true)"
+  secret_vault_name="$(printf '%s' "$secret_store_contract_json" | jq -r '.vaultName // empty' 2>/dev/null || true)"
+  if [ -z "$secret_vault_name" ]; then
+    secret_vault_name="$(discover_existing_kvrc_vault_name || true)"
+  fi
+  if [ -n "$secret_vault_name" ]; then
+    printf '%s\n' "$secret_vault_name"
+    return 0
+  fi
+
+  if [ -n "$RANDOM_NAME_SUFFIX" ]; then
+    printf 'kvrc%s\n' "$RANDOM_NAME_SUFFIX"
+    return 0
+  fi
+
+  return 1
 }
 
 radius_azure_credential_registered() {
@@ -551,41 +703,6 @@ require_public_recipe_access() {
   fail "Recipe OCI artifacts are private. Make them public in the GitHub web UI (URLs above) and re-run."
 }
 
-resolve_app_secret_vault_name() {
-  local environment_id="$1"
-  local deployment_name="bootstrap-secretstore-name-${ENV_NAME}"
-
-  az deployment group create \
-    --name "$deployment_name" \
-    --resource-group "$RESOURCE_GROUP" \
-    --mode Incremental \
-    --only-show-errors \
-    --template-file /dev/stdin \
-    --parameters "applicationName=${APP_NAME}" "environmentId=${environment_id}" \
-    --query 'properties.outputs.secretVaultName.value' \
-    -o tsv <<'EOF'
-{
-  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-  "contentVersion": "1.0.0.0",
-  "parameters": {
-    "applicationName": {
-      "type": "string"
-    },
-    "environmentId": {
-      "type": "string"
-    }
-  },
-  "resources": [],
-  "outputs": {
-    "secretVaultName": {
-      "type": "string",
-      "value": "[format('ce-{0}', take(uniqueString(parameters('applicationName'), parameters('environmentId'), 'platform-secrets'), 20))]"
-    }
-  }
-}
-EOF
-}
-
 lookup_deleted_key_vault() {
   local vault_name="$1"
   local deleted_vaults_json
@@ -624,6 +741,7 @@ wait_for_namespace() {
 
 wait_for_key_vault_recovery() {
   local vault_name="$1"
+  local resource_group="${2:-$RESOURCE_GROUP}"
   local attempt
 
   if [ "$DRY_RUN" = true ]; then
@@ -631,19 +749,22 @@ wait_for_key_vault_recovery() {
   fi
 
   for attempt in $(seq 1 30); do
-    if az keyvault show --name "$vault_name" --resource-group "$RESOURCE_GROUP" --query name -o tsv >/dev/null 2>&1; then
+    if az keyvault show --name "$vault_name" --resource-group "$resource_group" --query name -o tsv >/dev/null 2>&1; then
       return 0
     fi
     sleep 10
   done
 
-  fail "Timed out waiting for restored Key Vault '${vault_name}' in resource group '${RESOURCE_GROUP}'."
+  fail "Timed out waiting for restored Key Vault '${vault_name}' in resource group '${resource_group}'."
 }
 
 ensure_azure_secret_store_ready() {
   local secret_store_recipe
-  local environment_id
+  local secret_store_contract_json
   local secret_vault_name
+  local secret_vault_id
+  local secret_vault_resource_group
+  local secret_vault_source
   local deleted_vault_json
   local deleted_vault_id
   local deleted_resource_group
@@ -658,17 +779,26 @@ ensure_azure_secret_store_ready() {
   secret_store_recipe="$(current_secret_store_recipe_name)"
   [ "$secret_store_recipe" = "azure-keyvault-secrets" ] || return 0
 
-  environment_id="$(fetch_env_id)"
-  [ -n "$environment_id" ] || fail "Could not determine the current Radius environment ID needed to preflight the Azure-backed secret store."
+  secret_store_contract_json="$(resolve_secret_store_key_vault_contract || true)"
+  secret_vault_name="$(printf '%s' "$secret_store_contract_json" | jq -r '.vaultName // empty' 2>/dev/null || true)"
+  secret_vault_id="$(printf '%s' "$secret_store_contract_json" | jq -r '.vaultId // empty' 2>/dev/null || true)"
+  secret_vault_resource_group="$(printf '%s' "$secret_store_contract_json" | jq -r '.resourceGroup // empty' 2>/dev/null || true)"
 
-  secret_vault_name="$(resolve_app_secret_vault_name "$environment_id" | tr -d '\r')"
-  [ -n "$secret_vault_name" ] || fail "Could not resolve the deterministic Key Vault name for 'platform-secrets'."
+  if [ -n "$secret_vault_name" ]; then
+    secret_vault_source="Radius resource metadata"
+  else
+    secret_vault_name="$(resolve_secret_store_vault_name | tr -d '\r' || true)"
+    secret_vault_source="kvrc recipe contract"
+  fi
+
+  [ -n "$secret_vault_name" ] || fail "Could not resolve the Key Vault name for 'platform-secrets' from Radius metadata or the kvrc recipe contract."
+  [ -n "$secret_vault_resource_group" ] || secret_vault_resource_group="$RESOURCE_GROUP"
 
   section "Preflighting Azure-backed secret store"
-  log_info "platform-secrets maps to Key Vault '${secret_vault_name}'."
+  log_info "platform-secrets maps to Key Vault '${secret_vault_name}' (${secret_vault_source})."
 
-  if az keyvault show --name "$secret_vault_name" --resource-group "$RESOURCE_GROUP" --query name -o tsv >/dev/null 2>&1; then
-    log_success "Key Vault '${secret_vault_name}' already exists in '${RESOURCE_GROUP}'."
+  if az keyvault show --name "$secret_vault_name" --resource-group "$secret_vault_resource_group" --query name -o tsv >/dev/null 2>&1; then
+    log_success "Key Vault '${secret_vault_name}' already exists in '${secret_vault_resource_group}'."
     return 0
   fi
 
@@ -685,6 +815,10 @@ ensure_azure_secret_store_ready() {
   normalized_deleted_location="$(printf '%s' "$deleted_location" | tr '[:upper:]' '[:lower:]')"
   normalized_target_location="$(printf '%s' "$LOCATION" | tr '[:upper:]' '[:lower:]')"
 
+  if [ -n "$secret_vault_id" ] && [ -n "$deleted_vault_id" ] && [ "$secret_vault_id" != "$deleted_vault_id" ]; then
+    fail "Key Vault '${secret_vault_name}' is soft-deleted, but Radius metadata expects '${secret_vault_id}' and Azure reports '${deleted_vault_id}'. Resolve the mismatch before retrying."
+  fi
+
   if [ -z "$deleted_resource_group" ] || [ -z "$deleted_subscription_id" ] || [ -z "$deleted_location" ] \
     || [ "$deleted_resource_group" != "$RESOURCE_GROUP" ] \
     || [ "$deleted_subscription_id" != "$AZURE_SUBSCRIPTION_ID" ] \
@@ -696,7 +830,7 @@ ensure_azure_secret_store_ready() {
     fail "${scope_mismatch_message} Restore or purge the deleted vault manually, or use a different Radius environment name before retrying."
   fi
 
-  restore_message="Key Vault '${secret_vault_name}' is currently soft-deleted in '${RESOURCE_GROUP}'"
+  restore_message="Key Vault '${secret_vault_name}' is currently soft-deleted in '${secret_vault_resource_group}'"
   if [ -n "$deleted_purge_date" ]; then
     restore_message="${restore_message} (scheduled purge: ${deleted_purge_date})"
   fi
@@ -708,7 +842,7 @@ ensure_azure_secret_store_ready() {
 
   section "Recovering soft-deleted Key Vault"
   run_cmd az keyvault recover --name "$secret_vault_name" --location "$deleted_location" --output none
-  wait_for_key_vault_recovery "$secret_vault_name"
+  wait_for_key_vault_recovery "$secret_vault_name" "$secret_vault_resource_group"
   log_success "Restored Key Vault '${secret_vault_name}' for platform-secrets reuse."
 }
 
@@ -1173,14 +1307,14 @@ rad_deploy_with_recovery() {
 }
 
 # REMOVED: get_recipe_resource_metadata()
-# This function extracted resourceMetadata from recipe outputs. It was used by the now-deleted
-# assign_managed_identity_rbac_on_recipe_resources() function. Since RBAC is now handled
-# inline by recipes, this function is no longer needed.
+# This function extracted resourceMetadata for a dedicated RBAC helper. Bootstrap now resolves
+# recipe-created resource identities inline from Radius status metadata/outputResources where the
+# RBAC operations actually run, so the standalone helper is no longer needed.
 
 # REMOVED: assign_managed_identity_rbac_on_recipe_resources()
-# RBAC role assignments now handled inline by Radius recipes themselves.
-# All three recipes (state-store.bicep, pubsub.bicep, secrets.bicep) assign
-# the required roles during resource provisioning. No post-deployment RBAC needed.
+# Radius v0.56 still requires post-deployment RBAC for some recipe-created Azure resources.
+# Those role assignments now happen inline in bootstrap using the actual resource IDs resolved
+# from Radius state rather than a separate helper with duplicated discovery logic.
 
 
 build_and_push_service() {
@@ -1916,6 +2050,9 @@ if [ "$SHOULD_REGISTER_AZURE_CREDENTIAL" = true ]; then
   esac
 fi
 
+section "Resolving Radius resource naming"
+initialize_radius_resource_naming
+
 ensure_azure_secret_store_ready
 
 if [ "$SHOULD_PUBLISH_RECIPES" = true ]; then
@@ -1925,21 +2062,6 @@ fi
 
 section "Verifying recipe OCI artifacts are publicly accessible"
 require_public_recipe_access
-
-# Generate random naming suffix for dev/demo environments (empty for prod deterministic naming)
-generate_random_name_suffix() {
-  # Creates a 6-char timestamp-hash suffix for non-deterministic resource naming
-  # in dev/demo environments. Prevents soft-delete collision issues on repeated deploys.
-  # Format: lowercase hex chars, e.g., 'a3f9e2'
-  printf '%s\n' "$(date +%s | sha256sum | cut -c1-6)"
-}
-
-RANDOM_NAME_SUFFIX=""
-if [ "$DEPLOYMENT_TARGET" = "radius" ]; then
-  # Apply random naming to Radius deployments to prevent soft-delete/name collisions
-  RANDOM_NAME_SUFFIX="$(generate_random_name_suffix)"
-  log_info "Using random resource naming suffix for dev/demo environment: ${RANDOM_NAME_SUFFIX}"
-fi
 
 section "Deploying Radius environment"
 
@@ -2039,6 +2161,7 @@ ENV_DEPLOY_ARGS=(
   --parameters "@${REPO_ROOT}/infra/radius/environments/azure-radius.parameters.json"
   --parameters "environmentName=${ENV_NAME}"
   --parameters "kubernetesNamespace=${KUBERNETES_NAMESPACE}"
+  --parameters "applicationName=${APP_NAME}"
   --parameters "azureProviderScope=/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/${RESOURCE_GROUP}"
   --parameters "azureSubscriptionId=${AZURE_SUBSCRIPTION_ID}"
   --parameters "azureResourceGroupName=${RESOURCE_GROUP}"
@@ -2224,6 +2347,9 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
   fi
 
   section "Deploying Radius application"
+  AZURE_AD_LOGIN_ENDPOINT="$(az cloud show --query 'endpoints.activeDirectory' -o tsv 2>/dev/null || true)"
+  test -n "$AZURE_AD_LOGIN_ENDPOINT" || fail "Unable to determine Microsoft Entra login endpoint from the active Azure cloud."
+  AZURE_AD_AUTHORITY="${AZURE_AD_LOGIN_ENDPOINT%/}/${AZURE_TENANT_ID}"
   APP_DEPLOY_ARGS=(
     deploy
     "$REPO_ROOT/infra/radius/app.bicep"
@@ -2232,7 +2358,7 @@ if [ "$SKIP_APP_DEPLOY" = false ]; then
     --parameters "imageTag=${IMAGE_TAG}"
     --parameters "deploymentTarget=${DEPLOYMENT_TARGET}"
     --parameters "useWorkloadIdentity=true"
-    --parameters "azureAdAuthority=https://login.microsoftonline.com/${AZURE_TENANT_ID}"
+    --parameters "azureAdAuthority=${AZURE_AD_AUTHORITY}"
     --parameters "azureAdAudience=api://radiusclaim"
   )
   
@@ -2262,7 +2388,19 @@ _sb_id=""
 
   # Key Vault → Key Vault Secrets User
 _kv_id=""
-  _kv_id="$(az resource list -g "$RESOURCE_GROUP" --resource-type 'Microsoft.KeyVault/vaults' --query '[0].id' -o tsv 2>/dev/null || true)"
+_kv_name=""
+_kv_resource_group=""
+_kv_contract_json="$(resolve_secret_store_key_vault_contract || true)"
+  _kv_id="$(printf '%s' "$_kv_contract_json" | jq -r '.vaultId // empty' 2>/dev/null || true)"
+  _kv_name="$(printf '%s' "$_kv_contract_json" | jq -r '.vaultName // empty' 2>/dev/null || true)"
+  _kv_resource_group="$(printf '%s' "$_kv_contract_json" | jq -r '.resourceGroup // empty' 2>/dev/null || true)"
+  if [ -z "$_kv_name" ]; then
+    _kv_name="$(resolve_secret_store_vault_name | tr -d '\r' || true)"
+  fi
+  [ -n "$_kv_resource_group" ] || _kv_resource_group="$RESOURCE_GROUP"
+  if [ -z "$_kv_id" ] && [ -n "$_kv_name" ]; then
+    _kv_id="$(az keyvault show --name "$_kv_name" --resource-group "$_kv_resource_group" --query id -o tsv 2>/dev/null || true)"
+  fi
   if [ -n "$_kv_id" ]; then
     log_info "Assigning 'Key Vault Secrets User' on Key Vault..."
     az role assignment create --assignee-object-id "$_rbac_principal" --assignee-principal-type ServicePrincipal \

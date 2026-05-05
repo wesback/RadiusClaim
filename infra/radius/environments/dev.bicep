@@ -1,8 +1,8 @@
 // ---------------------------------------------------------------------------
 // dev.bicep — Radius Environment: Development (Kubernetes + Azure Recipes)
 // ---------------------------------------------------------------------------
-// Development environment for local Kubernetes clusters (kind, k3d, Docker
-// Desktop) that provisions REAL Azure backing services during inner-loop
+// Development environment for Kubernetes clusters (kind, k3d, Docker
+// Desktop, AKS) that provisions REAL Azure backing services during inner-loop
 // iteration. Developers get production-equivalent Dapr components without
 // running a full cloud deployment pipeline.
 //
@@ -24,6 +24,9 @@ param environmentName string = 'radiusclaim-dev'
 
 @description('Kubernetes namespace where workloads deploy. Radius creates it if absent.')
 param namespace string = 'radiusclaim-dev'
+
+@description('Application name used to derive the workload namespace.')
+param applicationName string = 'radiusclaim'
 
 @description('OCI registry base path for Recipe Bicep modules.')
 param recipeRegistry string = 'ghcr.io/wesback/radiusclaim/recipes'
@@ -49,6 +52,24 @@ param azureEnvironment string = 'AzurePublicCloud'
 @description('Enable a Private Endpoint for PostgreSQL state store. Defaults to false for dev environments.')
 param usePrivateEndpoint bool = false
 
+@description('Object (principal) ID of the managed identity / service principal for RBAC role assignments.')
+param daprAzurePrincipalId string = ''
+
+@description('Client (application) ID of the managed identity / service principal for Dapr component authentication.')
+param daprAzureClientId string = ''
+
+@description('Display name of the Dapr managed identity. Used as the PostgreSQL Entra admin principalName and connection user.')
+param daprAzurePrincipalName string = ''
+
+@description('Azure tenant ID for Entra authentication in the PostgreSQL recipe.')
+param azureTenantId string = ''
+
+@description('Optional random suffix for recipe resource naming (dev/demo only).')
+param randomNameSuffix string = ''
+
+@description('Optional override for the PostgreSQL server name suffix.')
+param postgresNameSuffix string = ''
+
 // ── Environment ─────────────────────────────────────────────────────────────
 
 resource env 'Applications.Core/environments@2023-10-01-preview' = {
@@ -69,11 +90,19 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
     recipes: {
       // Dapr State Store — provisions Azure PostgreSQL Flexible Server with Entra RBAC
       'Applications.Dapr/stateStores': {
-        default: {
+        'azure-postgres-statestore': {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/state-store:${recipeTag}'
           parameters: {
             location: location
+            randomNameSuffix: randomNameSuffix
+            postgresNameSuffix: postgresNameSuffix
+            daprPrincipalId: daprAzurePrincipalId
+            daprPrincipalName: daprAzurePrincipalName
+            daprClientId: daprAzureClientId
+            azureSubscriptionId: azureSubscriptionId
+            azureResourceGroupName: azureResourceGroup
+            azureTenantId: azureTenantId
             allowAzureServices: allowAzureServices
             azureEnvironment: azureEnvironment
             usePrivateEndpoint: usePrivateEndpoint
@@ -83,22 +112,32 @@ resource env 'Applications.Core/environments@2023-10-01-preview' = {
 
       // Dapr Pub/Sub Broker — provisions Azure Service Bus with Entra RBAC
       'Applications.Dapr/pubSubBrokers': {
-        default: {
+        'azure-servicebus-pubsub': {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/pubsub:${recipeTag}'
           parameters: {
             location: location
+            randomNameSuffix: randomNameSuffix
+            daprClientId: daprAzureClientId
+            azureSubscriptionId: azureSubscriptionId
+            azureResourceGroupName: azureResourceGroup
+            azureEnvironment: azureEnvironment
           }
         }
       }
 
       // Dapr Secret Store — provisions Azure Key Vault with Entra RBAC
       'Applications.Dapr/secretStores': {
-        default: {
+        'azure-keyvault-secrets': {
           templateKind: 'bicep'
           templatePath: '${recipeRegistry}/secrets:${recipeTag}'
           parameters: {
             location: location
+            randomNameSuffix: randomNameSuffix
+            daprClientId: daprAzureClientId
+            azureSubscriptionId: azureSubscriptionId
+            azureResourceGroupName: azureResourceGroup
+            azureEnvironment: azureEnvironment
           }
         }
       }
@@ -115,4 +154,4 @@ output environmentId string = env.id
 output environmentNamespace string = namespace
 
 @description('Workload namespace: where Dapr components are projected and workloads run.')
-output workloadNamespace string = namespace
+output workloadNamespace string = '${namespace}-${applicationName}'

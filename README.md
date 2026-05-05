@@ -50,8 +50,8 @@ Employee
 
 | Service | Responsibility | Dapr Building Blocks |
 |---------|---------------|---------------------|
-| **expense-api** | Accept submissions, expose query endpoints | Service Invocation, State |
-| **workflow-engine** | Orchestrate the approval flow | Workflows, Pub/Sub (publisher) |
+| **expense-api** | Accept submissions, expose query endpoints, and forward manual decisions to the workflow | Service Invocation, State |
+| **workflow-engine** | Orchestrate the approval flow and own durable approval/rejection transitions | Workflows, Pub/Sub (publisher) |
 | **notification-svc** | Consume approval events, send notifications | Pub/Sub (subscriber) |
 
 ### Demo web UI
@@ -61,7 +61,7 @@ The sample now includes a lightweight web UI hosted by `expense-api` at **`/app`
 - Submit expenses without leaving the browser
 - Watch recent expense history update live
 - Inspect workflow telemetry and correlation IDs without adding a separate frontend deployment surface
-- Reach it through the Radius-managed public gateway on the Kubernetes deployment path
+- Open it through whatever URL your cluster exposes, or use `kubectl port-forward` against the workload namespace for a deterministic demo path
 
 This keeps the demo teachable: no extra Node-based toolchain, no CORS setup, and no new platform story to explain before the core Radius + Dapr narrative lands.
 
@@ -79,7 +79,7 @@ The **app code** uses Dapr abstractions:
 All of this is **cloud-agnostic**. The same `.NET` code runs:
 
 - Locally with Redis (dev)
-- On Kubernetes with any Dapr backing services (e.g., AKS with Azure Blob + Service Bus)
+- On Kubernetes with any Dapr backing services (e.g., AKS with Azure PostgreSQL + Service Bus + Key Vault)
 - On any Kubernetes cluster with pluggable components
 
 ### Radius's Role: Infrastructure Clarity
@@ -102,11 +102,11 @@ Radius generates the Kubernetes manifests and Dapr component specs — no hand-w
 - Publishes the repo's custom Radius recipes as OCI artifacts before environment deployment, because Radius recipe `templatePath` values must resolve to registry-backed artifacts rather than local file paths
 - Keeps service topology, Dapr component names, and resource wiring in Radius
 - Deploys to a Kubernetes cluster (AKS in the Azure example, or any K8s cluster with Radius control plane)
-- Exposes only `expense-api` publicly through an `Applications.Core/gateways@2023-10-01-preview` resource; `workflow-engine` and `notification-svc` stay internal
-- Lets Radius print the public endpoint at deploy time, so humans can open `/app` without falling back to port-forward unless the cluster lacks an external address
-- Azure-specific backing services (Blob Storage, Service Bus, Key Vault) are provisioned by Radius recipes for the Azure environment
+- Keeps `workflow-engine` and `notification-svc` internal and validates `expense-api` through a deterministic workload-namespace port-forward in CI
+- Uses Radius as the source of truth for service topology and backing-service resources, with bootstrap/CI projecting Dapr components from recipe metadata after deploy
+- Azure-specific backing services (PostgreSQL, Service Bus, Key Vault) are provisioned by Radius recipes for the Azure environment
 
-**Stock Radius 0.55 alignment:** This repo keeps the deployable application surface on `Applications.Core/applications@2023-10-01-preview`, `Applications.Core/environments@2023-10-01-preview`, `Applications.Core/containers@2023-10-01-preview`, and `Applications.Core/gateways@2023-10-01-preview`, while the Dapr building blocks remain on [`Applications.Dapr/stateStores@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/statestore), [`Applications.Dapr/pubSubBrokers@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/pubsub/), and [`Applications.Dapr/secretStores@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/secretstore). That matches the first-party 0.55 docs and avoids the live `InvalidResourceNamespace` failure reported for `Radius.Compute/containers`. If you later target a custom preview catalog, the exact compute/ingress pivot is `Applications.Core/containers` → `Radius.Compute/containers` and `Applications.Core/gateways` → `Radius.Compute/routes`, plus the accompanying schema move from `properties.container` to a `properties.containers` map and from an `extensions[]` array to `extensions.daprSidecar`.
+**Stock Radius 0.55 alignment:** This repo keeps the deployable application surface on `Applications.Core/applications@2023-10-01-preview`, `Applications.Core/environments@2023-10-01-preview`, and `Applications.Core/containers@2023-10-01-preview`, while the Dapr building blocks remain on [`Applications.Dapr/stateStores@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/statestore), [`Applications.Dapr/pubSubBrokers@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/pubsub/), and [`Applications.Dapr/secretStores@2023-10-01-preview`](https://docs.radapp.io/reference/resource-schema/dapr-schema/secretstore). That matches the current app model in this repo and avoids the live `InvalidResourceNamespace` failure reported for `Radius.Compute/containers`. If you later target a custom preview catalog, the exact compute pivot is `Applications.Core/containers` → `Radius.Compute/containers`, plus the accompanying schema move from `properties.container` to a `properties.containers` map and from an `extensions[]` array to `extensions.daprSidecar`.
 
 **Idempotent deployment:** The GitHub Actions workflow creates or switches to the target environment name (`azure`) directly rather than using temporary bootstrap environments. This ensures deployments are repeatable: `rad deploy` on the environment Bicep updates the environment configuration in place, and subsequent application deployments work against a stable, well-known environment identity. Manual deployments follow the same pattern: `rad env create <name> || true` then `rad env switch <name>` before deploying the environment Bicep.
 
@@ -157,9 +157,9 @@ This sequence has been tested end-to-end and reflects the actual working deploym
 ./scripts/bootstrap.sh --resource-group radiusclaim-rg --create-spn --yes
 
 # Confirm all workloads are healthy
-kubectl get pods -n radiusclaim-azure
+kubectl get pods -n radiusclaim-azure-radiusclaim
 # Expected: expense-api (2/2), workflow-engine (2/2), notification-svc (2/2) — all Running
-kubectl get components.dapr.io -n radiusclaim-azure
+kubectl get components.dapr.io -n radiusclaim-azure-radiusclaim
 # Expected: statestore, pubsub, platform-secrets — all present
 ```
 
@@ -167,9 +167,9 @@ kubectl get components.dapr.io -n radiusclaim-azure
 
 | Check | Command | Expected |
 |-------|---------|----------|
-| All pods running | `kubectl get pods -n radiusclaim-azure` | 3 deployments, each 2/2 Running |
-| Dapr components loaded | `kubectl get components.dapr.io -n radiusclaim-azure` | statestore, pubsub, platform-secrets |
-| No CrashLoopBackOff | `kubectl get pods -n radiusclaim-azure` | STATUS = Running |
+| All pods running | `kubectl get pods -n radiusclaim-azure-radiusclaim` | 3 deployments, each 2/2 Running |
+| Dapr components loaded | `kubectl get components.dapr.io -n radiusclaim-azure-radiusclaim` | statestore, pubsub, platform-secrets |
+| No CrashLoopBackOff | `kubectl get pods -n radiusclaim-azure-radiusclaim` | STATUS = Running |
 | Radius system healthy | `kubectl get pods -n radius-system` | All Running |
 | Dapr system healthy | `kubectl get pods -n dapr-system` | All Running |
 | Smoke test passes | `./scripts/validate-deployment.sh <URL>` | ✅ $50 flow, ✅ $150 flow, ✅ boundary case |
@@ -178,7 +178,7 @@ kubectl get components.dapr.io -n radiusclaim-azure
 
 - **Component projection gap:** Radius may report `Applications.Dapr/*` resources as Succeeded without creating Kubernetes `components.dapr.io` CRDs. `bootstrap.sh` compensates for this by running `apply-dapr-components-from-recipes.sh` in Phase 2. If you deploy manually via `rad deploy` only, run this script separately (see Step 9a in `docs/end-to-end-setup-walkthrough.md`).
 - **Recipe outputs not exposed:** Radius does not expose recipe Bicep outputs through its API. The two-phase workaround parses Azure resource IDs from `status.outputResources[]` instead. This is opaque from the app side.
-- **Public gateway readiness lag:** The Radius gateway may not be immediately reachable after bootstrap. `validate-deployment.sh` falls back to port-forward if the public URL is unavailable.
+- **Endpoint access depends on your cluster ingress choice:** bootstrap and CI always fall back to workload-namespace port-forwarding for deterministic validation.
 - **Auth mode by context:** Local bootstrap uses workload identity by default; Azure Policy on this tenant blocks shared keys. The CI workflow (`deploy-azure.yml`) uses service principal registration with `AZURE_CLIENT_SECRET` because OIDC-federated GitHub Actions tokens are not yet wired to the Radius credential.
 
 **Supported deployment targets**:
@@ -189,7 +189,7 @@ kubectl get components.dapr.io -n radiusclaim-azure
 **Portability scope**:
 1. **Application code is fully portable** — uses Dapr abstractions (state, pub/sub, service invocation, workflows)
 2. **Deployment model is portable** — Radius app model and environment patterns are cloud-agnostic
-3. **Azure backing services are Azure-specific** — Blob Storage, Service Bus, Key Vault recipes require Azure
+3. **Azure backing services are Azure-specific** — PostgreSQL, Service Bus, and Key Vault recipes require Azure
 4. When Radius recipes for other clouds are added, the same app model can target those platforms with only environment/recipe changes
 
 ---
@@ -201,7 +201,7 @@ RadiusClaim includes three Radius environments under `infra/radius/environments/
 ### **`azure-radius.bicep` — Production Environment**
 - **Compute:** Kubernetes cluster
 - **Backing Services:** Azure managed services provisioned via Radius Recipes
-  - State Store → Azure Blob Storage (RBAC + workload identity)
+  - State Store → Azure Database for PostgreSQL Flexible Server (Entra auth + workload identity)
   - Pub/Sub → Azure Service Bus (federated auth, no shared keys)
   - Secrets → Azure Key Vault (Secrets User role)
 - **Use case:** Production deployments on AKS with real Azure backing
@@ -209,22 +209,19 @@ RadiusClaim includes three Radius environments under `infra/radius/environments/
   ```bash
   rad deploy infra/radius/environments/azure-radius.bicep \
     --parameters "@infra/radius/environments/azure-radius.parameters.json" \
+    --parameters azureProviderScope="/subscriptions/<sub-id>/resourceGroups/<rg-name>" \
     --parameters azureSubscriptionId=<sub-id> \
-    --parameters azureResourceGroup=<rg-name>
+    --parameters azureResourceGroupName=<rg-name>
   ```
 
-### **`local.bicep` — Local Development Environment**
-- **Compute:** Kubernetes cluster (same cluster as production)
-- **Backing Services:** In-cluster only, no Azure dependency
-  - State Store → Redis (deployed via Recipe)
-  - Pub/Sub → RabbitMQ (deployed via Recipe)
-  - Secrets → Kubernetes secrets (deployed via Recipe)
-- **Use case:** Local development, testing portability, air-gapped deployments
-- **Key difference:** No Azure provider block; recipes must deploy services entirely in-cluster
-- **Deploy:**
-  ```bash
-  rad deploy infra/radius/environments/local.bicep
-  ```
+### **Local development**
+- **Supported path:** Local Dapr sidecars + `infra/dapr/local` overlays
+- **Backing Services:** Docker Compose dependencies for local development
+  - State Store → Redis
+  - Pub/Sub → Redis
+  - Secrets → Local file secret store
+- **Use case:** Fast inner-loop development without Radius or Azure provisioning
+- **Guide:** [`docs/local-dev.md`](./docs/local-dev.md)
 
 ### **`dev.bicep` — Development Environment**
 - **Compute:** Kubernetes cluster
@@ -253,29 +250,24 @@ resource statestore 'Applications.Dapr/stateStores@2023-10-01-preview' = {
   properties: {
     environment: environment
     application: app.name
-    type: 'state.azure.blobstorage'  // Dapr building block type
+    recipe: {
+      name: 'azure-postgres-statestore'
+    }
   }
 }
 
-// In azure-radius.bicep — the Recipe that backs state.azure.blobstorage
+// In azure-radius.bicep — the environment binds that named recipe
 recipes: {
   'Applications.Dapr/stateStores': {
-    default: {
+    'azure-postgres-statestore': {
       templateKind: 'bicep'
       templatePath: '${recipeRegistry}/state-store:${recipeTag}'
     }
   }
 }
 
-// In local.bicep — a different Recipe for the same Dapr building block
-recipes: {
-  'Applications.Dapr/stateStores': {
-    default: {
-      templateKind: 'bicep'
-      templatePath: '${recipeRegistry}/local/state-store:${recipeTag}'
-    }
-  }
-}
+// Local development in this repo uses infra/dapr/local overlays instead of a
+// second shipped Radius recipe set. The app contract stays the same either way.
 ```
 
 ### **Recipes as OCI Artifacts**
@@ -294,49 +286,18 @@ This approach enables:
 
 ## How Portability Works: Radius Owns Wiring
 
-**The core paradigm:** Radius recipes are fully responsible for infrastructure wiring — RBAC assignments, Component CRD creation, and workload identity federation. The application code stays portable across environments because it declares *what* it needs (Dapr building blocks) without prescribing *how* or *where* those needs are satisfied.
+**The core paradigm:** Radius owns the application/resource model, while bootstrap and CI project Dapr components from the deployed recipe metadata. The application code stays portable across environments because it declares *what* it needs (Dapr building blocks) without prescribing *how* or *where* those needs are satisfied.
 
-### Wiring Responsibilities in Recipes
+### Wiring Responsibilities
 
-When a Radius recipe provisions a backing service (e.g., `state-store.bicep`), it:
+In the current sample:
 
-1. **Creates the Azure resource** (e.g., Storage Account, Service Bus, Key Vault)
-2. **Assigns RBAC roles** so the workload identity can access the resource
-3. **Creates the Dapr Component CRD** so the Dapr sidecar can discover and use the resource
-4. **Sets up workload identity federation** (in the environment Bicep) so pods can authenticate without shared secrets
+1. **Radius recipes create Azure resources** such as PostgreSQL, Service Bus, and Key Vault.
+2. **Recipe outputs and `resourceMetadata.dapr` describe the Dapr component contract** for those resources.
+3. **`bootstrap.sh` and CI run `apply-dapr-components-from-recipes.sh`** to project the `statestore`, `pubsub`, and `platform-secrets` CRDs into the workload namespace.
+4. **Post-deploy RBAC is applied explicitly** where Radius v0.56 still requires CLI workarounds for child resources or cross-scope assignments.
 
-**Before Phase 3 (old paradigm):** Recipes provisioned Azure resources, then separate bootstrap scripts had to:
-- Query Azure by naming patterns
-- Manually create Dapr Component CRDs
-- Apply RBAC workarounds if recipes didn't handle them
-- Patch service accounts with identity annotations
-
-**Result:** App portability was brittle — bootstrap scripts had to "know" what recipes did, coupling infrastructure to deployment orchestration.
-
-**After Phase 3 (new paradigm):** Recipes declare everything needed.
-
-```bicep
-// In state-store.bicep: full wiring
-resource stateComponent 'dapr.io/Component@v1alpha1' = {
-  metadata: {
-    name: 'statestore'
-    namespace: kubernetesNamespace
-  }
-  spec: {
-    type: 'state.azure.blobstorage'
-    version: 'v2'
-    metadata: [
-      { name: 'accountName', value: storageAccount.name }
-      { name: 'containerName', value: containerName }
-      { name: 'azureClientId', value: daprClientId }
-      { name: 'azureTenantId', value: daprTenantId }
-    ]
-  }
-  dependsOn: [storageAccount, roleAssignment]
-}
-```
-
-**Result:** App code travels with recipes. RBAC and workload identity federation are inline in Bicep, not in bootstrap scripts. The remaining orchestration step (Dapr CRD creation from `outputResources`) is automated in `bootstrap.sh` as Phase 2.
+That keeps the app model and recipe metadata as the source of truth while acknowledging the current Radius component-projection gap honestly.
 
 ### Workload Identity: From Bootstrap to Bicep
 
@@ -393,7 +354,7 @@ kubernetesNamespace = {environment}
 - Environment: `radiusclaim-azure`
 - Kubernetes Namespace: `radiusclaim-azure`
 - Dapr components created: `statestore`, `pubsub`, `platform-secrets`
-- All components are projected into the `radiusclaim-azure` namespace by Radius
+- Bootstrap/CI project the components into the workload namespace `radiusclaim-azure-radiusclaim`
 
 **Why this matters:**
 - Radius creates the namespace if it doesn't exist
@@ -406,12 +367,12 @@ Radius recipes follow a consistent naming pattern for simplicity and quick visua
 
 | Recipe Type | Naming Convention | Example | Azure Resource |
 |-------------|-------------------|---------|-----------------|
-| **State Store** | `staterc{randomSuffix}` | `staterc1a2b3c` | Azure Blob Storage Account |
+| **State Store** | `pgstate{randomSuffix}` | `pgstate1a2b3c` | Azure Database for PostgreSQL Flexible Server |
 | **Pub/Sub Broker** | `pubsubrc{randomSuffix}` | `pubsubrc4d5e6f` | Azure Service Bus Namespace |
 | **Secret Store** | `kvrc{randomSuffix}` | `kvrc7g8h9i` | Azure Key Vault |
 
 **Derivation:**
-- `staterc` = **state** **r**ecipe
+- `pgstate` = **PostgreSQL** state-store recipe
 - `pubsubrc` = **pub/sub** **r**ecipe
 - `kvrc` = **Key Vault** **r**ecipe
 - `{randomSuffix}` = 6-character hash (from `randomNameSuffix` parameter or `uniqueString(context.resource.id)`)
@@ -443,7 +404,7 @@ Radius recipes follow a consistent naming pattern for simplicity and quick visua
 **Verification:**
 ```bash
 # List Dapr components in the workload namespace
-kubectl get components.dapr.io -n radiusclaim-azure
+kubectl get components.dapr.io -n radiusclaim-azure-radiusclaim
 
 # Expected output:
 # NAME                           AGE
@@ -452,7 +413,7 @@ kubectl get components.dapr.io -n radiusclaim-azure
 # statestore                     2m
 
 # Inspect component details (e.g., backing Azure Key Vault metadata)
-kubectl describe component platform-secrets -n radiusclaim-azure
+kubectl describe component platform-secrets -n radiusclaim-azure-radiusclaim
 ```
 
 ### How Workloads Access Dapr Components
@@ -518,12 +479,12 @@ var apiKey = secret["api-key"];  // Retrieved from Azure Key Vault
 ```mermaid
 graph LR
     Client["Employee / Client"]
-    Gateway["Radius Gateway<br/>(public endpoint)"]
+    Gateway["Access Path<br/>(URL or port-forward)"]
     API["expense-api<br/>(Minimal API)"]
     WF["workflow-engine<br/>(Dapr Workflow)"]
     NOTIF["notification-svc<br/>(Pub/Sub Subscriber)"]
     
-    State["State Store<br/>(Azure Blob)"]
+    State["State Store<br/>(Azure PostgreSQL)"]
     PubSub["Pub/Sub<br/>(Azure Service Bus)"]
     Secrets["Secrets<br/>(Azure Key Vault)"]
     
@@ -559,10 +520,10 @@ RadiusClaim/
 │   │   ├── environments/
 │   │   │   ├── azure-radius.bicep        # Production: Kubernetes + Azure Recipes
 │   │   │   ├── azure-radius.parameters.json
-│   │   │   ├── local.bicep               # Development: Kubernetes + in-cluster Recipes
+│   │   │   ├── local.bicep               # Experimental placeholder for a local Radius environment
 │   │   │   └── dev.bicep                 # Dev: Kubernetes + Azure Recipes
 │   │   └── recipes/azure/
-│   │       ├── state-store.bicep         # Azure Blob Storage recipe
+│   │       ├── state-store.bicep         # Azure PostgreSQL state-store recipe
 │   │       ├── pubsub.bicep              # Azure Service Bus recipe
 │   │       └── secrets.bicep             # Azure Key Vault recipe
 │   └── dapr/local/                       # Local-only Dapr component overlays
@@ -647,7 +608,7 @@ public sealed record NotificationRequest(
 - **Invalid input:** amounts less than or equal to `0` are validation failures, not approval outcomes.
 - **Auto-approval:** an amount strictly below **`$100.00`** is eligible for automatic approval.
 - **Boundary decision:** **`$100.00` exactly is _not_ auto-approved.**
-- **Future manual-review path:** amounts at or above **`$100.00`** will later produce a distinct `ManualReviewRequested` event/notification path. That path is intentionally **not** represented as `ExpenseRejected`, because “needs a human decision” is not the same thing as “denied.”
+- **Manual-review path:** amounts at or above **`$100.00`** produce a distinct `ManualReviewRequested` event/notification path. That state is intentionally **not** represented as `ExpenseRejected`, because “needs a human decision” is not the same thing as “denied.”
 
 ---
 
@@ -658,7 +619,7 @@ public sealed record NotificationRequest(
 - **Three services** = enough to show service invocation, workflows, pub/sub, and state
 - **One workflow** = concrete orchestration pattern, not abstract theory
 - **Shared contracts** = no coupling on schema, only on types
-- **No authentication, audit logging, or multi-tier approval** = focus on the core pattern
+- **Anonymous approval decisions by design, plus no audit hardening or multi-tier approval** = focus on the core pattern
 
 ### Enterprise-Ready Story
 
@@ -679,7 +640,7 @@ public sealed record NotificationRequest(
 
 **Current infrastructure path is Kubernetes-first with Azure backing services:**
 
-The provided GitHub Actions workflow deploys to Kubernetes (AKS as the primary example) with Dapr and Radius. The app code remains portable. When Radius recipes for other clouds are available, the same app model can target those platforms. Azure backing services (Blob Storage, Service Bus, Key Vault) are Azure-specific because Radius recipes define them that way — other recipe implementations can substitute equivalent services on other clouds or use self-managed options.
+The provided GitHub Actions workflow deploys to Kubernetes (AKS as the primary example) with Dapr and Radius. The app code remains portable. When Radius recipes for other clouds are available, the same app model can target those platforms. Azure backing services (PostgreSQL, Service Bus, Key Vault) are Azure-specific because Radius recipes define them that way — other recipe implementations can substitute equivalent services on other clouds or use self-managed options.
 
 ---
 
@@ -737,9 +698,9 @@ Store the returned `clientId`, `clientSecret`, and `tenantId` as GitHub secrets 
 - Builds service images and pushes to GHCR (GitHub Container Registry)
 - Manual `rad deploy` runs must pass a real published image tag; the stale `phase1` fallback was removed so the app model stops pointing at retired GHCR packages
 - `scripts/bootstrap.sh` orchestrates the repeatable deployment layer: Radius environment (`azure-radius.bicep`), application (`app.bicep`), and validation
-- Azure backing resources (Blob Storage, Service Bus, Key Vault) are created by Radius recipes
-- Publishes `expense-api` through a Radius-managed public gateway while keeping the worker services internal
-- Uses the shared end-to-end validation script; CI still uses a Kubernetes port-forward as deterministic fallback while the public endpoint propagates
+- Azure backing resources (PostgreSQL, Service Bus, Key Vault) are created by Radius recipes
+- Keeps `workflow-engine` and `notification-svc` internal; the sample validates `expense-api` through workload-namespace port-forwarding unless your cluster provides another entrypoint
+- Uses the shared end-to-end validation script plus projected Dapr components from recipe metadata
 - **Requires:** `RADIUS_KUBECONFIG` secret, Kubernetes cluster with Dapr and Radius control plane
 
 **Supported targets:**
@@ -792,25 +753,23 @@ GHCR_PACKAGES_PRIVATE=true ./scripts/bootstrap.sh \
 
 RadiusClaim stores active expense IDs in a single Dapr state entry (`expenseIndex`), which is perfectly fine for demos and small deployments but has a practical limit as the number of expenses grows.
 
-**Quick answer:** The sample scales comfortably to **10,000–50,000 active expenses** with the current architecture. Beyond that, latency increases, Dapr sidecars experience memory pressure, and Blob Storage throughput becomes a constraint.
+**Quick answer:** The sample scales comfortably to **10,000–50,000 active expenses** with the current architecture. Beyond that, latency increases, Dapr sidecars experience memory pressure, and state-store query/load patterns become a constraint.
 
 **Why it happens:**
-- Every list request reads the entire `expenseIndex` array from Blob Storage
+- Every list request reads the entire `expenseIndex` array from the state store
 - Dapr workflow history also accumulates in the state store
-- Blob Storage latency increases with object size
+- State-store latency increases as the index and workflow data grow
 
 **How to know when you're hitting it:**
 - GET /expenses starts taking >1 second
 - Dapr sidecar pods are OOMKilled or use >300 MB memory
 - Workflow execution times increase
-- Azure Monitor shows Blob Storage latency climbing above 200ms
+- Azure/PostgreSQL monitoring shows sustained latency climbing as state volume grows
 
 **What to do about it:**
 - **Short term:** Archive old expenses; add caching
 - **Medium term:** Shard the index by employee or month
 - **Long term:** Switch to a query-capable store like Cosmos DB
-
-See **[`docs/SCALING.md`](./docs/SCALING.md)** for a complete breakdown of the boundary, diagnostics, and five proven mitigation strategies.
 
 ---
 
@@ -877,10 +836,9 @@ See **[tests/portability/README.md](./tests/portability/README.md)** for detaile
 ## Additional Documentation
 
 - **[End-to-End Setup Walkthrough](./docs/end-to-end-setup-walkthrough.md)** — Complete operator guide from Azure login and resource group creation through opening the app in a browser, including setup automation vs. manual steps
-- **[API Authentication](./docs/API_AUTHENTICATION.md)** — Entra ID JWT bearer auth setup, endpoint auth matrix, and service-to-service token patterns
+- **[Authentication Boundaries](./docs/API_AUTHENTICATION.md)** — Sample endpoint access rules, anonymous approval rationale, and platform identity notes
 - **[Local Development Guide](./docs/local-dev.md)** — Instructions for running RadiusClaim locally with Dapr and Radius
 - **[Kubernetes + Radius Validation Checklist](./docs/radius-validation-checklist.md)** — Pre-deployment validation and troubleshooting for Kubernetes + Radius deployment
-- **[ADR-0001: Kubernetes-First Deployment Strategy](./docs/ADR-0001-kubernetes-first-deployment.md)** — Architectural decision record explaining the Kubernetes + Radius primary path and portability scope
 
 ---
 

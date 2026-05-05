@@ -13,23 +13,33 @@ namespace WorkflowEngine.Tests.Activities;
 
 public sealed class RejectExpenseActivityTests
 {
-    private static RejectionInput BuildInput(string reason = "Manual rejection by approver") =>
-        new(
-            ExpenseId: "exp-reject-1",
-            CorrelationId: "corr-reject-1",
-            Reason: reason);
+    private static readonly DateTimeOffset DecisionTimeUtc = new(2026, 05, 05, 13, 30, 00, TimeSpan.Zero);
 
-    private static ExpenseRecord BuildRecord(ExpenseStatus status = ExpenseStatus.ManualReviewRequested) =>
+    private static RejectionInput BuildInput(
+        string reason = "Manual rejection by approver",
+        string correlationId = "corr-reject-1",
+        DateTimeOffset? decisionTimeUtc = null) =>
         new(
             ExpenseId: "exp-reject-1",
-            CorrelationId: "corr-reject-1",
+            CorrelationId: correlationId,
+            Reason: reason,
+            DecisionTimeUtc: decisionTimeUtc ?? DecisionTimeUtc);
+
+    private static ExpenseRecord BuildRecord(
+        ExpenseStatus status = ExpenseStatus.ManualReviewRequested,
+        string correlationId = "corr-reject-1") =>
+        new(
+            ExpenseId: "exp-reject-1",
+            CorrelationId: correlationId,
             EmployeeId: "emp-1",
             Amount: 250m,
             Currency: "USD",
             Description: "Test expense for rejection",
             Status: status,
             SubmittedAtUtc: DateTimeOffset.UtcNow,
-            LastUpdatedAtUtc: DateTimeOffset.UtcNow);
+            LastUpdatedAtUtc: DateTimeOffset.UtcNow,
+            ApprovedBy: "demo-reviewer",
+            ApprovedAt: DateTimeOffset.UtcNow.AddMinutes(-10));
 
     private static Mock<DaprClient> BuildDaprMockReturning(ExpenseRecord? record)
     {
@@ -94,6 +104,19 @@ public sealed class RejectExpenseActivityTests
             It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task CorrelationMismatch_ThrowsInvalidOperationException()
+    {
+        var mock = BuildDaprMockReturning(BuildRecord(correlationId: "different-corr"));
+        var activity = new RejectExpenseActivity(mock.Object, NullLogger<RejectExpenseActivity>.Instance);
+        var ctx = TestWorkflowContextFactory.Create();
+
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => activity.RunAsync(ctx, BuildInput()));
+
+        Assert.Contains("correlation mismatch", ex.Message);
+    }
+
     [Theory]
     [InlineData(ExpenseStatus.Submitted)]
     [InlineData(ExpenseStatus.Approved)]
@@ -137,6 +160,9 @@ public sealed class RejectExpenseActivityTests
         Assert.True(result);
         Assert.NotNull(savedRecord);
         Assert.Equal(ExpenseStatus.Rejected, savedRecord!.Status);
+        Assert.Null(savedRecord.ApprovedBy);
+        Assert.Equal(DecisionTimeUtc, savedRecord.ApprovedAt);
+        Assert.Equal(DecisionTimeUtc, savedRecord.LastUpdatedAtUtc);
     }
 
     [Fact]
@@ -163,6 +189,8 @@ public sealed class RejectExpenseActivityTests
         await activity.RunAsync(TestWorkflowContextFactory.Create(), BuildInput(reason));
 
         Assert.Equal(reason, savedRecord!.RejectionReason);
+        Assert.Null(savedRecord.ApprovedBy);
+        Assert.Equal(DecisionTimeUtc, savedRecord.ApprovedAt);
     }
 
     [Fact]
@@ -191,6 +219,7 @@ public sealed class RejectExpenseActivityTests
         Assert.NotNull(savedRecord);
         Assert.Equal(ExpenseStatus.Rejected, savedRecord!.Status);
         Assert.Equal(timeoutReason, savedRecord.RejectionReason);
+        Assert.Equal(DecisionTimeUtc, savedRecord.ApprovedAt);
     }
 
     [Fact]

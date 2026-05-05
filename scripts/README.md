@@ -188,7 +188,7 @@ All images pushed. To deploy locally:
 
 **What it wraps:**
 - `publish-radius-recipes.sh` for OCI recipe publication
-- `deploy-dapr-components-workload-identity.sh` for Dapr component backfill (see [Dapr Component Backfill](../docs/dapr-component-backfill.md) for full explanation)
+- `apply-dapr-components-from-recipes.sh` for Dapr component projection (see [Dapr Component Backfill](../docs/dapr-component-backfill.md) for full explanation)
 - `validate-deployment.sh` for post-deployment smoke testing
 
 **What it adds:**
@@ -237,7 +237,7 @@ Bootstrap requires `AZURE_PRINCIPAL_ID` (principal object ID) for RBAC assignmen
 - **User identity** — Set `export AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)`
 - **Managed identity** — Set `export AZURE_PRINCIPAL_ID=<managed-identity-object-id>`
 
-See the `deploy-dapr-components.sh` prerequisites section for more detail on supported auth modes.
+See the `apply-dapr-components-from-recipes.sh` section below for the supported component projection flow.
 
 
 **Notes:**
@@ -307,111 +307,48 @@ If publishing fails with a 403 error, the script provides actionable diagnostics
 - The script keeps the three custom recipes (`state-store`, `pubsub`, `secrets`) published under one teachable command
 - GitHub Actions reuses the same script with `GHCR_TOKEN` (and optionally `GHCR_USERNAME`) from workflow secrets
 
-### `deploy-dapr-components-workload-identity.sh` (Dapr Component Backfill)
+### `apply-dapr-components-from-recipes.sh` (Dapr Component Projection)
 
-**Purpose:** Bridge the gap between Radius infrastructure and Dapr components. Radius creates Azure resources (storage, service bus, key vault), but doesn't automatically project Dapr Component CRDs into Kubernetes. This script handles the backfill.
+**Purpose:** Bridge the gap between Radius infrastructure and Dapr components. Radius creates Azure resources (storage, service bus, key vault), but does not always project the matching Kubernetes `components.dapr.io` CRDs. This script reads the deployed Radius resource contract and creates the Dapr components the sidecars need.
 
 For a complete explanation of why this step exists, what it does, and when to run it, see **[Dapr Component Backfill](../docs/dapr-component-backfill.md)**.
 
-**When to run:** Automatically called by `bootstrap.sh`. Manual runs are for troubleshooting or when you need to refresh components after infrastructure changes.
+**When to run:** `bootstrap.sh` runs it automatically. Manual runs are for troubleshooting, post-deploy refreshes, or `rad deploy` flows that need component projection afterward.
 
 **Usage:**
 ```bash
-./scripts/deploy-dapr-components-workload-identity.sh \
-  --resource-group <rg> \
-  --setup-workload-identity \
-  [--cluster-name <name>] \
-  [--dry-run]
+./scripts/apply-dapr-components-from-recipes.sh \
+  --environment <radius-environment> \
+  --application <radius-app> \
+  --namespace <workload-namespace> \
+  --tenant-id <azure-tenant-id> \
+  --client-id <dapr-workload-identity-client-id>
 ```
-
----
-
-### `deploy-dapr-components.sh` (Deprecated)
-
-> ⚠️ **Deprecated:** Use `deploy-dapr-components-workload-identity.sh` for cluster bootstrap, then let `rad deploy` handle CRD projection. This script uses Service Principal auth with connection strings and is retained only as a reference fallback.
-
-**Purpose:** Backfill Dapr Component CRDs into Kubernetes. Kept as emergency fallback only.
-
-**Usage:**
-```bash
-./scripts/deploy-dapr-components.sh --resource-group <rg> [OPTIONS]
-```
-
-**Options:**
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--resource-group <name>` | Azure resource group (required) | — |
-| `--app-name <name>` | Radius application name | `radiusclaim` |
-| `--env-name <name>` | Radius environment name | `azure` |
-| `--namespace <name>` | Kubernetes workload namespace | Auto-detected |
-| `--dry-run` | Generate YAML without applying | `false` |
 
 **Example:**
 ```bash
-# Auto-detect workload namespace from Radius environment
-./scripts/deploy-dapr-components.sh --resource-group radiusclaim-rg
+export ENVIRONMENT_NAMESPACE="radiusclaim-azure"
+export APP_NAME="radiusclaim"
+export WORKLOAD_NAMESPACE="${ENVIRONMENT_NAMESPACE}-${APP_NAME}"
 
-# Explicit namespace
-./scripts/deploy-dapr-components.sh \
-  --resource-group radiusclaim-rg \
-  --namespace radiusclaim-azure-radiusclaim
-
-# Dry run (review YAML before applying)
-./scripts/deploy-dapr-components.sh \
-  --resource-group radiusclaim-rg \
-  --dry-run
-# Then review: cat dapr-components-generated.yaml
+./scripts/apply-dapr-components-from-recipes.sh \
+  --environment azure \
+  --application "$APP_NAME" \
+  --namespace "$WORKLOAD_NAMESPACE" \
+  --tenant-id "$AZURE_TENANT_ID" \
+  --client-id "$AZURE_CLIENT_ID"
 ```
 
 **What it does:**
-1. Reads Radius resource metadata to find Azure backing-resource names
-2. Repairs the Azure data-plane RBAC needed by the backfilled Blob/Key Vault components
-3. Fetches runtime credentials (Microsoft Entra client secret when present, Service Bus connection string)
-4. Creates Kubernetes secrets in the workload namespace
-5. Generates and applies Dapr Component manifests (`statestore`, `pubsub`, `platform-secrets`)
+1. Queries the deployed `Applications.Dapr/*` resources from Radius
+2. Reads `resourceMetadata.dapr` and recipe `values`, with `outputResources` as a fallback for older payloads
+3. Builds the `statestore`, `pubsub`, and `platform-secrets` Dapr components
+4. Applies those components to the workload namespace so sidecars can load them
 
-**Prerequisites:**
-- `rad` CLI (Radius app must be deployed first)
-- `kubectl` (cluster access)
-- `az` CLI (Azure credentials configured)
-- `jq` (JSON processing)
-- **Microsoft Entra authentication** for the Blob statestore:
-  - `AZURE_CLIENT_ID` — Application/service principal client ID
-  - `AZURE_TENANT_ID` — Azure tenant ID
-  - `AZURE_PRINCIPAL_ID` — Principal object ID (see below if not set)
-  - `AZURE_CLIENT_SECRET` — Only required when using service principal auth (not workload identity)
-
-**About AZURE_PRINCIPAL_ID:**
-
-The Entra-backed Dapr statestore requires the principal's **object ID** (not the client ID) for RBAC role assignments.
-
-The script attempts to resolve this automatically:
-1. If `AZURE_PRINCIPAL_ID` is set → uses that value directly
-2. If `AZURE_CLIENT_ID` is set → tries `az ad sp show --id "$AZURE_CLIENT_ID" --query id -o tsv`
-3. If resolution fails → stops with actionable diagnostics
-
-**When to set AZURE_PRINCIPAL_ID manually:**
-- **User identity mode:** If you're using `az login` with a user identity instead of a service principal, set:
-  ```bash
-  export AZURE_PRINCIPAL_ID=$(az ad signed-in-user show --query id -o tsv)
-  ```
-- **Managed identity mode:** If using a managed identity for Dapr runtime auth, provide its object ID:
-  ```bash
-  export AZURE_PRINCIPAL_ID=<managed-identity-object-id>
-  ```
-- **Service principal without auto-resolution:** If `az ad sp show` fails but you know the object ID, set it directly.
-
-**Supported auth modes:**
-- ✅ Service principal (client ID + secret)
-- ✅ Workload identity (federated credential without secret)
-- ✅ User identity (interactive `az login` with manual `AZURE_PRINCIPAL_ID`)
-- ✅ Managed identity (with manual `AZURE_PRINCIPAL_ID`)
-
-
-**Output:**
-- `dapr-components-generated.yaml` in the repo root (generated manifest for review)
-- Dapr Component CRDs applied to the workload namespace
-- Exit code 0 on success, non-zero on failure (see script header for codes)
+**Notes:**
+- This is the supported manual projection path
+- `bootstrap.sh` already uses the same flow automatically
+- Older `deploy-dapr-components*.sh` guidance is historical only and should not be used as the primary path
 
 ### `validate-deployment.sh`
 
@@ -545,7 +482,7 @@ Validation scripts support phase gate approvals:
 
 ### bootstrap.sh stops on a soft-deleted `platform-secrets` Key Vault
 
-**Cause:** Azure Key Vault names stay reserved while a vault is in soft-delete. RadiusClaim uses a deterministic vault name for the Azure-backed `platform-secrets` store, so a deleted vault can block repeat deployments.
+**Cause:** Azure Key Vault names stay reserved while a vault is in soft-delete. RadiusClaim resolves the `platform-secrets` vault from the Radius recipe/resource contract, with a `kvrc{suffix}` fallback for idempotent reuse, so a deleted vault can block repeat deployments.
 
 **What bootstrap does now:**
 1. Resolves the exact Key Vault name Radius will use for `platform-secrets`

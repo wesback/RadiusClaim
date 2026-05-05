@@ -2,6 +2,7 @@ using RadiusClaim.Contracts;
 using RadiusClaim.Dapr;
 using Dapr.Client;
 using Dapr.Workflow;
+using WorkflowEngine.Models;
 
 namespace WorkflowEngine.Activities;
 
@@ -13,16 +14,21 @@ namespace WorkflowEngine.Activities;
 /// </summary>
 internal sealed class RecordApprovalActivity(
     DaprClient daprClient,
-    ILogger<RecordApprovalActivity> logger) : WorkflowActivity<string, bool>
+    ILogger<RecordApprovalActivity> logger) : WorkflowActivity<ApprovalRecordInput, bool>
 {
-    public override async Task<bool> RunAsync(WorkflowActivityContext context, string expenseId)
+    public override async Task<bool> RunAsync(WorkflowActivityContext context, ApprovalRecordInput input)
     {
-        if (string.IsNullOrWhiteSpace(expenseId))
+        ArgumentNullException.ThrowIfNull(input);
+
+        if (string.IsNullOrWhiteSpace(input.ExpenseId))
         {
-            throw new ArgumentException("ExpenseId is required.", nameof(expenseId));
+            throw new ArgumentException("ExpenseId is required.", nameof(input));
         }
 
-        var normalizedId = expenseId.Trim();
+        var normalizedId = input.ExpenseId.Trim();
+        var decisionTimeUtc = input.DecisionTimeUtc == default
+            ? DateTimeOffset.UtcNow
+            : input.DecisionTimeUtc.ToUniversalTime();
         var stateKey = RadiusClaimDapr.StateKeys.Expense(normalizedId);
 
         var record = await daprClient.GetStateAsync<ExpenseRecord>(
@@ -34,6 +40,12 @@ internal sealed class RecordApprovalActivity(
         {
             throw new InvalidOperationException(
                 $"Expense '{normalizedId}' was not found in state store before recording approval.");
+        }
+
+        if (!string.Equals(record.CorrelationId, input.CorrelationId, StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"Expense '{normalizedId}' correlation mismatch. Expected '{input.CorrelationId}', found '{record.CorrelationId}'.");
         }
 
         // Idempotent: already approved or further along is fine.
@@ -57,7 +69,10 @@ internal sealed class RecordApprovalActivity(
         var updatedRecord = record with
         {
             Status = ExpenseStatus.Approved,
-            LastUpdatedAtUtc = DateTimeOffset.UtcNow
+            RejectionReason = null,
+            ApprovedBy = null,
+            ApprovedAt = decisionTimeUtc,
+            LastUpdatedAtUtc = decisionTimeUtc
         };
 
         await daprClient.SaveStateAsync(
@@ -67,8 +82,9 @@ internal sealed class RecordApprovalActivity(
             stateOptions: new StateOptions { Consistency = ConsistencyMode.Strong });
 
         logger.LogInformation(
-            "Expense '{ExpenseId}' recorded as Approved (manual) for workflow '{InstanceId}'.",
+            "Expense '{ExpenseId}' recorded as Approved (manual) at {DecisionTimeUtc} for workflow '{InstanceId}'.",
             normalizedId,
+            decisionTimeUtc,
             context.InstanceId);
 
         return true;

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Verify deployment to a different region requires only parameter changes
 
-set -e
+set -euo pipefail
 
 echo "🔍 Validating deployment is region-agnostic..."
 
@@ -28,21 +28,31 @@ if [ -n "$HARDCODED" ]; then
   echo "    Verify these are parameterized or documented as defaults"
 fi
 
-# Verify critical parameters are exposed in environment files
-echo "  Checking for location parameters in Radius environments..."
+# Verify critical parameters are exposed in Azure-backed environment files
+echo "  Checking Azure-backed Radius environments expose location parameters..."
 
-ENV_FILES=$(find infra/radius/environments -name "*.bicep" 2>/dev/null || true)
+AZURE_ENV_FILES=(
+  "infra/radius/environments/azure-radius.bicep"
+  "infra/radius/environments/dev.bicep"
+)
 
-if [ -z "$ENV_FILES" ]; then
-  echo "    ⚠️  No environment .bicep files found in infra/radius/environments/"
-else
-  for env_file in $ENV_FILES; do
-    if grep -q "param location" "$env_file"; then
-      echo "    ✅ Found location parameter in $(basename $env_file)"
-    else
-      echo "    ⚠️  No location parameter in $(basename $env_file)"
-    fi
-  done
+for env_file in "${AZURE_ENV_FILES[@]}"; do
+  if [ ! -f "$env_file" ]; then
+    echo "    ❌ Missing expected environment file: $(basename "$env_file")"
+    FAILURES=$((FAILURES + 1))
+    continue
+  fi
+
+  if grep -q "param .*location string" "$env_file"; then
+    echo "    ✅ Found location parameter in $(basename "$env_file")"
+  else
+    echo "    ❌ No location parameter in $(basename "$env_file")"
+    FAILURES=$((FAILURES + 1))
+  fi
+done
+
+if [ -f "infra/radius/environments/local.bicep" ]; then
+  echo "    ✅ local.bicep intentionally omits Azure location parameters"
 fi
 
 # Verify recipe files use parameterized locations

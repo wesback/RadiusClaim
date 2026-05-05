@@ -197,7 +197,7 @@ resource expenseApi 'Applications.Core/containers@2023-10-01-preview' = {
       image: '${containerRegistry}/expense-api:${imageTag}'
       env: {
         AzureAd__Authority: {
-          value: !empty(azureAdAuthority) ? azureAdAuthority : 'https://login.microsoftonline.com/common'
+          value: !empty(azureAdAuthority) ? azureAdAuthority : '${az.environment().authentication.loginEndpoint}common'
         }
         AzureAd__Audience: {
           value: !empty(azureAdAudience) ? azureAdAudience : 'https://radiusclaim.azurewebsites.net/api'
@@ -256,7 +256,7 @@ resource expenseApi 'Applications.Core/containers@2023-10-01-preview' = {
 //   Dapr Workflow orchestration service. Manages long-running expense approval
 //   workflows using Dapr Workflow APIs (actor-backed, state in the state store).
 //   Publishes status events via pub/sub. Invokes expense-api via Dapr service
-//   invocation for approval decisions.
+//   invocation using the stable app ID for approval decisions.
 // ---------------------------------------------------------------------------
 
 resource workflowEngine 'Applications.Core/containers@2023-10-01-preview' = {
@@ -298,9 +298,6 @@ resource workflowEngine 'Applications.Core/containers@2023-10-01-preview' = {
       }
       platformSecrets: {
         source: platformSecrets.id
-      }
-      expenseApi: {
-        source: 'http://expense-api:8080'
       }
     }
     extensions: concat(

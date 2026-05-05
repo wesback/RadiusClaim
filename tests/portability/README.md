@@ -7,10 +7,10 @@ This directory contains automated tests that validate the RadiusClaim codebase a
 The portability paradigm ensures:
 
 1. **App code is cloud-agnostic** — Services use Dapr abstractions, not direct Azure SDK calls
-2. **Recipes are self-contained** — Infrastructure recipes can deploy standalone without manual intervention
-3. **Bootstrap is idempotent** — Deployment scripts can be re-run safely
+2. **Recipes publish the live contract** — Bootstrap and Dapr component projection consume current Radius outputs/metadata
+3. **Bootstrap is idempotent** — Deployment scripts can be re-run safely and keep the `platform-secrets` contract intact
 4. **Deployment is region-agnostic** — Moving to a different region requires only parameter changes
-5. **Dapr components are available** — Required Dapr building blocks are properly configured
+5. **Dapr components are available** — Required Dapr building blocks are projected from Radius recipes into the workload namespace
 
 ## Test Suite
 
@@ -20,6 +20,7 @@ The portability paradigm ensures:
 - App code contains no hardcoded Azure subscriptions, resource groups, or regions
 - App code uses Dapr abstractions instead of direct Azure SDK usage
 - No hardcoded connection strings in code
+- `infra/radius/app.bicep` does not bake in raw in-cluster service URLs such as `http://expense-api:8080`
 
 **How to run:**
 ```bash
@@ -34,11 +35,11 @@ Your application code is tightly coupled to Azure specifics. Refactor to use Dap
 ### 2. `recipes-are-complete.sh`
 
 **What it validates:**
-- All Radius recipes have required `param context object`
-- Recipes expose outputs for connection information
-- Recipes use parameterized locations (not hardcoded)
-- Core recipes exist (state-store, pubsub, secrets)
-- Metadata files (.json) exist for each recipe
+- All Azure Radius recipes have the required `param context object`
+- Recipes publish both `values` and `resourceMetadata` outputs
+- `resourceMetadata.dapr` includes component name/type/version/metadata for bootstrap projection
+- Recipes keep the current contracts for PostgreSQL state, Service Bus pub/sub, and Key Vault `platform-secrets`
+- Recipes rely on Radius-managed `outputResources` instead of stale explicit `output resources`
 
 **How to run:**
 ```bash
@@ -46,7 +47,7 @@ bash tests/portability/recipes-are-complete.sh
 ```
 
 **What a failure means:**
-Your Radius recipes are incomplete or won't work properly with the Radius environment. Fix missing parameters, outputs, or metadata files.
+Your Radius recipes drifted from the current bootstrap/component projection contract. Fix missing outputs or stale Dapr metadata.
 
 ---
 
@@ -54,8 +55,10 @@ Your Radius recipes are incomplete or won't work properly with the Radius enviro
 
 **What it validates:**
 - Bootstrap script has existence checks before creating resources
-- Conditional execution patterns are present
-- Prerequisites are checked before running
+- Bootstrap refreshes Dapr components through `scripts/apply-dapr-components-from-recipes.sh`
+- Bootstrap still verifies `statestore`, `pubsub`, and `platform-secrets`
+- Bootstrap resolves Key Vault data for `platform-secrets` from Radius metadata, with the `kvrc` fallback intact
+- Prerequisites and re-run guards are still present
 
 **How to run:**
 ```bash
@@ -73,9 +76,10 @@ Running `bootstrap.sh` multiple times may cause failures or duplicate resources.
 
 **What it validates:**
 - Infrastructure files use parameterized locations
-- Radius environments expose location parameters
-- Recipes use `context.azure.location` or parameters
+- Azure-backed Radius environments expose location parameters
+- Azure recipes keep location inputs parameterized
 - Scripts support location configuration via environment variables
+- `local.bicep` is treated as intentionally non-Azure and does not generate stale warnings
 
 **How to run:**
 ```bash
@@ -90,19 +94,20 @@ Deploying to a different Azure region will require code changes. Parameterize al
 ### 5. `dapr-components-loaded.sh`
 
 **What it validates:**
-- Required Dapr components exist in the cluster namespace
-- Components are of the expected type (state, pubsub, secretstore)
+- Static contract: bootstrap uses `scripts/apply-dapr-components-from-recipes.sh` and that script reads live `resourceMetadata.dapr`
+- Live cluster (when available): required Dapr components exist in the workload namespace
+- Live components expose the expected Azure-backed types and key metadata (`actorStateStore`, `keyPrefix`, `namespaceName`, `vaultName`)
 
 **How to run:**
 ```bash
 bash tests/portability/dapr-components-loaded.sh [namespace]
-# Default namespace: azure-radiusclaim
+# Default environment namespace: radiusclaim-azure
 ```
 
 **What a failure means:**
-Dapr components are missing or misconfigured in your cluster. Run `scripts/deploy-dapr-components.sh` to install them.
+Dapr components are missing or misconfigured in your cluster. Refresh them with `scripts/apply-dapr-components-from-recipes.sh` (bootstrap uses the same flow).
 
-**Note:** This test requires a running Kubernetes cluster with deployed components. It will skip gracefully if cluster is not available.
+**Note:** Static contract checks always run. Live CRD verification exits as **SKIP** when a cluster or deployed namespace is not available.
 
 ---
 
@@ -128,6 +133,7 @@ Add this to your CI pipeline to prevent portability regressions:
 ## Interpreting Results
 
 - ✅ **PASS** — Test passed, no issues found
+- ⏭️ **SKIP** — Static checks passed, but a live cluster-dependent check could not run
 - ❌ **FAIL** — Test failed, action required to fix
 - ⚠️ **WARNING** — Potential issue detected, manual review recommended
 
