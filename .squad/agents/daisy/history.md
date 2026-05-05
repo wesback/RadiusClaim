@@ -28,3 +28,13 @@ See history-archive.md for full timeline.
 **Decision Made:** "Daisy Decision — portability blog story architecture gate"  
 **Guardrails:** Keep architecture boundary clear (Dapr ↔ Radius); preserve explicit post-deploy Dapr projection in narrative; treat multi-cloud as pattern not shipped reality; maintain Kubernetes-first Azure-backed recipe story.  
 **Impact:** Combined with Eddie's rewrite (eddie-1) and Graham's technical accuracy gate (graham-6), portability blog now passes full approval cycle.
+
+---
+
+## Shell Script Classification Work (2026-05-05, Session T11:34Z)
+
+**Task:** Classify shell scripts into supported vs debug categories.  
+**Outcome:** ✓ Classification finalized; 7 debug scripts + 11 logs identified as safe removal.  
+**Decision Made:** "Daisy Decision — Shell Script Audit: Supported vs Debug Classification"  
+**Scope:** All `.sh` files and root-level artifacts audited; supported scripts in `scripts/`, `tests/portability/` preserved; debug analysis scripts from April 2026 merge work identified for removal.  
+**Impact:** Pete (implementation) receives clear removal boundaries; no impact to supported operational workflows.

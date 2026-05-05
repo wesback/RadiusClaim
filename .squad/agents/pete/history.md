@@ -32,4 +32,15 @@ status: archived_2026-05-05
 
 All infrastructure scripts audit-compliant and idempotent. Bootstrap automation handles SPN creation and role assignment robustly.
 
+---
+
+## Shell Script Cleanup Implementation (2026-05-05, Session T11:34Z)
+
+**Task:** Remove debug shell scripts and log artifacts per Daisy's classification.  
+**Outcome:** ✓ Removed 7 debug scripts + 11 log files; all supported scripts preserved.  
+**Scripts Removed:** analyze_critical.sh, deep_conflict_check.sh, final_analysis.sh, final_strategy.sh, merge_analysis.sh, merge_strategy.sh, squad_changes_detail.sh  
+**Logs Removed:** All bootstrap/teardown run artifacts from April 3 testing  
+**Verification:** No references in README, TEST_GUIDE, or workflows; .gitignore already covers `*.log`; all supported operational scripts intact.  
+**Impact:** Repository surface cleaner; zero impact to supported workflows. Daisy alignment boundaries honored throughout.
+
 **Full history archived to `.squad/agents/pete/history-archive.md`**

@@ -1257,3 +1257,294 @@ Repository surface is cleaner:
 - Copilot skills remain intact
 
 Daisy's alignment boundaries honored throughout.
+# User Directive
+
+- **Captured at:** 2026-05-05 13:19:53
+- **Captured by:** Copilot
+- **User:** Wesley Backelant
+- **Scope:** `docs/blog/portability.md`
+
+## Directive
+
+The published blog post must not include editorial note-style comments or reviewer asides in the prose. Remove the explicitly identified sentence and any similar draft-note language so the article reads like final Microsoft-authored content.
+
+## Source
+
+> THe blog post should not have notes in the form of comments like "That distinction matters because architects and platform engineers will test a sample against the repo, not against our intent." You are not supposed to show these comments as part of the blog post.
+
+---
+
+# Docs Folder Cleanup Directive
+
+**Date:** 2026-05-05  
+**Requested by:** Wesley Backelant
+
+## Decision
+
+Clean up the docs folder to retain only clearly relevant user-facing documentation.
+
+## Rationale
+
+Current docs structure contains unnecessary or outdated content. User-facing documentation should be streamlined to focus on core content.
+
+## Primary User Docs
+
+The following are the primary user-facing docs that should remain:
+- Getting Started
+- End-to-end walkthrough
+
+## Action Items
+
+Review and remove docs that don't align with these primary materials. Consolidate or archive supplementary documentation as needed.
+
+## Status
+
+Pending implementation by squad team.
+
+---
+
+# Documentation Scope Decision: User-Facing Docs Set
+
+**Decision Owner:** Daisy (Lead)  
+**Date:** 2026-05-05  
+**Status:** Approved  
+**Scope:** Define the supported user-facing documentation surface for RadiusClaim
+
+[Full decision text already in main file - DUPLICATE SKIP]
+
+---
+
+# Shell Script Audit: Supported vs Debug Classification
+
+**Date:** 2026-05-05  
+**Author:** Daisy (Lead)  
+**Status:** Decision  
+**Scope:** Repository cleanliness; repo contract definition
+
+[Full decision text already in main file - DUPLICATE SKIP]
+
+---
+
+# Eddie Decision — Docs Folder Cleanup: Hub + Intentional Linking
+
+**Date:** 2026-05-05  
+**Author:** Eddie (Docs/Story)  
+**Requested by:** Wesley Backelant  
+**Reviewed by:** Daisy
+
+## Decision
+
+Restructure the `docs/` folder with **GETTING_STARTED.md as the central hub** that intentionally links to both primary and specialist docs. Archive only truly historical/meta documents that don't serve end users.
+
+## What Stays (All User-Serving Docs)
+
+### Primary Entry Points
+
+Keep these as the main user journey:
+1. **README.md** — Overview and architecture context
+2. **GETTING_STARTED.md** — Central hub with audience-aware routing (replacing aggressive deletion with intentional discoverability)
+3. **end-to-end-setup-walkthrough.md** — Complete deployment guide for operators
+
+### Secondary/Specialist References
+
+Restored to main `docs/` folder with intentional linking from the hub:
+- **PRD.md** — Product vision, goals, and non-goals (linked for developers/architects)
+- **local-dev.md** — Local development guide (linked for developers)
+- **API_AUTHENTICATION.md** — Auth boundaries and sample endpoint rules (linked for security/developers)
+- **radius-validation-checklist.md** — Preflight validation and troubleshooting (linked for operators)
+- **ADR-0001-kubernetes-first-deployment.md** — Kubernetes-first strategy rationale (linked for architects)
+- **adr/README.md** — Architecture decision records directory (linked for developers/designers)
+- **OBSERVABILITY.md** — Jaeger, OpenTelemetry, Application Insights setup (linked for advanced users/SREs)
+- **SCALING.md** — Performance limits and mitigation strategies (linked for advanced users)
+- **dapr-component-backfill.md** — Dapr component projection details (linked for advanced users)
+
+### Archive Only
+
+Historical/meta documents not serving end users:
+- **docs/archive/CONSOLIDATION_REPORT.md** — Internal status (clearly stale, no user value)
+- **docs/archive/DEMO_MODE.md** — Internal demo setup (not part of user journey)
+- **docs/archive/superpowers/** — Internal/experimental folder
+
+## Updates Made
+
+### GETTING_STARTED.md — Now the True Hub
+- **Restructured audiences:** Platform Engineers, Developers, Security/API Developers, Advanced Users
+- **Intentional linking:** Primary docs (deployment, local-dev, auth) at first level; secondary docs (PRD, scaling, observability, ADRs) nested under "Learn more" per audience
+- **Preserved all secondary links:** No deletion, just strategic placement to reduce initial cognitive load while keeping specialist docs discoverable
+- **Added Advanced Users section** to surface SCALING.md, OBSERVABILITY.md, and dapr-component-backfill.md for those who need them
+
+### README.md
+- **Restored SCALING.md reference** to boundary discussion (user requests may ask about performance)
+- **Kept ADR-0001 reference** in the docs list with proper context
+- **Full doc links preserved:** All user-serving docs linked intentionally from README
+
+### end-to-end-setup-walkthrough.md
+- **Restored Architecture Decision reference** (ADR-0001) in Reference section
+- **Preserved full reference chain** for operators who want to understand the Kubernetes-first approach
+
+### radius-validation-checklist.md
+- **Restored ADR-0001 reference** in References section (operators may need architectural context)
+
+## Why This Approach
+
+Daisy's feedback was clear: **preserve docs that still earn their place; focus on reducing discoverability, not deletion.**
+
+This is better because:
+- **Specialist docs stay available:** Users who need SCALING, OBSERVABILITY, or ADRs can find them
+- **Hub guides first-timers:** GETTING_STARTED.md routes fresh users to their primary path (deploy vs. develop) without overwhelm
+- **Intentional linking:** Docs are linked strategically from the hub, not aggressively deleted
+- **No stale content:** Only truly historical/meta docs are archived (CONSOLIDATION_REPORT, DEMO_MODE, superpowers/)
+- **Future-proof:** If OBSERVABILITY or SCALING becomes essential to getting started, we don't have to resurrect archived docs
+
+## Guardrails for Future Docs
+
+- **Keep specialist docs linkable:** If a doc serves a genuine use case (even for advanced users), keep it and link intentionally
+- **Archive only if truly meta:** CONSOLIDATION_REPORT-like docs that track process, not deliver value
+- **Use the hub pattern:** Route all new docs through GETTING_STARTED.md audiences; make secondary docs discoverable through "Learn more" sections
+
+## Related Decisions
+
+- Eddie Decision — Portability blog must follow the shipped repo story (2026-05-05)
+- User Directive — Keep supported docs lean and current (2026-05-05)
+- Daisy Review — Preserve specialist docs with intentional discoverability (2026-05-05)
+
+---
+
+# Decision: Add docs/superpowers to .gitignore
+
+**Date:** 2026-05-05  
+**Agent:** Eddie (Docs/Story)  
+**Issue:** Add docs/superpowers to .gitignore
+
+## Context
+The `docs/superpowers/` directory contains generated Copilot CLI documentation artifacts that should not be committed to the repository.
+
+## Decision
+Added `docs/superpowers/` to `.gitignore` under the "Copilot CLI artifacts" section, alongside the existing `.github/skills/app-modeling/` entry.
+
+## Rationale
+- Both `docs/superpowers/` and `.github/skills/app-modeling/` are Copilot CLI-generated runtime artifacts
+- Grouping them together maintains clarity and consistency in the `.gitignore` organization
+- Using the trailing slash (`docs/superpowers/`) indicates it's a directory and follows existing pattern conventions
+
+---
+
+# Pete: Shell Script Cleanup Decision
+
+**Date:** 2026-05-05  
+**Status:** IMPLEMENTED  
+**Reviewed by:** Daisy (alignment 2026-05-05)  
+**Impact:** Repository surface cleaning, no impact to supported workflows
+
+## Summary
+
+Audited all `.sh` files and root-level debug artifacts in the repository. Removed:
+1. Debug-only shell scripts from past merge analysis
+2. Root-level bootstrap/teardown run logs (artifacts)
+
+All supported operational, testing, and validation scripts are preserved per Daisy's alignment boundaries.
+
+## Scripts Removed (Debug/Ad-hoc Analysis Tools)
+
+The following **one-time analysis scripts** from a past merge conflict assessment (April 2026) are removed:
+
+1. **analyze_critical.sh** — Branch critical file analyzer (root)
+2. **deep_conflict_check.sh** — Merge conflict checker (root)
+3. **final_analysis.sh** — Merge analysis output (root)
+4. **final_strategy.sh** — Merge strategy assessment (root)
+5. **merge_analysis.sh** — Branch-by-branch merge analysis (root)
+6. **merge_strategy.sh** — Merge conflict classification script (root)
+7. **squad_changes_detail.sh** — Squad file diff analyzer (root)
+
+**Rationale:** Hardcoded branch names, served no ongoing operational purpose, zero references in code/docs.
+
+## Debug Log Files Removed (Run Artifacts)
+
+The following **bootstrap/teardown run artifacts** from April 3 testing are removed:
+
+- bootstrap-full.log
+- bootstrap-run-final-2.log
+- bootstrap-run-final.log
+- bootstrap-run-p3.log
+- bootstrap-run.log
+- bootstrap-run2.log
+- bootstrap-run3.log
+- bootstrap-success.log
+- prepare-cluster-final.log
+- prepare-cluster-run.log
+- teardown-run.log
+
+**Rationale:** Leftover run artifacts from development/testing. .gitignore already prevents `*.log` from being committed, so no policy change needed.
+
+## Scripts Preserved (Supported Workflows — Daisy's Alignment)
+
+All other shell scripts are **operational, tested, and documented** per Daisy's boundaries:
+
+### scripts/ Directory (16 scripts, all kept)
+- `bootstrap.sh` — AKS cluster + Dapr/Radius bootstrap
+- `teardown.sh` — Cluster + resources teardown
+- `prepare-cluster.sh` — Pre-bootstrap AKS setup
+- `build-and-push.sh` — Container build and push
+- `annotate-service-accounts.sh` — Workload identity setup
+- `deploy-dapr-components.sh` — **Kept (deprecated but in scope)**
+- `deploy-dapr-components-workload-identity.sh` — Workload identity variant
+- `apply-dapr-components-from-recipes.sh` — Component bootstrapping
+- `publish-radius-recipes.sh` — Recipe registry publishing
+- `health-check.sh` — Cluster & component status (TEST_GUIDE.md)
+- `api-endpoint-test.sh` — API connectivity (TEST_GUIDE.md)
+- `dapr-component-test.sh` — State store & pub/sub (TEST_GUIDE.md)
+- `expense-submit-test.sh` — End-to-end submission (TEST_GUIDE.md)
+- `workflow-trigger-test.sh` — Workflow event processing (TEST_GUIDE.md)
+- `deployment-readiness.sh` — Aggregate test runner (TEST_GUIDE.md)
+- `validate-deployment.sh` — Deployment validation
+
+### scripts/lib/ (1 shared function library)
+- `platform-common.sh` — Shared bash functions (referenced by other scripts)
+
+### tests/portability/ (6 validation scripts)
+- `app-no-azure-hardcoding.sh` — Verify portability from Azure specifics
+- `bootstrap-idempotency.sh` — Verify re-runnable bootstrap
+- `dapr-components-loaded.sh` — Verify Dapr sidecar components
+- `recipes-are-complete.sh` — Verify Radius recipe contracts
+- `region-agnostic.sh` — Verify multi-region deployment readiness
+- `run-all.sh` — Master test runner (documented in tests/portability/README.md)
+
+### Copilot Skills
+- `.copilot/skills/distributed-mesh/sync-mesh.sh` — Mesh state sync helper
+
+## References Updated
+
+None. The removed scripts and log files were not referenced in:
+- README.md
+- TEST_GUIDE.md
+- GitHub workflows (.github/workflows/)
+- Documentation files
+- Other shell scripts
+
+## .gitignore Status
+
+✓ Already configured. Line 46 has `*.log` rule, which prevents future bootstrap/teardown run artifacts from being committed. No changes needed.
+
+## Verification
+
+✓ All 7 debug shell scripts removed (were untracked — never in git)
+✓ All 11 debug log files removed (run artifacts from April 3 testing)
+✓ No GitHub workflows referenced removed scripts or logs
+✓ No documentation references broken
+✓ .gitignore already prevents `*.log` from future commits
+✓ All supported operational scripts preserved per Daisy's alignment
+✓ All documented tests preserved (TEST_GUIDE.md, tests/portability/README.md)
+✓ deploy-dapr-components.sh kept (deprecated but in scope per Daisy)
+
+## Outcome
+
+Repository surface is cleaner:
+- Removed 7 one-time analysis scripts from past merge work
+- Removed 11 leftover bootstrap/teardown run artifacts
+- Zero impact to supported operational, bootstrap, testing, or validation workflows
+- Scripts/lib/platform-common.sh and tests/portability/* remain intact
+- All scripts under scripts/ remain intact
+- Copilot skills remain intact
+
+Daisy's alignment boundaries honored throughout.
+
